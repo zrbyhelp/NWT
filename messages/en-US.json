@@ -6,6 +6,10 @@
     "headline": "Let characters, worlds, and plots grow through interaction",
     "description": "A new fiction experience built around AI dialogue, plot progression, knowledge graphs, and persistent memory.",
     "metric": "Current context budget {count} tokens",
+    "actions": {
+      "admin": "Admin",
+      "language": "Language"
+    },
     "modules": {
       "dialogue": {
         "title": "Streaming Dialogue",
@@ -33,6 +37,56 @@
       "newThread": "New interaction thread",
       "worldGraph": "Open world graph"
     }
+  },
+  "admin": {
+    "shell": {
+      "brand": "NWT Admin",
+      "description": "Operations Core",
+      "backHome": "Back home",
+      "nav": {
+        "dashboard": "Dashboard",
+        "threads": "Threads",
+        "graph": "World Graph",
+        "jobs": "Job Queue",
+        "settings": "Settings"
+      }
+    },
+    "dashboard": {
+      "kicker": "Admin Foundation",
+      "title": "AI Interactive Fiction Operations",
+      "description": "The first admin version has no authentication yet and provides core entry points for threads, world graph, jobs, and system settings.",
+      "stats": {
+        "threads": {
+          "label": "Threads",
+          "value": "Stub"
+        },
+        "jobs": {
+          "label": "Job Queue",
+          "value": "Pending"
+        },
+        "graph": {
+          "label": "Graph Status",
+          "value": "Neo4j"
+        },
+        "models": {
+          "label": "Model Config",
+          "value": "OpenAI"
+        }
+      },
+      "sections": {
+        "dialogue": {
+          "title": "Thread Operations",
+          "body": "Future work will manage user and AI plot interactions, context, branches, and streaming dialogue state."
+        },
+        "memory": {
+          "title": "Memory and Graph",
+          "body": "Entry point for Qdrant retrieval, Neo4j world relationships, and LangChain text splitting jobs."
+        },
+        "operations": {
+          "title": "System Settings",
+          "body": "Future settings for model providers, R2 storage, Langfuse observability, and background jobs."
+        }
+      }
+    }
   }
 }
-

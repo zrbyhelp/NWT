@@ -6,6 +6,10 @@
     "headline": "让角色、世界观和剧情在交互中生长",
     "description": "围绕 AI 对话、剧情推进、知识图谱和长期记忆，构建新的小说体验形态。",
     "metric": "当前上下文预算 {count} tokens",
+    "actions": {
+      "admin": "后台",
+      "language": "语言切换"
+    },
     "modules": {
       "dialogue": {
         "title": "流媒体对话",
@@ -33,6 +37,56 @@
       "newThread": "新建交互线程",
       "worldGraph": "查看世界图谱"
     }
+  },
+  "admin": {
+    "shell": {
+      "brand": "新世界后台",
+      "description": "运营核心",
+      "backHome": "返回首页",
+      "nav": {
+        "dashboard": "仪表盘",
+        "threads": "交互线程",
+        "graph": "世界图谱",
+        "jobs": "任务队列",
+        "settings": "系统设置"
+      }
+    },
+    "dashboard": {
+      "kicker": "后台基础框架",
+      "title": "AI 交互式小说运营台",
+      "description": "第一版后台暂不做鉴权，先承载交互线程、世界图谱、后台任务和系统设置的基础入口。",
+      "stats": {
+        "threads": {
+          "label": "交互线程",
+          "value": "占位"
+        },
+        "jobs": {
+          "label": "任务队列",
+          "value": "待接入"
+        },
+        "graph": {
+          "label": "图谱状态",
+          "value": "Neo4j"
+        },
+        "models": {
+          "label": "模型配置",
+          "value": "OpenAI"
+        }
+      },
+      "sections": {
+        "dialogue": {
+          "title": "交互线程管理",
+          "body": "后续管理用户与 AI 的剧情交互、上下文、分支和流式对话状态。"
+        },
+        "memory": {
+          "title": "记忆与图谱维护",
+          "body": "承载 Qdrant 向量检索、Neo4j 世界关系和 LangChain 切分任务的入口。"
+        },
+        "operations": {
+          "title": "系统运行设置",
+          "body": "后续集中管理模型提供商、R2 存储、Langfuse 观测和后台任务配置。"
+        }
+      }
+    }
   }
 }
-

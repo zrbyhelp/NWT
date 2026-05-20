@@ -1,6 +1,8 @@
 import { BrainCircuit, GitBranch, MessageSquareText, Sparkles } from "lucide-react";
 import { getTranslations } from "next-intl/server";
+import { HeaderActions } from "@/components/header-actions";
 import { ThemeControls } from "@/components/theme-controls";
+import type { Locale } from "@/i18n/routing";
 import { formatCount } from "@/lib/format";
 
 const modules = [
@@ -9,7 +11,8 @@ const modules = [
   { icon: BrainCircuit, key: "memory" }
 ] as const;
 
-export default async function HomePage() {
+export default async function HomePage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const t = await getTranslations("home");
 
   return (
@@ -20,8 +23,11 @@ export default async function HomePage() {
             <p className="text-sm text-primary">{t("kicker")}</p>
             <h1 className="text-2xl font-semibold tracking-normal md:text-3xl">{t("title")}</h1>
           </div>
-          <div className="rounded-md border border-border bg-background/80 px-3 py-2 text-sm text-muted-foreground">
-            {t("metric", { count: formatCount(42000, "zh-CN") })}
+          <div className="flex flex-col items-end gap-2">
+            <HeaderActions />
+            <div className="rounded-md border border-border bg-background/80 px-3 py-2 text-sm text-muted-foreground">
+              {t("metric", { count: formatCount(42000, locale) })}
+            </div>
           </div>
         </header>
 
@@ -57,4 +63,3 @@ export default async function HomePage() {
     </main>
   );
 }
-
