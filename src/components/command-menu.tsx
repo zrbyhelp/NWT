@@ -12,6 +12,14 @@ export function CommandMenu() {
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping =
+        target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+
+      if (isTyping) {
+        return;
+      }
+
       if ((event.key === "k" && (event.metaKey || event.ctrlKey)) || event.key === "/") {
         event.preventDefault();
         setOpen((value) => !value);
@@ -37,7 +45,7 @@ export function CommandMenu() {
           <Command.Input className="h-12 flex-1 bg-transparent outline-none" placeholder={t("placeholder")} />
         </div>
         <Command.List className="p-2">
-          <Command.Empty className="px-3 py-6 text-center text-sm text-foreground/58">暂无结果</Command.Empty>
+          <Command.Empty className="px-3 py-6 text-center text-sm text-foreground/58">{t("empty")}</Command.Empty>
           {[t("openSettings"), t("newThread"), t("worldGraph")].map((label) => (
             <Command.Item
               key={label}
@@ -55,4 +63,3 @@ export function CommandMenu() {
     </div>
   );
 }
-

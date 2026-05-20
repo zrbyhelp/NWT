@@ -7,11 +7,14 @@ import { useAppTheme } from "@/components/theme-provider";
 import { colorThemes, typographyPresets } from "@/lib/theme-options";
 import { cn } from "@/lib/utils";
 
+type PaletteId = (typeof colorThemes)[number]["id"];
+type TypographyId = (typeof typographyPresets)[number]["id"];
+
 export function ThemeControls() {
   const t = useTranslations("home.settings");
   const { setTheme, theme, resolvedTheme } = useAppTheme();
-  const [palette, setPalette] = useState(colorThemes[0].id);
-  const [typography, setTypography] = useState(typographyPresets[1].id);
+  const [palette, setPalette] = useState<PaletteId>(colorThemes[0].id);
+  const [typography, setTypography] = useState<TypographyId>(typographyPresets[1].id);
 
   useEffect(() => {
     document.documentElement.dataset.palette = palette;

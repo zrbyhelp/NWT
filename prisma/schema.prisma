@@ -4,6 +4,96 @@ generator client {
 
 datasource db {
   provider = "mysql"
-  url      = env("DATABASE_URL")
 }
 
+model StoryScript {
+  id            String         @id @default(cuid())
+  slug          String         @unique
+  titleZh       String
+  titleEn       String
+  descriptionZh String         @db.Text
+  descriptionEn String         @db.Text
+  welcomeZh     String         @db.Text
+  welcomeEn     String         @db.Text
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[]
+}
+
+model Conversation {
+  id        String        @id @default(cuid())
+  title     String
+  scriptId  String
+  script    StoryScript   @relation(fields: [scriptId], references: [id])
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([scriptId])
+  @@index([updatedAt])
+}
+
+model ChatMessage {
+  id                  String       @id @default(cuid())
+  conversationId      String
+  conversation        Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role                String
+  content             String       @db.Text
+  promptTokens        Int?
+  completionTokens    Int?
+  tokenUsageEstimated Boolean      @default(false)
+  createdAt           DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model AiProvider {
+  id              String        @id @default(cuid())
+  name            String
+  slug            String        @unique
+  baseUrl         String
+  encryptedApiKey String?       @db.Text
+  enabled         Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  llmModels       LlmModel[]
+  vectorModels    VectorModel[]
+
+  @@index([enabled])
+}
+
+model LlmModel {
+  id            String     @id @default(cuid())
+  providerId    String
+  provider      AiProvider @relation(fields: [providerId], references: [id])
+  displayName   String
+  modelId       String
+  contextWindow Int        @default(128000)
+  temperature   Float      @default(0.7)
+  enabled       Boolean    @default(true)
+  isDefault     Boolean    @default(false)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId])
+  @@index([enabled, isDefault])
+}
+
+model VectorModel {
+  id             String     @id @default(cuid())
+  providerId     String
+  provider       AiProvider @relation(fields: [providerId], references: [id])
+  displayName    String
+  modelId        String
+  dimensions     Int
+  maxInputTokens Int
+  enabled        Boolean    @default(true)
+  isDefault      Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId])
+  @@index([enabled, isDefault])
+}

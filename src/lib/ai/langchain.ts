@@ -1,13 +1,15 @@
 import { ChatOpenAI } from "@langchain/openai";
-import { env } from "@/env";
+import { getDefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 
-export function createChatModel() {
+export async function createChatModel() {
+  const config = await getDefaultLlmRuntimeConfig();
+
   return new ChatOpenAI({
-    model: env.OPENAI_MODEL,
-    apiKey: env.OPENAI_API_KEY,
+    model: config.modelId,
+    apiKey: config.apiKey,
+    temperature: config.temperature,
     configuration: {
-      baseURL: env.OPENAI_BASE_URL
+      baseURL: config.baseUrl
     }
   });
 }
-

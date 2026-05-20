@@ -27,12 +27,249 @@
     "settings": {
       "title": "Experience Settings",
       "subtitle": "Theme, palette, and typography apply to the full application.",
+      "close": "Close settings",
+      "tabs": {
+        "general": "General",
+        "appearance": "Appearance",
+        "providers": "AI Providers",
+        "llm": "LLM Models",
+        "vectors": "Vector Models",
+        "about": "About"
+      },
       "mode": "Brightness",
+      "modeOption": {
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark"
+      },
+      "modeValue": {
+        "light": "Light",
+        "dark": "Dark"
+      },
+      "current": "Current: {mode}",
       "palette": "Palette",
-      "typography": "Typography"
+      "typography": "Typography",
+      "aboutTitle": "About New World Novel",
+      "aboutDescription": "New World Novel is an interactive fiction experience built around AI dialogue, plot progression, knowledge graphs, and long-term memory.",
+      "aboutItems": {
+        "product": {
+          "label": "Product",
+          "value": "New World Novel"
+        },
+        "author": {
+          "label": "Author",
+          "value": "zr (Zang Haoran)"
+        },
+        "license": {
+          "label": "License",
+          "value": "MIT License"
+        },
+        "qq": {
+          "label": "QQ",
+          "value": "778241343"
+        },
+        "wechat": {
+          "label": "Phone / WeChat",
+          "value": "15043201648"
+        },
+        "email": {
+          "label": "Email",
+          "value": "q19946502@gmail.com"
+        },
+        "repository": {
+          "label": "GitHub Repository",
+          "value": "https://github.com/zrbyhelp/NWT.git"
+        },
+        "vision": {
+          "label": "Goal",
+          "value": "Build an AI-driven new-system interactive fiction experience"
+        }
+      },
+      "ai": {
+        "common": {
+          "loading": "Loading AI configuration",
+          "new": "New",
+          "save": "Save configuration",
+          "close": "Close dialog",
+          "saved": "Configuration saved",
+          "deleted": "Configuration deleted",
+          "edit": "Edit",
+          "delete": "Delete",
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "default": "Default",
+          "secretReady": "Secret configured",
+          "secretMissing": "Secret missing",
+          "providerDisabled": "The provider is disabled, so this model will not be used by default."
+        },
+        "fields": {
+          "name": "Name",
+          "slug": "Slug",
+          "baseUrl": "Base URL",
+          "apiKey": "API Key",
+          "clearApiKey": "Clear saved API key",
+          "enabled": "Enabled",
+          "provider": "Provider",
+          "providerPlaceholder": "Select a provider first",
+          "displayName": "Display name",
+          "modelId": "Model ID",
+          "contextWindow": "Context window",
+          "temperature": "Default temperature",
+          "dimensions": "Vector dimensions",
+          "maxInputTokens": "Max input tokens",
+          "isDefault": "Use as default"
+        },
+        "providers": {
+          "eyebrow": "OpenAI-compatible",
+          "title": "AI Provider Management",
+          "description": "Manage OpenAI-compatible model providers. API keys can only be replaced or cleared, never revealed in the UI.",
+          "emptyTitle": "No AI providers yet",
+          "emptyDescription": "Add a provider before configuring LLM or vector models.",
+          "createTitle": "Add provider",
+          "editTitle": "Edit provider",
+          "apiKeyPlaceholder": "Leave blank to keep the saved secret",
+          "modelCount": "{count} related models",
+          "deleteConfirm": "Delete provider \"{name}\"?"
+        },
+        "llm": {
+          "eyebrow": "Chat model",
+          "title": "LLM Model Management",
+          "description": "The default LLM powers home chat replies. Only one enabled model with an enabled provider can be default.",
+          "emptyTitle": "No LLM models yet",
+          "emptyDescription": "Add a model ID, context window, and temperature before choosing the default chat model.",
+          "createTitle": "Add LLM model",
+          "editTitle": "Edit LLM model",
+          "meta": "{context} tokens / temperature {temperature}",
+          "deleteConfirm": "Delete LLM model \"{name}\"?"
+        },
+        "vectors": {
+          "eyebrow": "Embedding model",
+          "title": "Vector Model Management",
+          "description": "Vector models will support text splitting, semantic retrieval, and Qdrant writes. This version manages configuration and defaults.",
+          "emptyTitle": "No vector models yet",
+          "emptyDescription": "Add an embedding model, dimensions, and max input tokens for future memory jobs.",
+          "createTitle": "Add vector model",
+          "editTitle": "Edit vector model",
+          "meta": "{dimensions} dimensions / {tokens} tokens",
+          "deleteConfirm": "Delete vector model \"{name}\"?"
+        },
+        "errors": {
+          "loadTitle": "Could not load AI configuration",
+          "loadDescription": "Confirm that the database is connected and the latest Prisma migration has run.",
+          "save": "Save failed. Check the fields and try again.",
+          "providerHasModels": "This provider still has related models. Delete the models first.",
+          "missingEncryptionKey": "AI_CONFIG_ENCRYPTION_KEY is required before saving or reading API keys.",
+          "noEnabledProvider": "No provider is enabled, so the default model will not take effect."
+        }
+      }
+    },
+    "workspace": {
+      "newMessage": "New Message",
+      "scripts": "Scripts",
+      "sidebar": {
+        "collapse": "Collapse menu",
+        "expand": "Expand menu"
+      },
+      "searchLabel": "Search messages",
+      "searchPlaceholder": "Search messages, scripts, or recent content...",
+      "conversationList": "Message List",
+      "groups": {
+        "today": "Today",
+        "earlier": "Earlier"
+      },
+      "persistenceUnavailable": "The database is not connected or migrations have not run. Script selection is shown in read-only mode until MySQL and Prisma migrations are ready.",
+      "emptySearch": "No matching messages.",
+      "emptyConversations": "No messages yet. Choose a script to begin.",
+      "scriptKicker": "Script Selection",
+      "welcomeQuestion": "Which story do you want to enter today?",
+      "scriptTitle": "Choose an AI script to start",
+      "scriptDescription": "New messages open script selection first. The Base AI Script is available by default, with more world templates to follow.",
+      "startScript": "Use Script",
+      "startScriptWithName": "Use {title} script",
+      "scriptPager": {
+        "previous": "Previous script group",
+        "next": "Next script group"
+      },
+      "readyTitle": "Script Ready",
+      "inputPlaceholder": "Enter the character, scene, or conflict you want to advance...",
+      "send": "Send message",
+      "thinking": "Arranging the next beat",
+      "composerHint": "Enter to send, Shift + Enter for a new line. AI replies use the default LLM model from settings.",
+      "tokenStats": "Up {upstream} / Down {downstream}",
+      "tokenStatsEstimated": "Approx. Up {upstream} / Down {downstream}",
+      "tokenStatsHint": "Accumulated AI token usage for the current conversation. Approx. means usage was estimated because the provider did not return usage.",
+      "conversationActions": {
+        "open": "Open conversation actions",
+        "delete": "Delete conversation",
+        "deleteHint": "Delete this conversation and messages",
+        "confirmDelete": "Delete this conversation? This cannot be undone.",
+        "deleted": "Conversation deleted"
+      },
+      "status": {
+        "connected": "Database connected",
+        "readonly": "Read-only mode",
+        "llm": "Using default LLM replies",
+        "model": "Default model"
+      },
+      "suggestions": {
+        "character": "Introduce an amnesiac character",
+        "conflict": "Break down a tense negotiation",
+        "world": "Reveal a hidden world rule"
+      },
+      "errors": {
+        "persistence": "The database is not connected, so messages cannot be created yet.",
+        "create": "Failed to create the message. Please try again later.",
+        "send": "Failed to send the message. Please try again later.",
+        "delete": "Failed to delete the conversation. Please try again later."
+      }
+    },
+    "scripts": {
+      "title": "Script Management",
+      "subtitle": "Review available AI scripts.",
+      "kicker": "Explore Scripts",
+      "heroTitle": "Scripts",
+      "heroDescription": "Explore AI scripts for interactive fiction. Scripts define openings, world structure, and dialogue style.",
+      "search": "Search scripts",
+      "create": "Create",
+      "createSoon": "Script creation will be available in a later version.",
+      "categories": {
+        "featured": "Featured",
+        "world": "Worldbuilding",
+        "roleplay": "Roleplay",
+        "writing": "Writing",
+        "analysis": "Research"
+      },
+      "featuredTitle": "Featured",
+      "featuredSubtitle": "Recommended scripts this week",
+      "popularTitle": "Popular",
+      "popularSubtitle": "Available scripts",
+      "default": "Default script",
+      "creator": "Creator",
+      "close": "Close script detail",
+      "startChat": "Start chat",
+      "starters": "Conversation starters",
+      "capabilities": "Capabilities",
+      "metrics": {
+        "rating": "Rating",
+        "rank": "Rank",
+        "chats": "Chats"
+      },
+      "capabilityItems": {
+        "story": "Plot progression and branching dialogue",
+        "world": "World, character, and event organization",
+        "memory": "Ready for memory and graph capabilities"
+      },
+      "empty": "No scripts yet.",
+      "fields": {
+        "slug": "Slug",
+        "title": "Title",
+        "description": "Description",
+        "welcome": "Welcome message"
+      }
     },
     "command": {
       "placeholder": "Search chapters, characters, or actions...",
+      "empty": "No results",
       "openSettings": "Open experience settings",
       "newThread": "New interaction thread",
       "worldGraph": "Open world graph"
