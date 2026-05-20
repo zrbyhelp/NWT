@@ -61,6 +61,7 @@ scripts/    # 本地开发或维护脚本
 - Langfuse：AI 调用观测、追踪与评估。
 - Vitest、React Testing Library：单元测试与 React 组件测试；测试不包含打包测试。
 - Docker Compose：本地依赖服务编排，例如 MySQL、Redis、Qdrant、Neo4j、Langfuse。
+- Langfuse 本地 Docker 使用 `.env.langfuse.local` 提供密钥和初始化账号，该文件不提交 Git；模板为 `.env.langfuse.example`。启动全套依赖服务时使用 `docker compose --env-file .env.langfuse.local -f docker-compose.yml -f docker-compose.langfuse.yml up -d`。
 
 仍需在项目落地时补充：Node.js 与 pnpm 版本、Next.js/React 主版本、Prisma 迁移策略、环境变量清单、Docker Compose 服务端口、Redis 连接配置、Cloudflare R2 bucket 与凭据配置、AI 模型提供商配置、国际化目录结构、VitePress 文档目录与导航、环境变量校验策略、主题默认值、色板 token、排版设置项清单、本地保存 key、是否跟随系统主题、`date-fns` locale、命令菜单快捷键策略。
 

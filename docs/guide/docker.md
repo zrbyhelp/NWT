@@ -7,12 +7,24 @@
 - Qdrant
 - Neo4j
 
-`docker-compose.langfuse.yml` 单独提供 Langfuse v3 本地栈，包含 Langfuse web/worker、Postgres、ClickHouse、MinIO 和 Langfuse 自用 Redis。
+`docker-compose.langfuse.yml` 单独提供 Langfuse v3 本地栈，包含 Langfuse web/worker、Postgres、ClickHouse、MinIO 和 Langfuse 自用 Redis。Langfuse 镜像默认使用 GHCR：`ghcr.io/langfuse/langfuse:latest` 与 `ghcr.io/langfuse/langfuse-worker:latest`，避免 Docker Hub 拉取不稳定时阻塞本地启动。
 
-AI 不自动运行项目或 Docker 服务。如需启动，由用户自行执行：
+## 启动全套本地服务
+
+Langfuse 使用 `.env.langfuse.local` 提供本地密钥、初始账号和项目 API key。该文件只保存在本地，不提交 Git；可参考 `.env.langfuse.example` 重新生成。
 
 ```bash
-docker compose up -d
-docker compose -f docker-compose.langfuse.yml up -d
+docker compose --env-file .env.langfuse.local -f docker-compose.yml -f docker-compose.langfuse.yml up -d
 ```
 
+## 常用地址
+
+- Langfuse UI：`http://localhost:3001`
+- MinIO API：`http://localhost:9090`
+- MinIO Console：`http://localhost:9091`
+- Neo4j Browser：`http://localhost:7474`
+- Qdrant：`http://localhost:6333`
+
+Langfuse 初始用户邮箱为 `q19946502@gmail.com`，密码保存在本地 `.env.langfuse.local` 的 `LANGFUSE_INIT_USER_PASSWORD`。
+
+AI 不自动运行 Next.js 项目；Docker 服务只有在用户明确要求时才启动。
