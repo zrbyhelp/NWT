@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", serif;
+  --radius: 0.5rem;
+  --background: 210 24% 98%;
+  --foreground: 222 38% 12%;
+  --muted: 214 24% 91%;
+  --border: 214 26% 86%;
+  --primary: 206 88% 38%;
+  --accent: 34 96% 55%;
+  --ring: 206 88% 38%;
+  --app-font-scale: 1;
+  --app-line-height: 1.7;
+  --app-density: 1;
+}
+
+.dark {
+  --background: 222 31% 8%;
+  --foreground: 210 28% 94%;
+  --muted: 222 22% 17%;
+  --border: 222 20% 24%;
+  --primary: 193 92% 58%;
+  --accent: 43 96% 58%;
+  --ring: 193 92% 58%;
+}
+
+[data-palette="star-map"] {
+  --primary: 206 88% 38%;
+  --accent: 34 96% 55%;
+}
+
+[data-palette="matrix"] {
+  --primary: 151 74% 34%;
+  --accent: 78 85% 48%;
+}
+
+[data-palette="deep-space"] {
+  --primary: 263 68% 58%;
+  --accent: 188 84% 55%;
+}
+
+[data-palette="morning-fog"] {
+  --primary: 198 44% 43%;
+  --accent: 14 79% 62%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  min-height: 100vh;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  font-size: calc(16px * var(--app-font-scale));
+  line-height: var(--app-line-height);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+

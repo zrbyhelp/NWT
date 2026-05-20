@@ -1,0 +1,38 @@
+{
+  "home": {
+    "kicker": "新世界小说",
+    "title": "AI 交互式小说工作台",
+    "signal": "不是传统阅读器，而是可对话、可演化的叙事系统",
+    "headline": "让角色、世界观和剧情在交互中生长",
+    "description": "围绕 AI 对话、剧情推进、知识图谱和长期记忆，构建新的小说体验形态。",
+    "metric": "当前上下文预算 {count} tokens",
+    "modules": {
+      "dialogue": {
+        "title": "流媒体对话",
+        "body": "Vercel AI SDK 只负责前端聊天流式展示。"
+      },
+      "world": {
+        "title": "世界图谱",
+        "body": "Neo4j 与 Sigma.js 承载角色、地点和事件关系。"
+      },
+      "memory": {
+        "title": "长期记忆",
+        "body": "Qdrant、LangChain 与后台任务维护语义检索。"
+      }
+    },
+    "settings": {
+      "title": "体验设置",
+      "subtitle": "主题、配色与排版影响全应用。",
+      "mode": "亮度模式",
+      "palette": "配色预设",
+      "typography": "排版密度"
+    },
+    "command": {
+      "placeholder": "搜索章节、角色或操作...",
+      "openSettings": "打开体验设置",
+      "newThread": "新建交互线程",
+      "worldGraph": "查看世界图谱"
+    }
+  }
+}
+

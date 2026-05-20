@@ -1,0 +1,38 @@
+{
+  "home": {
+    "kicker": "New World Novel",
+    "title": "AI Interactive Fiction Workspace",
+    "signal": "Not a traditional reader, but a conversational and evolving narrative system",
+    "headline": "Let characters, worlds, and plots grow through interaction",
+    "description": "A new fiction experience built around AI dialogue, plot progression, knowledge graphs, and persistent memory.",
+    "metric": "Current context budget {count} tokens",
+    "modules": {
+      "dialogue": {
+        "title": "Streaming Dialogue",
+        "body": "The Vercel AI SDK is limited to frontend streaming chat display."
+      },
+      "world": {
+        "title": "World Graph",
+        "body": "Neo4j and Sigma.js model character, location, and event relationships."
+      },
+      "memory": {
+        "title": "Long-Term Memory",
+        "body": "Qdrant, LangChain, and background jobs maintain semantic retrieval."
+      }
+    },
+    "settings": {
+      "title": "Experience Settings",
+      "subtitle": "Theme, palette, and typography apply to the full application.",
+      "mode": "Brightness",
+      "palette": "Palette",
+      "typography": "Typography"
+    },
+    "command": {
+      "placeholder": "Search chapters, characters, or actions...",
+      "openSettings": "Open experience settings",
+      "newThread": "New interaction thread",
+      "worldGraph": "Open world graph"
+    }
+  }
+}
+
