@@ -2,14 +2,14 @@
 
 import { Moon, Sun } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
+import { useAppTheme } from "@/components/theme-provider";
 import { colorThemes, typographyPresets } from "@/lib/theme-options";
 import { cn } from "@/lib/utils";
 
 export function ThemeControls() {
   const t = useTranslations("home.settings");
-  const { setTheme, theme } = useTheme();
+  const { setTheme, theme, resolvedTheme } = useAppTheme();
   const [palette, setPalette] = useState(colorThemes[0].id);
   const [typography, setTypography] = useState(typographyPresets[1].id);
 
@@ -37,7 +37,10 @@ export function ThemeControls() {
           <button
             type="button"
             onClick={() => setTheme("light")}
-            className={cn("rounded-md border px-3 py-3 text-left", theme === "light" && "border-primary text-primary")}
+            className={cn(
+              "rounded-md border px-3 py-3 text-left",
+              theme === "light" && "border-primary text-primary"
+            )}
           >
             <Sun className="mb-2 h-4 w-4" />
             浅色
@@ -45,12 +48,16 @@ export function ThemeControls() {
           <button
             type="button"
             onClick={() => setTheme("dark")}
-            className={cn("rounded-md border px-3 py-3 text-left", theme === "dark" && "border-primary text-primary")}
+            className={cn(
+              "rounded-md border px-3 py-3 text-left",
+              theme === "dark" && "border-primary text-primary"
+            )}
           >
             <Moon className="mb-2 h-4 w-4" />
             深色
           </button>
         </div>
+        <p className="text-xs text-foreground/52">当前：{resolvedTheme === "dark" ? "深色" : "浅色"}</p>
       </section>
 
       <section className="mt-5 space-y-3">
@@ -92,4 +99,3 @@ export function ThemeControls() {
     </div>
   );
 }
-

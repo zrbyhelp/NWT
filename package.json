@@ -46,7 +46,6 @@
     "neo4j-driver": "latest",
     "next": "latest",
     "next-intl": "latest",
-    "next-themes": "latest",
     "openai": "latest",
     "react": "latest",
     "react-dom": "latest",

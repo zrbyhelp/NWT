@@ -38,7 +38,7 @@ scripts/    # 本地开发或维护脚本
 - Next.js App Router、React、TypeScript：应用框架、界面开发与类型约束。
 - VitePress：详细文档站点方案，文档以中文为主、英文为辅。
 - Tailwind CSS、shadcn/ui：样式系统与基础 UI 组件。
-- next-themes：浅色/深色模式与主题状态管理。
+- 自有主题运行时：浅色/深色模式与主题状态管理；不要在 React 组件树中渲染内联主题脚本，避免 hydration 警告。
 - 多配色预设：使用偏 AI/世界观交互的固定色板，例如星图、矩阵、深空、晨雾；配色模式与日夜模式独立组合。
 - 全应用排版设置：使用 CSS variables/Tailwind token 承载字体、字号、行高、间距、内容密度等设置，默认本地优先保存。
 - next-intl：国际化方案，默认中文 `zh-CN`，支持英文 `en-US` 切换。
