@@ -10,6 +10,31 @@
       "admin": "后台",
       "language": "语言切换"
     },
+    "auth": {
+      "login": "登录",
+      "register": "注册",
+      "logout": "退出登录",
+      "close": "关闭登录窗口",
+      "account": "账号",
+      "password": "密码",
+      "loginTitle": "登录新世界小说",
+      "loginDescription": "登录后可继续创建会话、保存设置和进入个人剧本库。",
+      "registerTitle": "注册账号",
+      "registerDescription": "使用账号和密码创建普通用户，之后可保存自己的会话和剧本库。",
+      "goRegister": "还没有账号？立即注册",
+      "goLogin": "已有账号？返回登录",
+      "loginSuccess": "已登录",
+      "registerSuccess": "注册成功，已登录",
+      "logoutSuccess": "已退出登录",
+      "pageHint": "浏览首页和社区剧本无需登录，遇到需要保存的内容时会要求登录。",
+      "errors": {
+        "accountExists": "账号已存在，请换一个账号或直接登录。",
+        "invalidCredentials": "账号或密码不正确。",
+        "invalidAccount": "账号需为 3-64 位，可包含字母、数字、下划线、点、@ 或短横线。",
+        "invalidPassword": "密码需为 6-128 位。",
+        "generic": "登录失败，请稍后再试。"
+      }
+    },
     "modules": {
       "dialogue": {
         "title": "流媒体对话",
@@ -30,12 +55,20 @@
       "close": "关闭设置",
       "tabs": {
         "general": "通用",
+        "account": "账号",
         "appearance": "外观",
         "providers": "AI 供应商",
         "llm": "LLM 模型",
         "vectors": "向量模型",
+        "images": "图片模型",
         "about": "关于"
       },
+      "mainSite": "前往总站",
+      "mainSiteAction": "前往",
+      "showThinking": "显示思考内容",
+      "showThinkingDescription": "开启后会显示模型供应商返回的思考内容。",
+      "logoutAction": "退出",
+      "preferenceSaved": "偏好已保存",
       "mode": "亮度模式",
       "modeOption": {
         "system": "跟随系统",
@@ -80,9 +113,42 @@
           "label": "GitHub 仓库",
           "value": "https://github.com/zrbyhelp/NWT.git"
         },
+        "star": {
+          "label": "点亮 Star",
+          "value": "如果你喜欢新世界小说，欢迎去 GitHub 点点 Star，支持项目继续打磨。"
+        },
         "vision": {
           "label": "项目目标",
           "value": "打造 AI 驱动的新体系交互式小说体验"
+        }
+      },
+      "account": {
+        "profileTitle": "账号资料",
+        "profileDescription": "头像设置",
+        "displayName": "显示名称",
+        "uploadAvatar": "上传头像",
+        "avatarUploaded": "头像已上传",
+        "avatarHint": "支持 gif/png/jpg/webp，最大 5MB。",
+        "saveProfile": "保存资料",
+        "profileSaved": "账号资料已保存",
+        "passwordTitle": "修改密码",
+        "passwordDescription": "修改后下次登录需使用新密码。",
+        "openPasswordDialog": "修改",
+        "currentPassword": "当前密码",
+        "newPassword": "新密码",
+        "savePassword": "保存新密码",
+        "passwordSaved": "密码已更新",
+        "sessionTitle": "登录状态",
+        "sessionDescription": "退出后仍可浏览首页和社区剧本，需要保存内容时再登录。",
+        "loginTitle": "登录账号",
+        "loginDescription": "登录后可以保存头像、密码、会话和个人设置。",
+        "errors": {
+          "invalidCurrentPassword": "当前密码不正确。",
+          "invalidPassword": "新密码需为 6-128 位。",
+          "invalidAvatarUrl": "头像地址格式不正确。",
+          "invalidAvatarFile": "头像文件仅支持 gif/png/jpg/webp，且不能超过 5MB。",
+          "invalidDisplayName": "显示名称需为 1-40 个字符。",
+          "generic": "账号设置保存失败，请稍后再试。"
         }
       },
       "ai": {
@@ -98,6 +164,8 @@
           "enabled": "启用",
           "disabled": "停用",
           "default": "默认",
+          "setDefault": "设为默认",
+          "defaultUnavailable": "模型或供应商停用时不能设为默认",
           "secretReady": "密钥已配置",
           "secretMissing": "未配置密钥",
           "providerDisabled": "供应商已停用，模型不会参与默认调用。"
@@ -113,7 +181,7 @@
           "providerPlaceholder": "先选择供应商",
           "displayName": "显示名称",
           "modelId": "模型 ID",
-          "contextWindow": "上下文窗口",
+          "modelIdPlaceholder": "可手动输入，或从供应商模型列表选择",
           "temperature": "默认温度",
           "dimensions": "向量维度",
           "maxInputTokens": "最大输入 tokens",
@@ -122,7 +190,7 @@
         "providers": {
           "eyebrow": "OpenAI-compatible",
           "title": "AI 供应商管理",
-          "description": "维护可兼容 OpenAI API 的模型供应商，API Key 只允许重填或清空，界面不显示明文。",
+          "description": "维护当前账号可兼容 OpenAI API 的模型供应商，API Key 只允许重填或清空，界面不显示明文。",
           "emptyTitle": "还没有 AI 供应商",
           "emptyDescription": "先添加一个供应商，再为它配置 LLM 模型或向量模型。",
           "createTitle": "新增供应商",
@@ -134,18 +202,18 @@
         "llm": {
           "eyebrow": "Chat model",
           "title": "LLM 模型管理",
-          "description": "默认 LLM 会接管首页聊天回复；同一时间只保留一个启用且供应商可用的默认模型。",
+          "description": "默认 LLM 会接管当前账号的首页聊天回复；同一时间只保留一个启用且供应商可用的默认模型。",
           "emptyTitle": "还没有 LLM 模型",
-          "emptyDescription": "添加模型 ID、上下文窗口和默认温度后，即可选择默认聊天模型。",
+          "emptyDescription": "添加模型 ID 和默认温度后，即可选择默认聊天模型。",
           "createTitle": "新增 LLM 模型",
           "editTitle": "编辑 LLM 模型",
-          "meta": "{context} tokens / 温度 {temperature}",
+          "meta": "温度 {temperature}",
           "deleteConfirm": "确定删除 LLM 模型“{name}”吗？"
         },
         "vectors": {
           "eyebrow": "Embedding model",
           "title": "向量模型管理",
-          "description": "向量模型用于后续文本切分、语义检索和 Qdrant 写入，本次先完成配置与默认项管理。",
+          "description": "向量模型用于当前账号后续文本切分、语义检索和 Qdrant 写入，本次先完成配置与默认项管理。",
           "emptyTitle": "还没有向量模型",
           "emptyDescription": "添加 Embedding 模型、向量维度和最大输入 tokens，供后续记忆任务使用。",
           "createTitle": "新增向量模型",
@@ -153,13 +221,35 @@
           "meta": "{dimensions} 维 / {tokens} tokens",
           "deleteConfirm": "确定删除向量模型“{name}”吗？"
         },
+        "images": {
+          "eyebrow": "Image model",
+          "title": "图片模型管理",
+          "description": "图片模型用于当前账号后续封面、场景图和角色图生成，本次先完成配置与默认项管理。",
+          "emptyTitle": "还没有图片模型",
+          "emptyDescription": "添加图片生成模型 ID 后，即可选择默认图片模型。",
+          "createTitle": "新增图片模型",
+          "editTitle": "编辑图片模型",
+          "meta": "图片生成",
+          "deleteConfirm": "确定删除图片模型“{name}”吗？"
+        },
         "errors": {
           "loadTitle": "无法读取 AI 配置",
           "loadDescription": "请确认数据库已连接，并已执行最新 Prisma 迁移。",
           "save": "保存失败，请检查字段或稍后重试。",
+          "authRequired": "请先登录后再管理 AI 配置。",
           "providerHasModels": "该供应商仍有关联模型，请先删除模型。",
           "missingEncryptionKey": "需要先配置 AI_CONFIG_ENCRYPTION_KEY 才能保存或读取 API Key。",
           "noEnabledProvider": "没有启用的供应商，默认模型不会生效。"
+        },
+        "modelCatalog": {
+          "selectLabel": "供应商模型列表",
+          "selectPlaceholder": "从供应商返回的模型中选择",
+          "refresh": "拉取模型",
+          "waitingProvider": "选择供应商后会自动拉取模型列表。",
+          "loading": "正在从供应商拉取模型列表...",
+          "ready": "模型列表已拉取，可选择后自动填入模型 ID。",
+          "empty": "该供应商暂未返回匹配模型，可手动输入模型 ID。",
+          "error": "无法拉取模型列表，请确认供应商 Base URL 和 API Key。"
         }
       }
     },
@@ -173,6 +263,10 @@
       "searchLabel": "搜索消息",
       "searchPlaceholder": "搜索消息、剧本或最近内容...",
       "conversationList": "消息列表",
+      "account": {
+        "anonymous": "未登录",
+        "loginHint": "登录后保存个人内容"
+      },
       "groups": {
         "today": "今天",
         "earlier": "更早"
@@ -193,8 +287,8 @@
       "readyTitle": "剧本已就绪",
       "inputPlaceholder": "输入你想推进的角色、场景或冲突...",
       "send": "发送消息",
-      "thinking": "正在整理剧情",
-      "composerHint": "Enter 发送，Shift + Enter 换行。AI 回复使用设置中的默认 LLM 模型。",
+      "thinking": "正在思考并整理剧情",
+      "composerHint": "Enter 发送，Shift + Enter 换行。AI 回复会流式加载。",
       "tokenStats": "上行 {upstream} / 下行 {downstream}",
       "tokenStatsEstimated": "约 上行 {upstream} / 下行 {downstream}",
       "tokenStatsHint": "当前会话累计 AI token 消耗；“约”表示服务商未返回 usage 时使用估算。",
@@ -229,9 +323,15 @@
       "kicker": "探索剧本",
       "heroTitle": "剧本",
       "heroDescription": "探索并选择适合当前互动小说的 AI 剧本。剧本会定义开场方式、世界观组织和对话风格。",
+      "mineTitle": "我的剧本",
+      "mineDescription": "查看你已加入或自己创建的剧本。当前默认收纳基础 AI 剧本，后续创建功能开放后会显示更多个人剧本。",
+      "communityTitle": "社区剧本",
+      "communityDescription": "探索并选择适合当前互动小说的社区 AI 剧本。剧本会定义开场方式、世界观组织和对话风格。",
       "search": "搜索剧本",
       "create": "创建",
       "createSoon": "剧本创建功能将在后续版本开放。",
+      "viewCommunity": "查看社区剧本",
+      "backToMine": "返回我的剧本",
       "categories": {
         "featured": "精选推荐",
         "world": "世界观",
@@ -241,9 +341,12 @@
       },
       "featuredTitle": "精选",
       "featuredSubtitle": "本周推荐剧本",
+      "mineSectionTitle": "我的剧本",
+      "mineSectionSubtitle": "已加入或自己创建的可用剧本",
       "popularTitle": "热门",
       "popularSubtitle": "当前可用剧本",
       "default": "默认剧本",
+      "joined": "已加入",
       "creator": "创建者",
       "close": "关闭剧本详情",
       "startChat": "开始聊天",
@@ -260,6 +363,11 @@
         "memory": "适合接入长期记忆与图谱能力"
       },
       "empty": "暂无剧本。",
+      "mineEmpty": "我的剧本库暂无剧本，可以先查看社区剧本。",
+      "source": {
+        "selfCreated": "自己创建",
+        "communityAdded": "社区添加"
+      },
       "fields": {
         "slug": "标识",
         "title": "标题",
@@ -280,6 +388,9 @@
       "brand": "新世界后台",
       "description": "运营核心",
       "backHome": "返回首页",
+      "noAccessKicker": "权限不足",
+      "noAccessTitle": "需要管理员账号",
+      "noAccessDescription": "当前账号不是管理员。请使用环境变量 ADMIN_ACCOUNT 和 ADMIN_PASSWORD 配置的管理员账号登录后再进入后台。",
       "nav": {
         "dashboard": "仪表盘",
         "threads": "交互线程",

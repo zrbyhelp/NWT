@@ -73,4 +73,25 @@ describe("home workspace utilities", () => {
     expect(enMessages[0].content).toContain("New World Novel");
     expect(enMessages.at(-1)).toEqual({ role: "user", content: "enter the forest" });
   });
+
+  it("keeps model reasoning hidden unless the viewer enables thinking content", () => {
+    const hiddenMessages = buildNarrativeLlmMessages({
+      existingMessages: [],
+      locale: "zh-CN",
+      scriptTitle: "基础 AI 剧本",
+      scriptWelcome: "剧本已就绪",
+      userContent: "进入森林"
+    });
+    const visibleMessages = buildNarrativeLlmMessages({
+      existingMessages: [],
+      locale: "zh-CN",
+      showThinking: true,
+      scriptTitle: "基础 AI 剧本",
+      scriptWelcome: "剧本已就绪",
+      userContent: "进入森林"
+    });
+
+    expect(hiddenMessages[0].content).toContain("不要展示私密推理过程");
+    expect(visibleMessages[0].content).toContain("用户可见的思考内容");
+  });
 });

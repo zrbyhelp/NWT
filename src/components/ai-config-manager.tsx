@@ -5,38 +5,54 @@ import {
   CheckCircle2,
   DatabaseZap,
   Edit3,
+  Image as ImageIcon,
   KeyRound,
   Loader2,
   Plus,
+  RefreshCw,
   Save,
   Trash2,
   X,
   XCircle
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   deleteHomeAiProvider,
+  deleteHomeImageModel,
   deleteHomeLlmModel,
   deleteHomeVectorModel,
+  fetchHomeProviderModels,
   getHomeAiConfig,
   saveHomeAiProvider,
+  saveHomeImageModel,
   saveHomeLlmModel,
   saveHomeVectorModel
 } from "@/app/[locale]/actions";
+import { requestClientAuth } from "@/lib/auth-client";
+import { isAuthRequiredError } from "@/lib/auth-types";
 import type {
   AiConfigSnapshot,
   AiProviderInput,
   AiProviderView,
+  ImageModelInput,
+  ImageModelView,
   LlmModelInput,
   LlmModelView,
+  ProviderModelOption,
   VectorModelInput,
   VectorModelView
 } from "@/lib/ai/config-types";
 import { cn } from "@/lib/utils";
 
-type AiConfigMode = "providers" | "llm" | "vectors";
+type AiConfigMode = "providers" | "llm" | "vectors" | "images";
+type ModelConfigMode = "llm" | "vectors" | "images";
+type ModelCatalogStatus = {
+  error: boolean;
+  loading: boolean;
+  providerId: string;
+};
 
 type ProviderForm = AiProviderInput & {
   id?: string;
@@ -47,6 +63,10 @@ type LlmForm = LlmModelInput & {
 };
 
 type VectorForm = VectorModelInput & {
+  id?: string;
+};
+
+type ImageForm = ImageModelInput & {
   id?: string;
 };
 
@@ -63,7 +83,6 @@ const emptyLlmForm: LlmForm = {
   providerId: "",
   displayName: "",
   modelId: "",
-  contextWindow: 128000,
   temperature: 0.7,
   enabled: true,
   isDefault: false
@@ -79,14 +98,30 @@ const emptyVectorForm: VectorForm = {
   isDefault: false
 };
 
+const emptyImageForm: ImageForm = {
+  providerId: "",
+  displayName: "",
+  modelId: "",
+  enabled: true,
+  isDefault: false
+};
+
 export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
   const t = useTranslations("home.settings.ai");
   const [config, setConfig] = useState<AiConfigSnapshot | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [llmForm, setLlmForm] = useState<LlmForm>(emptyLlmForm);
   const [vectorForm, setVectorForm] = useState<VectorForm>(emptyVectorForm);
+  const [imageForm, setImageForm] = useState<ImageForm>(emptyImageForm);
   const [formDialog, setFormDialog] = useState<AiConfigMode | null>(null);
+  const [modelCatalog, setModelCatalog] = useState<Record<string, ProviderModelOption[]>>({});
+  const [modelCatalogStatus, setModelCatalogStatus] = useState<Record<ModelConfigMode, ModelCatalogStatus>>({
+    llm: { error: false, loading: false, providerId: "" },
+    vectors: { error: false, loading: false, providerId: "" },
+    images: { error: false, loading: false, providerId: "" }
+  });
   const [isPending, startTransition] = useTransition();
   const activeProviders = useMemo(() => config?.providers.filter((provider) => provider.enabled) ?? [], [config]);
 
@@ -98,6 +133,7 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
     if (firstProviderId) {
       setLlmForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
       setVectorForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
+      setImageForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
     }
   }
 
@@ -113,8 +149,14 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
         applyConfigSnapshot(snapshot);
         setLoadError(false);
       })
-      .catch(() => {
+      .catch((error) => {
         if (mounted) {
+          if (isAuthRequiredError(error)) {
+            setAuthRequired(true);
+            requestClientAuth();
+            return;
+          }
+
           setLoadError(true);
         }
       });
@@ -124,6 +166,38 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
     };
   }, []);
 
+  const loadProviderModels = useCallback(
+    async (mode: ModelConfigMode, providerId: string, force = false) => {
+      if (!providerId) {
+        return;
+      }
+
+      if (!force && modelCatalog[providerId]) {
+        return;
+      }
+
+      setModelCatalogStatus((current) => ({
+        ...current,
+        [mode]: { error: false, loading: true, providerId }
+      }));
+
+      try {
+        const models = await fetchHomeProviderModels(providerId);
+        setModelCatalog((current) => ({ ...current, [providerId]: models }));
+        setModelCatalogStatus((current) => ({
+          ...current,
+          [mode]: { error: false, loading: false, providerId }
+        }));
+      } catch {
+        setModelCatalogStatus((current) => ({
+          ...current,
+          [mode]: { error: true, loading: false, providerId }
+        }));
+      }
+    },
+    [modelCatalog]
+  );
+
   function runAction(action: () => Promise<AiConfigSnapshot>, successMessage: string, onSuccess?: () => void) {
     startTransition(async () => {
       try {
@@ -132,9 +206,67 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
         toast.success(successMessage);
         onSuccess?.();
       } catch (error) {
+        if (isAuthRequiredError(error)) {
+          requestClientAuth();
+          toast.error(t("errors.authRequired"));
+          return;
+        }
+
         toast.error(resolveErrorMessage(error, t));
       }
     });
+  }
+
+  function getModelOptions(mode: ModelConfigMode, providerId: string) {
+    const models = modelCatalog[providerId] ?? [];
+
+    return models.filter((model) => {
+      if (mode === "llm") {
+        return model.kind !== "embedding" && model.kind !== "image";
+      }
+
+      if (mode === "images") {
+        return model.kind !== "llm" && model.kind !== "embedding";
+      }
+
+      return model.kind !== "llm" && model.kind !== "image";
+    });
+  }
+
+  function getModelCatalogStatus(mode: ModelConfigMode, providerId: string): ModelCatalogStatus {
+    const status = modelCatalogStatus[mode];
+
+    if (status.providerId !== providerId) {
+      return { error: false, loading: false, providerId };
+    }
+
+    return status;
+  }
+
+  function applyModelOption(mode: ModelConfigMode, option: ProviderModelOption) {
+    if (mode === "llm") {
+      setLlmForm((current) => ({
+        ...current,
+        displayName: current.displayName && current.displayName !== current.modelId ? current.displayName : option.displayName,
+        modelId: option.id
+      }));
+      return;
+    }
+
+    if (mode === "images") {
+      setImageForm((current) => ({
+        ...current,
+        displayName: current.displayName && current.displayName !== current.modelId ? current.displayName : option.displayName,
+        modelId: option.id
+      }));
+      return;
+    }
+
+    setVectorForm((current) => ({
+      ...current,
+      displayName: current.displayName && current.displayName !== current.modelId ? current.displayName : option.displayName,
+      modelId: option.id
+    }));
   }
 
   function resetProviderForm() {
@@ -147,6 +279,20 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
 
   function resetVectorForm() {
     setVectorForm({ ...emptyVectorForm, providerId: config?.providers[0]?.id ?? "" });
+  }
+
+  function resetImageForm() {
+    setImageForm({ ...emptyImageForm, providerId: config?.providers[0]?.id ?? "" });
+  }
+
+  if (authRequired) {
+    return (
+      <EmptyState
+        icon={KeyRound}
+        title={t("errors.authRequired")}
+        description={t("errors.authRequired")}
+      />
+    );
   }
 
   if (loadError) {
@@ -283,8 +429,10 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
           description={t("llm.description")}
           actionLabel={t("llm.createTitle")}
           onCreate={() => {
-            resetLlmForm();
+            const providerId = config.providers[0]?.id ?? "";
+            setLlmForm({ ...emptyLlmForm, providerId });
             setFormDialog("llm");
+            void loadProviderModels("llm", providerId);
           }}
           list={
           config.llmModels.length === 0 ? (
@@ -301,12 +449,12 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                       providerId: model.providerId,
                       displayName: model.displayName,
                       modelId: model.modelId,
-                      contextWindow: model.contextWindow,
                       temperature: model.temperature,
                       enabled: model.enabled,
                       isDefault: model.isDefault
                     });
                     setFormDialog("llm");
+                    void loadProviderModels("llm", model.providerId);
                   }}
                   onDelete={() => {
                     if (!window.confirm(t("llm.deleteConfirm", { name: model.displayName }))) {
@@ -314,6 +462,21 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                     }
 
                     runAction(() => deleteHomeLlmModel(model.id), t("common.deleted"));
+                  }}
+                  onSetDefault={() => {
+                    runAction(
+                      () =>
+                        saveHomeLlmModel({
+                          id: model.id,
+                          providerId: model.providerId,
+                          displayName: model.displayName,
+                          modelId: model.modelId,
+                          temperature: model.temperature,
+                          enabled: model.enabled,
+                          isDefault: true
+                        }),
+                      t("common.saved")
+                    );
                   }}
                 />
               ))}
@@ -340,18 +503,140 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
             }}
           >
             <FormHeader icon={llmForm.id ? Edit3 : Plus} title={llmForm.id ? t("llm.editTitle") : t("llm.createTitle")} />
-            <ProviderSelect providers={config.providers} value={llmForm.providerId} onChange={(value) => setLlmForm((current) => ({ ...current, providerId: value }))} />
+            <ProviderSelect
+              providers={config.providers}
+              value={llmForm.providerId}
+              onChange={(value) => {
+                setLlmForm((current) => ({ ...current, providerId: value }));
+                void loadProviderModels("llm", value);
+              }}
+            />
             <TextField label={t("fields.displayName")} value={llmForm.displayName} onChange={(value) => setLlmForm((current) => ({ ...current, displayName: value }))} required />
-            <TextField label={t("fields.modelId")} value={llmForm.modelId} onChange={(value) => setLlmForm((current) => ({ ...current, modelId: value }))} required />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberField label={t("fields.contextWindow")} value={llmForm.contextWindow} min={1} onChange={(value) => setLlmForm((current) => ({ ...current, contextWindow: value }))} />
-              <NumberField label={t("fields.temperature")} value={llmForm.temperature} min={0} max={2} step={0.1} onChange={(value) => setLlmForm((current) => ({ ...current, temperature: value }))} />
-            </div>
+            <ModelIdField
+              value={llmForm.modelId}
+              onChange={(value) => setLlmForm((current) => ({ ...current, modelId: value }))}
+              onRefresh={() => loadProviderModels("llm", llmForm.providerId, true)}
+              onSelect={(option) => applyModelOption("llm", option)}
+              options={getModelOptions("llm", llmForm.providerId)}
+              providerSelected={Boolean(llmForm.providerId)}
+              status={getModelCatalogStatus("llm", llmForm.providerId)}
+            />
+            <NumberField label={t("fields.temperature")} value={llmForm.temperature} min={0} max={2} step={0.1} onChange={(value) => setLlmForm((current) => ({ ...current, temperature: value }))} />
             <CheckboxField label={t("fields.enabled")} checked={llmForm.enabled} onChange={(checked) => setLlmForm((current) => ({ ...current, enabled: checked }))} />
             <CheckboxField label={t("fields.isDefault")} checked={llmForm.isDefault} onChange={(checked) => setLlmForm((current) => ({ ...current, isDefault: checked }))} />
             {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
             <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />
           </form>
+          </FormDialog>
+        ) : null}
+      </>
+    );
+  }
+
+  if (mode === "images") {
+    return (
+      <>
+        <AiConfigLayout
+          eyebrow={t("images.eyebrow")}
+          title={t("images.title")}
+          description={t("images.description")}
+          actionLabel={t("images.createTitle")}
+          onCreate={() => {
+            const providerId = config.providers[0]?.id ?? "";
+            setImageForm({ ...emptyImageForm, providerId });
+            setFormDialog("images");
+            void loadProviderModels("images", providerId);
+          }}
+          list={
+            config.imageModels.length === 0 ? (
+              <EmptyState icon={ImageIcon} title={t("images.emptyTitle")} description={t("images.emptyDescription")} />
+            ) : (
+              <div className="divide-y divide-border/70 border-y border-border/70">
+                {config.imageModels.map((model) => (
+                  <ImageRow
+                    key={model.id}
+                    model={model}
+                    onEdit={() => {
+                      setImageForm({
+                        id: model.id,
+                        providerId: model.providerId,
+                        displayName: model.displayName,
+                        modelId: model.modelId,
+                        enabled: model.enabled,
+                        isDefault: model.isDefault
+                      });
+                      setFormDialog("images");
+                      void loadProviderModels("images", model.providerId);
+                    }}
+                    onDelete={() => {
+                      if (!window.confirm(t("images.deleteConfirm", { name: model.displayName }))) {
+                        return;
+                      }
+
+                      runAction(() => deleteHomeImageModel(model.id), t("common.deleted"));
+                    }}
+                    onSetDefault={() => {
+                      runAction(
+                        () =>
+                          saveHomeImageModel({
+                            id: model.id,
+                            providerId: model.providerId,
+                            displayName: model.displayName,
+                            modelId: model.modelId,
+                            enabled: model.enabled,
+                            isDefault: true
+                          }),
+                        t("common.saved")
+                      );
+                    }}
+                  />
+                ))}
+              </div>
+            )
+          }
+        />
+        {formDialog === "images" ? (
+          <FormDialog
+            title={imageForm.id ? t("images.editTitle") : t("images.createTitle")}
+            onClose={() => {
+              resetImageForm();
+              setFormDialog(null);
+            }}
+          >
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                runAction(() => saveHomeImageModel(imageForm), t("common.saved"), () => {
+                  resetImageForm();
+                  setFormDialog(null);
+                });
+              }}
+            >
+              <FormHeader icon={imageForm.id ? Edit3 : Plus} title={imageForm.id ? t("images.editTitle") : t("images.createTitle")} />
+              <ProviderSelect
+                providers={config.providers}
+                value={imageForm.providerId}
+                onChange={(value) => {
+                  setImageForm((current) => ({ ...current, providerId: value }));
+                  void loadProviderModels("images", value);
+                }}
+              />
+              <TextField label={t("fields.displayName")} value={imageForm.displayName} onChange={(value) => setImageForm((current) => ({ ...current, displayName: value }))} required />
+              <ModelIdField
+                value={imageForm.modelId}
+                onChange={(value) => setImageForm((current) => ({ ...current, modelId: value }))}
+                onRefresh={() => loadProviderModels("images", imageForm.providerId, true)}
+                onSelect={(option) => applyModelOption("images", option)}
+                options={getModelOptions("images", imageForm.providerId)}
+                providerSelected={Boolean(imageForm.providerId)}
+                status={getModelCatalogStatus("images", imageForm.providerId)}
+              />
+              <CheckboxField label={t("fields.enabled")} checked={imageForm.enabled} onChange={(checked) => setImageForm((current) => ({ ...current, enabled: checked }))} />
+              <CheckboxField label={t("fields.isDefault")} checked={imageForm.isDefault} onChange={(checked) => setImageForm((current) => ({ ...current, isDefault: checked }))} />
+              {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
+              <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />
+            </form>
           </FormDialog>
         ) : null}
       </>
@@ -366,8 +651,10 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
         description={t("vectors.description")}
         actionLabel={t("vectors.createTitle")}
         onCreate={() => {
-          resetVectorForm();
+          const providerId = config.providers[0]?.id ?? "";
+          setVectorForm({ ...emptyVectorForm, providerId });
           setFormDialog("vectors");
+          void loadProviderModels("vectors", providerId);
         }}
         list={
         config.vectorModels.length === 0 ? (
@@ -390,6 +677,7 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                     isDefault: model.isDefault
                   });
                   setFormDialog("vectors");
+                  void loadProviderModels("vectors", model.providerId);
                 }}
                 onDelete={() => {
                   if (!window.confirm(t("vectors.deleteConfirm", { name: model.displayName }))) {
@@ -397,6 +685,22 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                   }
 
                   runAction(() => deleteHomeVectorModel(model.id), t("common.deleted"));
+                }}
+                onSetDefault={() => {
+                  runAction(
+                    () =>
+                      saveHomeVectorModel({
+                        id: model.id,
+                        providerId: model.providerId,
+                        displayName: model.displayName,
+                        modelId: model.modelId,
+                        dimensions: model.dimensions,
+                        maxInputTokens: model.maxInputTokens,
+                        enabled: model.enabled,
+                        isDefault: true
+                      }),
+                    t("common.saved")
+                  );
                 }}
               />
             ))}
@@ -423,9 +727,24 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
           }}
         >
           <FormHeader icon={vectorForm.id ? Edit3 : Plus} title={vectorForm.id ? t("vectors.editTitle") : t("vectors.createTitle")} />
-          <ProviderSelect providers={config.providers} value={vectorForm.providerId} onChange={(value) => setVectorForm((current) => ({ ...current, providerId: value }))} />
+          <ProviderSelect
+            providers={config.providers}
+            value={vectorForm.providerId}
+            onChange={(value) => {
+              setVectorForm((current) => ({ ...current, providerId: value }));
+              void loadProviderModels("vectors", value);
+            }}
+          />
           <TextField label={t("fields.displayName")} value={vectorForm.displayName} onChange={(value) => setVectorForm((current) => ({ ...current, displayName: value }))} required />
-          <TextField label={t("fields.modelId")} value={vectorForm.modelId} onChange={(value) => setVectorForm((current) => ({ ...current, modelId: value }))} required />
+          <ModelIdField
+            value={vectorForm.modelId}
+            onChange={(value) => setVectorForm((current) => ({ ...current, modelId: value }))}
+            onRefresh={() => loadProviderModels("vectors", vectorForm.providerId, true)}
+            onSelect={(option) => applyModelOption("vectors", option)}
+            options={getModelOptions("vectors", vectorForm.providerId)}
+            providerSelected={Boolean(vectorForm.providerId)}
+            status={getModelCatalogStatus("vectors", vectorForm.providerId)}
+          />
           <div className="grid gap-3 sm:grid-cols-2">
             <NumberField label={t("fields.dimensions")} value={vectorForm.dimensions} min={1} onChange={(value) => setVectorForm((current) => ({ ...current, dimensions: value }))} />
             <NumberField label={t("fields.maxInputTokens")} value={vectorForm.maxInputTokens} min={1} onChange={(value) => setVectorForm((current) => ({ ...current, maxInputTokens: value }))} />
@@ -508,24 +827,45 @@ function ProviderRow({
   );
 }
 
-function LlmRow({ model, onDelete, onEdit }: { model: LlmModelView; onDelete: () => void; onEdit: () => void }) {
+function LlmRow({
+  model,
+  onDelete,
+  onEdit,
+  onSetDefault
+}: {
+  model: LlmModelView;
+  onDelete: () => void;
+  onEdit: () => void;
+  onSetDefault: () => void;
+}) {
   const t = useTranslations("home.settings.ai");
 
   return (
     <ModelRow
       title={model.displayName}
       subtitle={`${model.providerName} / ${model.modelId}`}
-      meta={t("llm.meta", { context: model.contextWindow, temperature: model.temperature })}
+      meta={t("llm.meta", { temperature: model.temperature })}
       enabled={model.enabled && model.providerEnabled}
       providerEnabled={model.providerEnabled}
       isDefault={model.isDefault}
       onDelete={onDelete}
       onEdit={onEdit}
+      onSetDefault={onSetDefault}
     />
   );
 }
 
-function VectorRow({ model, onDelete, onEdit }: { model: VectorModelView; onDelete: () => void; onEdit: () => void }) {
+function VectorRow({
+  model,
+  onDelete,
+  onEdit,
+  onSetDefault
+}: {
+  model: VectorModelView;
+  onDelete: () => void;
+  onEdit: () => void;
+  onSetDefault: () => void;
+}) {
   const t = useTranslations("home.settings.ai");
 
   return (
@@ -538,6 +878,35 @@ function VectorRow({ model, onDelete, onEdit }: { model: VectorModelView; onDele
       isDefault={model.isDefault}
       onDelete={onDelete}
       onEdit={onEdit}
+      onSetDefault={onSetDefault}
+    />
+  );
+}
+
+function ImageRow({
+  model,
+  onDelete,
+  onEdit,
+  onSetDefault
+}: {
+  model: ImageModelView;
+  onDelete: () => void;
+  onEdit: () => void;
+  onSetDefault: () => void;
+}) {
+  const t = useTranslations("home.settings.ai");
+
+  return (
+    <ModelRow
+      title={model.displayName}
+      subtitle={`${model.providerName} / ${model.modelId}`}
+      meta={t("images.meta")}
+      enabled={model.enabled && model.providerEnabled}
+      providerEnabled={model.providerEnabled}
+      isDefault={model.isDefault}
+      onDelete={onDelete}
+      onEdit={onEdit}
+      onSetDefault={onSetDefault}
     />
   );
 }
@@ -548,6 +917,7 @@ function ModelRow({
   meta,
   onDelete,
   onEdit,
+  onSetDefault,
   providerEnabled,
   subtitle,
   title
@@ -557,6 +927,7 @@ function ModelRow({
   meta: string;
   onDelete: () => void;
   onEdit: () => void;
+  onSetDefault: () => void;
   providerEnabled: boolean;
   subtitle: string;
   title: string;
@@ -581,17 +952,53 @@ function ModelRow({
           <p className="mt-2 text-sm text-foreground/62">{meta}</p>
           {!providerEnabled ? <p className="mt-2 text-xs text-accent">{t("common.providerDisabled")}</p> : null}
         </div>
-        <RowActions onEdit={onEdit} onDelete={onDelete} />
+        <RowActions
+          canSetDefault={enabled && !isDefault}
+          isDefault={isDefault}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onSetDefault={onSetDefault}
+        />
       </div>
     </article>
   );
 }
 
-function RowActions({ onDelete, onEdit }: { onDelete: () => void; onEdit: () => void }) {
+function RowActions({
+  canSetDefault,
+  isDefault,
+  onDelete,
+  onEdit,
+  onSetDefault
+}: {
+  canSetDefault?: boolean;
+  isDefault?: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+  onSetDefault?: () => void;
+}) {
   const t = useTranslations("home.settings.ai");
+  const defaultActionTitle = isDefault ? t("common.default") : canSetDefault ? t("common.setDefault") : t("common.defaultUnavailable");
 
   return (
     <div className="flex shrink-0 gap-1">
+      {onSetDefault ? (
+        <button
+          type="button"
+          onClick={onSetDefault}
+          disabled={!canSetDefault}
+          className={cn(
+            "inline-flex h-8 w-8 items-center justify-center rounded-md transition disabled:cursor-not-allowed",
+            isDefault
+              ? "bg-primary/10 text-primary"
+              : "text-foreground/60 hover:bg-muted hover:text-primary disabled:bg-transparent disabled:text-foreground/28"
+          )}
+          title={defaultActionTitle}
+          aria-label={defaultActionTitle}
+        >
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={onEdit}
@@ -718,6 +1125,81 @@ function TextField({
   );
 }
 
+function ModelIdField({
+  onChange,
+  onRefresh,
+  onSelect,
+  options,
+  providerSelected,
+  status,
+  value
+}: {
+  onChange: (value: string) => void;
+  onRefresh: () => void;
+  onSelect: (option: ProviderModelOption) => void;
+  options: ProviderModelOption[];
+  providerSelected: boolean;
+  status: ModelCatalogStatus;
+  value: string;
+}) {
+  const t = useTranslations("home.settings.ai");
+
+  return (
+    <div className="space-y-2">
+      <TextField
+        label={t("fields.modelId")}
+        value={value}
+        onChange={onChange}
+        placeholder={t("fields.modelIdPlaceholder")}
+        required
+      />
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <label className="sr-only" htmlFor="provider-model-select">
+          {t("modelCatalog.selectLabel")}
+        </label>
+        <select
+          id="provider-model-select"
+          value=""
+          onChange={(event) => {
+            const option = options.find((model) => model.id === event.target.value);
+
+            if (option) {
+              onSelect(option);
+            }
+          }}
+          disabled={!providerSelected || status.loading || options.length === 0}
+          className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition focus:border-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/38"
+        >
+          <option value="">{t("modelCatalog.selectPlaceholder")}</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.ownedBy ? `${option.id} · ${option.ownedBy}` : option.id}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={!providerSelected || status.loading}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground/70 transition hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-foreground/38"
+        >
+          <RefreshCw className={cn("h-4 w-4", status.loading ? "animate-spin" : "")} aria-hidden="true" />
+          {t("modelCatalog.refresh")}
+        </button>
+      </div>
+      <p className={cn("text-xs", status.error ? "text-accent" : "text-foreground/50")}>
+        {resolveModelCatalogHint({
+          empty: options.length === 0,
+          error: status.error,
+          loading: status.loading,
+          providerSelected,
+          t
+        })}
+      </p>
+    </div>
+  );
+}
+
 function NumberField({
   label,
   max,
@@ -829,4 +1311,36 @@ function resolveErrorMessage(error: unknown, t: (key: string) => string) {
   }
 
   return t("errors.save");
+}
+
+function resolveModelCatalogHint({
+  empty,
+  error,
+  loading,
+  providerSelected,
+  t
+}: {
+  empty: boolean;
+  error: boolean;
+  loading: boolean;
+  providerSelected: boolean;
+  t: (key: string) => string;
+}) {
+  if (!providerSelected) {
+    return t("modelCatalog.waitingProvider");
+  }
+
+  if (loading) {
+    return t("modelCatalog.loading");
+  }
+
+  if (error) {
+    return t("modelCatalog.error");
+  }
+
+  if (empty) {
+    return t("modelCatalog.empty");
+  }
+
+  return t("modelCatalog.ready");
 }

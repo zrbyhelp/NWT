@@ -52,12 +52,16 @@
   border-color: hsl(var(--border));
 }
 
+html {
+  font-size: calc(16px * var(--app-font-scale));
+}
+
 body {
   min-height: 100vh;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   font-family: var(--font-sans);
-  font-size: calc(16px * var(--app-font-scale));
+  font-size: 1rem;
   line-height: var(--app-line-height);
 }
 
@@ -66,6 +70,19 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+main,
+aside,
+section,
+article,
+nav,
+header,
+footer,
+form,
+dialog {
+  --app-density-padding: calc(1rem * var(--app-density));
+  --app-density-gap: calc(0.75rem * var(--app-density));
 }
 
 .scrollbar-autohide {

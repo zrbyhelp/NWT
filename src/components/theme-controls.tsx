@@ -22,7 +22,9 @@ export function ThemeControls() {
 
   useEffect(() => {
     const preset = typographyPresets.find((item) => item.id === typography) ?? typographyPresets[1];
-    document.documentElement.style.setProperty("--app-font-scale", String(preset.fontScale));
+    const effectiveFontScale = preset.fontScale * (1 + (preset.density - 1) * 0.5);
+
+    document.documentElement.style.setProperty("--app-font-scale", String(effectiveFontScale));
     document.documentElement.style.setProperty("--app-line-height", String(preset.lineHeight));
     document.documentElement.style.setProperty("--app-density", String(preset.density));
   }, [typography]);

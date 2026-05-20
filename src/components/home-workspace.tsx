@@ -1,12 +1,12 @@
 "use client";
 
 import {
+  ArrowLeft,
   Bot,
   BookOpen,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Circle,
   ClipboardList,
   Globe2,
   FileText,
@@ -15,6 +15,7 @@ import {
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Search,
   SendHorizontal,
   Sparkles,
@@ -23,32 +24,51 @@ import {
   X
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { createHomeConversation, deleteHomeConversation, sendHomeMessage } from "@/app/[locale]/actions";
+import { createHomeConversation, deleteHomeConversation } from "@/app/[locale]/actions";
+import { AuthDialog } from "@/components/auth-dialog";
 import { HeaderActions } from "@/components/header-actions";
+import { UserAvatar } from "@/components/user-avatar";
 import type { Locale } from "@/i18n/routing";
-import type { WorkspaceData } from "@/lib/home-workspace";
+import { authRequiredEventName } from "@/lib/auth-client";
+import { authRequiredCode, isAuthRequiredError, type AuthViewer } from "@/lib/auth-types";
+import type { WorkspaceConversation, WorkspaceData, WorkspaceScript } from "@/lib/home-workspace";
 import { formatDisplayTime } from "@/lib/format";
 import { createConversationTitle, filterConversations } from "@/lib/home-workspace-utils";
 import { cn } from "@/lib/utils";
 
 type ViewMode = "scriptPicker" | "scriptManager" | "chat";
+type ScriptManagerView = "mine" | "community";
+type StreamingReply = {
+  content: string;
+  conversationId: string;
+};
+type MessageStreamEvent =
+  | { type: "delta"; content: string }
+  | { type: "done"; conversation: WorkspaceConversation }
+  | { type: "error"; message: string };
 const scriptCategories = ["featured", "world", "roleplay", "writing", "analysis"] as const;
 const scriptPickerPageSize = 6;
 
 export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const locale = useLocale() as Locale;
+  const router = useRouter();
   const t = useTranslations("home.workspace");
   const scriptT = useTranslations("home.scripts");
   const homeT = useTranslations("home");
-  const [scripts] = useState(data.scripts);
+  const authT = useTranslations("home.auth");
+  const myScripts = data.myScripts;
+  const communityScripts = data.communityScripts;
+  const [viewer, setViewer] = useState(data.viewer);
   const [conversations, setConversations] = useState(data.conversations);
   const [activeConversationId, setActiveConversationId] = useState(data.conversations[0]?.id ?? "");
   const [viewMode, setViewMode] = useState<ViewMode>(data.conversations.length > 0 ? "chat" : "scriptPicker");
-  const [activeScriptId, setActiveScriptId] = useState(data.scripts[0]?.id ?? "");
+  const [scriptManagerView, setScriptManagerView] = useState<ScriptManagerView>("mine");
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
+  const [streamingReply, setStreamingReply] = useState<StreamingReply | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [scriptSearch, setScriptSearch] = useState("");
   const [scriptCategory, setScriptCategory] = useState("featured");
@@ -61,18 +81,22 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const scriptScrollRef = useRef<HTMLDivElement>(null);
   const scriptSectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const optimisticIdRef = useRef(0);
+  const pendingAuthActionRef = useRef<((viewer: AuthViewer) => void) | null>(null);
   const persistenceAvailable = data.persistenceAvailable;
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
 
   const activeConversation = conversations.find((item) => item.id === activeConversationId);
-  const activeScript = scripts.find((script) => script.id === activeScriptId) ?? scripts[0];
-  const detailScript = scripts.find((script) => script.id === detailScriptId);
+  const scriptPickerScripts = myScripts.length > 0 ? myScripts : communityScripts;
+  const managerScripts = scriptManagerView === "community" ? communityScripts : myScripts;
+  const allScripts = useMemo(() => mergeScripts(communityScripts, myScripts), [communityScripts, myScripts]);
+  const detailScript = allScripts.find((script) => script.id === detailScriptId);
   const scriptsByCategory = useMemo(() => {
     const keyword = scriptSearch.trim().toLowerCase();
     const filtered = keyword
-      ? scripts.filter((script) =>
+      ? managerScripts.filter((script) =>
           [script.title, script.description, script.welcome].some((value) => value.toLowerCase().includes(keyword))
         )
-      : scripts;
+      : managerScripts;
 
     return scriptCategories
       .map((category) => ({
@@ -80,26 +104,56 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         scripts: category === "featured" ? filtered.slice(0, 4) : filtered.filter((script) => script.category === category)
       }))
       .filter((group) => group.scripts.length > 0);
-  }, [scriptSearch, scripts]);
+  }, [managerScripts, scriptSearch]);
   const filteredConversations = useMemo(() => {
     return filterConversations(conversations, search);
   }, [conversations, search]);
   const groupedConversations = useMemo(() => {
     return groupConversations(filteredConversations);
   }, [filteredConversations]);
-  const scriptPickerPageCount = Math.max(1, Math.ceil(scripts.length / scriptPickerPageSize));
+  const scriptPickerPageCount = Math.max(1, Math.ceil(scriptPickerScripts.length / scriptPickerPageSize));
   const normalizedScriptPickerPage = Math.min(scriptPickerPage, scriptPickerPageCount - 1);
-  const visiblePickerScripts = scripts.slice(
+  const visiblePickerScripts = scriptPickerScripts.slice(
     normalizedScriptPickerPage * scriptPickerPageSize,
     normalizedScriptPickerPage * scriptPickerPageSize + scriptPickerPageSize
   );
+  const shouldShowScriptPager = scriptPickerScripts.length > scriptPickerPageSize;
   const activeTokenUsage = activeConversation?.tokenUsage ?? { upstream: 0, downstream: 0, estimated: false };
+  const activeStreamingReply = streamingReply?.conversationId === activeConversation?.id ? streamingReply : null;
+  const isBusy = isPending || Boolean(streamingReply);
   const tokenStatsKey = activeTokenUsage.estimated ? "tokenStatsEstimated" : "tokenStats";
   const tokenUsageLabel = t(tokenStatsKey, {
     downstream: new Intl.NumberFormat(locale).format(activeTokenUsage.downstream),
     upstream: new Intl.NumberFormat(locale).format(activeTokenUsage.upstream)
   });
   const promptSuggestions = [t("suggestions.character"), t("suggestions.conflict"), t("suggestions.world")];
+  const isCommunityScriptView = scriptManagerView === "community";
+
+  function requestAuth(afterLogin?: (viewer: AuthViewer) => void) {
+    pendingAuthActionRef.current = afterLogin ?? null;
+    setAuthDialogOpen(true);
+  }
+
+  function handleAuthenticated(nextViewer: AuthViewer) {
+    const pendingAction = pendingAuthActionRef.current;
+
+    pendingAuthActionRef.current = null;
+    setViewer(nextViewer);
+    setAuthDialogOpen(false);
+    router.refresh();
+    pendingAction?.(nextViewer);
+  }
+
+  function handleViewerChange(nextViewer: AuthViewer | null) {
+    setViewer(nextViewer);
+
+    if (!nextViewer) {
+      setConversations([]);
+      setActiveConversationId("");
+      setViewMode("scriptPicker");
+      setScriptManagerView("community");
+    }
+  }
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -137,6 +191,16 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [titleMenuOpen]);
+
+  useEffect(() => {
+    function openAuthDialog() {
+      requestAuth();
+    }
+
+    window.addEventListener(authRequiredEventName, openAuthDialog);
+
+    return () => window.removeEventListener(authRequiredEventName, openAuthDialog);
+  }, []);
 
   useEffect(() => {
     if (viewMode !== "scriptManager") {
@@ -185,7 +249,34 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   function showScriptManager() {
     setTitleMenuOpen(false);
     setActiveConversationId("");
+    setScriptManagerView(viewer ? "mine" : "community");
+    setScriptCategory("featured");
+    setScriptSearch("");
     setViewMode("scriptManager");
+  }
+
+  function showCommunityScripts() {
+    setDetailScriptId("");
+    setScriptManagerView("community");
+    setScriptCategory("featured");
+    setScriptSearch("");
+  }
+
+  function showMyScripts() {
+    if (!viewer) {
+      requestAuth(() => {
+        setDetailScriptId("");
+        setScriptManagerView("mine");
+        setScriptCategory("featured");
+        setScriptSearch("");
+      });
+      return;
+    }
+
+    setDetailScriptId("");
+    setScriptManagerView("mine");
+    setScriptCategory("featured");
+    setScriptSearch("");
   }
 
   function selectConversation(conversationId: string) {
@@ -194,7 +285,12 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setViewMode("chat");
   }
 
-  function handleCreateConversation(scriptId: string) {
+  function handleCreateConversation(scriptId: string, authenticatedViewer = viewer) {
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => handleCreateConversation(scriptId, nextViewer));
+      return;
+    }
+
     if (!persistenceAvailable) {
       toast.error(t("errors.persistence"));
       return;
@@ -207,14 +303,24 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         setTitleMenuOpen(false);
         setActiveConversationId(conversation.id);
         setViewMode("chat");
-      } catch {
+      } catch (error) {
+        if (isAuthRequiredError(error)) {
+          requestAuth((nextViewer) => handleCreateConversation(scriptId, nextViewer));
+          return;
+        }
+
         toast.error(t("errors.create"));
       }
     });
   }
 
-  function handleSendMessage() {
+  function handleSendMessage(authenticatedViewer = viewer) {
     if (!activeConversation || !draft.trim()) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => handleSendMessage(nextViewer));
       return;
     }
 
@@ -246,29 +352,48 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       optimisticConversation,
       ...current.filter((item) => item.id !== optimisticConversation.id)
     ]);
+    setStreamingReply({ conversationId: activeConversation.id, content: "" });
 
-    startTransition(async () => {
+    void (async () => {
       try {
-        const conversation = await sendHomeMessage(activeConversation.id, content, locale);
+        const conversation = await streamHomeMessage(activeConversation.id, content, locale, (delta) => {
+          setStreamingReply((current) =>
+            current?.conversationId === activeConversation.id
+              ? { ...current, content: current.content + delta }
+              : current
+          );
+        });
         setConversations((current) => [
           conversation,
           ...current.filter((item) => item.id !== conversation.id)
         ]);
         setActiveConversationId(conversation.id);
         setViewMode("chat");
-      } catch {
+      } catch (error) {
         setDraft(content);
         setConversations((current) => [
           previousConversation,
           ...current.filter((item) => item.id !== previousConversation.id)
         ]);
+        if (isAuthRequiredError(error)) {
+          requestAuth((nextViewer) => handleSendMessage(nextViewer));
+          return;
+        }
+
         toast.error(t("errors.send"));
+      } finally {
+        setStreamingReply(null);
       }
-    });
+    })();
   }
 
-  function handleDeleteConversation() {
+  function handleDeleteConversation(authenticatedViewer = viewer) {
     if (!activeConversation) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => handleDeleteConversation(nextViewer));
       return;
     }
 
@@ -296,7 +421,12 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         setActiveConversationId(nextConversationId);
         setViewMode(nextConversationId ? "chat" : "scriptPicker");
         toast.success(t("conversationActions.deleted"));
-      } catch {
+      } catch (error) {
+        if (isAuthRequiredError(error)) {
+          requestAuth((nextViewer) => handleDeleteConversation(nextViewer));
+          return;
+        }
+
         toast.error(t("errors.delete"));
       }
     });
@@ -451,15 +581,29 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         </div>
 
         <div className={cn("border-t border-border/70 p-3", sidebarCollapsed && "hidden lg:hidden")}>
-          <div className="rounded-xl bg-background/70 px-3 py-2 text-xs text-foreground/54">
-            <p className="flex items-center gap-2">
-              <Circle
-                className={cn("h-2.5 w-2.5 fill-current", persistenceAvailable ? "text-primary" : "text-accent")}
-                aria-hidden="true"
-              />
-              {persistenceAvailable ? t("status.connected") : t("status.readonly")}
-            </p>
-            <p className="mt-1 text-foreground/42">{t("status.llm")}</p>
+          <div className="flex items-center gap-3 px-1 py-1">
+            <UserAvatar
+              avatarUrl={viewer?.avatarUrl}
+              name={viewer?.displayName ?? viewer?.account ?? t("account.anonymous")}
+              className="h-10 w-10"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-foreground/82">
+                {viewer?.displayName ?? t("account.anonymous")}
+              </p>
+              <p className="truncate text-xs text-foreground/46">
+                {viewer?.account ?? t("account.loginHint")}
+              </p>
+            </div>
+            {!viewer ? (
+              <button
+                type="button"
+                onClick={() => requestAuth()}
+                className="shrink-0 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-primary/90"
+              >
+                {authT("login")}
+              </button>
+            ) : null}
           </div>
         </div>
       </aside>
@@ -473,20 +617,17 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                   <button
                     type="button"
                     onClick={() => setTitleMenuOpen((open) => !open)}
-                    className="-ml-2 flex max-w-full flex-col items-start rounded-md px-2 py-1 text-left transition hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+                    className="-ml-2 flex max-w-full items-center rounded-md px-2 py-2 text-left transition hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
                     aria-expanded={titleMenuOpen}
                     aria-haspopup="menu"
                     aria-label={t("conversationActions.open")}
                   >
                     <span className="flex max-w-full items-center gap-1.5 text-sm font-medium text-foreground/82">
-                      <span className="truncate">{activeConversation.title}</span>
+                      <span className="truncate">{activeConversation.scriptTitle}</span>
                       <ChevronDown
                         className={cn("h-3.5 w-3.5 shrink-0 text-foreground/42 transition", titleMenuOpen && "rotate-180")}
                         aria-hidden="true"
                       />
-                    </span>
-                    <span className="hidden max-w-full truncate text-xs text-foreground/48 sm:block">
-                      {activeConversation.scriptTitle}
                     </span>
                   </button>
                   {titleMenuOpen ? (
@@ -496,7 +637,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                     >
                       <button
                         type="button"
-                        onClick={handleDeleteConversation}
+                        onClick={() => handleDeleteConversation()}
                         disabled={isPending || !persistenceAvailable}
                         className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-red-600 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-55 dark:text-red-400"
                         role="menuitem"
@@ -526,26 +667,50 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
               >
                 {tokenUsageLabel}
               </span>
-              <HeaderActions />
+              <HeaderActions viewer={viewer} onLoginClick={() => requestAuth()} onViewerChange={handleViewerChange} />
             </div>
           </header>
         ) : null}
 
         {viewMode === "scriptManager" ? (
           <div ref={scriptScrollRef} className="scrollbar-autohide min-h-0 flex-1 overflow-y-auto px-4">
-            <button
-              type="button"
-              onClick={() => toast.info(scriptT("createSoon"))}
-              className="absolute right-4 top-3 z-40 inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3 text-sm font-medium text-background transition hover:bg-foreground/88"
-            >
-              <span className="text-base leading-none">+</span>
-              {scriptT("create")}
-            </button>
+            <div className="absolute right-4 top-3 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-2">
+              {isCommunityScriptView ? (
+                <button
+                  type="button"
+                  onClick={showMyScripts}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted"
+                >
+                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  {scriptT("backToMine")}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toast.info(scriptT("createSoon"))}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3 text-sm font-medium text-background transition hover:bg-foreground/88"
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    {scriptT("create")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={showCommunityScripts}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted"
+                  >
+                    <Globe2 className="h-4 w-4" aria-hidden="true" />
+                    {scriptT("viewCommunity")}
+                  </button>
+                </>
+              )}
+            </div>
             <div className="mx-auto w-full max-w-4xl">
               <div className="pt-12 text-center">
-                <p className="text-sm text-foreground/54">{scriptT("kicker")}</p>
-                <h1 className="mt-2 text-4xl font-semibold tracking-normal">{scriptT("heroTitle")}</h1>
-                <p className="mx-auto mt-3 max-w-2xl text-sm text-foreground/58">{scriptT("heroDescription")}</p>
+                <h1 className="text-4xl font-semibold tracking-normal">{scriptT(isCommunityScriptView ? "communityTitle" : "mineTitle")}</h1>
+                <p className="mx-auto mt-3 max-w-2xl text-sm text-foreground/58">
+                  {scriptT(isCommunityScriptView ? "communityDescription" : "mineDescription")}
+                </p>
               </div>
 
               <div className="sticky top-0 z-20 mx-auto mt-6 max-w-2xl bg-background pb-3 pt-3">
@@ -586,7 +751,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
               {scriptsByCategory.length === 0 ? (
                 <p className="mx-auto mt-10 max-w-2xl rounded-2xl bg-muted/40 p-5 text-sm text-foreground/58">
-                  {scriptT("empty")}
+                  {scriptT(isCommunityScriptView ? "empty" : "mineEmpty")}
                 </p>
               ) : (
                 <div className="mx-auto mt-8 w-full max-w-2xl space-y-12">
@@ -601,10 +766,18 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                     >
                       <div className="mb-4">
                         <h2 className="text-2xl font-semibold tracking-normal">
-                          {group.category === "featured" ? scriptT("featuredTitle") : scriptT(`categories.${group.category}`)}
+                          {isCommunityScriptView
+                            ? group.category === "featured"
+                              ? scriptT("featuredTitle")
+                              : scriptT(`categories.${group.category}`)
+                            : scriptT("mineSectionTitle")}
                         </h2>
                         <p className="text-sm text-foreground/50">
-                          {group.category === "featured" ? scriptT("featuredSubtitle") : scriptT("popularSubtitle")}
+                          {isCommunityScriptView
+                            ? group.category === "featured"
+                              ? scriptT("featuredSubtitle")
+                              : scriptT("popularSubtitle")
+                            : scriptT("mineSectionSubtitle")}
                         </p>
                       </div>
 
@@ -615,9 +788,19 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                             rank={index + 1}
                             script={script}
                             isDefault={script.slug === "base-ai-script"}
-                            labels={{ default: scriptT("default"), creator: scriptT("creator"), chats: scriptT("metrics.chats") }}
+                            labels={{
+                              chats: scriptT("metrics.chats"),
+                              creator: scriptT("creator"),
+                              default: scriptT("default"),
+                              joined: scriptT("joined")
+                            }}
+                            librarySourceLabel={
+                              !isCommunityScriptView && script.librarySource
+                                ? scriptT(script.librarySource === "SELF_CREATED" ? "source.selfCreated" : "source.communityAdded")
+                                : undefined
+                            }
+                            showJoined={isCommunityScriptView}
                             onOpen={() => {
-                              setActiveScriptId(script.id);
                               setDetailScriptId(script.id);
                             }}
                           />
@@ -630,7 +813,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             </div>
 
             {detailScript ? (
-              <div className="fixed inset-0 z-40 flex items-center justify-center bg-muted p-3" onClick={() => setDetailScriptId("")}>
+              <div className="fixed inset-0 z-40 flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={() => setDetailScriptId("")}>
                 <section
                   className="flex h-[42rem] max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
                   onClick={(event) => event.stopPropagation()}
@@ -654,6 +837,19 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                     <p className="mt-2 text-sm text-foreground/50">
                       {scriptT("creator")}：{homeT("kicker")}
                     </p>
+                    {detailScript.librarySource ? (
+                      <p className="mt-3">
+                        <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground/58">
+                          {scriptT(detailScript.librarySource === "SELF_CREATED" ? "source.selfCreated" : "source.communityAdded")}
+                        </span>
+                      </p>
+                    ) : detailScript.inLibrary ? (
+                      <p className="mt-3">
+                        <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground/58">
+                          {scriptT("joined")}
+                        </span>
+                      </p>
+                    ) : null}
                     <p className="mx-auto mt-4 max-w-md text-sm text-foreground/72">{detailScript.description}</p>
 
                     <div className="mt-8 grid grid-cols-3 gap-4">
@@ -717,53 +913,17 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
               </div>
               <h2 className="text-2xl font-semibold tracking-normal md:text-3xl">{t("welcomeQuestion")}</h2>
               <p className="mx-auto mt-2 max-w-xl text-sm text-foreground/58">{t("scriptDescription")}</p>
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
-                {promptSuggestions.map((suggestion) => (
-                  <span
-                    key={suggestion}
-                    className="rounded-full border border-border px-3 py-1.5 text-xs text-foreground/62"
-                  >
-                    {suggestion}
-                  </span>
-                ))}
-              </div>
             </div>
 
               <div className="mt-6 w-full">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={showPreviousScriptPage}
-                    disabled={scriptPickerPageCount <= 1}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-foreground/62 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                    aria-label={t("scriptPager.previous")}
-                    title={t("scriptPager.previous")}
-                  >
-                    <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                  <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-foreground/50">
-                    {normalizedScriptPickerPage + 1} / {scriptPickerPageCount}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={showNextScriptPage}
-                    disabled={scriptPickerPageCount <= 1}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-foreground/62 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                    aria-label={t("scriptPager.next")}
-                    title={t("scriptPager.next")}
-                  >
-                    <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-
-                <div className="grid w-full gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="flex w-full flex-wrap justify-center gap-2">
                   {visiblePickerScripts.map((script) => (
                     <button
                       type="button"
                       key={script.id}
                       onClick={() => handleCreateConversation(script.id)}
                       disabled={isPending || !persistenceAvailable}
-                      className="group grid h-28 grid-cols-[2rem_minmax(0,1fr)] items-start gap-2 rounded-lg border border-border bg-background p-3 text-left transition hover:border-primary/35 hover:bg-muted/36 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="group grid h-28 w-full grid-cols-[2rem_minmax(0,1fr)] items-start gap-2 rounded-lg border border-border bg-background p-3 text-left transition hover:border-primary/35 hover:bg-muted/36 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-70 sm:w-[calc((100%_-_0.5rem)/2)] lg:w-[calc((100%_-_1rem)/3)]"
                       aria-label={t("startScriptWithName", { title: script.title })}
                     >
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-primary transition group-hover:bg-primary group-hover:text-white">
@@ -776,6 +936,34 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                     </button>
                   ))}
                 </div>
+
+                {shouldShowScriptPager ? (
+                  <div className="mt-3 flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={showPreviousScriptPage}
+                      disabled={scriptPickerPageCount <= 1}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-foreground/62 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+                      aria-label={t("scriptPager.previous")}
+                      title={t("scriptPager.previous")}
+                    >
+                      <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-foreground/50">
+                      {normalizedScriptPickerPage + 1} / {scriptPickerPageCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={showNextScriptPage}
+                      disabled={scriptPickerPageCount <= 1}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-foreground/62 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+                      aria-label={t("scriptPager.next")}
+                      title={t("scriptPager.next")}
+                    >
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : null}
               </div>
                     </div>
           </div>
@@ -790,18 +978,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                   </div>
                   <p className="text-lg font-semibold">{t("readyTitle")}</p>
                   <p className="mx-auto mt-2 max-w-xl text-sm text-foreground/62">{activeConversation.scriptWelcome}</p>
-                  <div className="mx-auto mt-6 grid max-w-2xl gap-2 sm:grid-cols-3">
-                    {promptSuggestions.map((suggestion) => (
-                      <button
-                        type="button"
-                        key={suggestion}
-                        onClick={() => setDraft(suggestion)}
-                        className="rounded-2xl border border-border px-3 py-3 text-left text-sm text-foreground/68 transition hover:bg-muted/44"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
                 </div>
               ) : (
                 activeConversation.messages.map((message) => (
@@ -833,16 +1009,20 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                   </div>
                 ))
               )}
-              {isPending && activeConversation.messages.length > 0 ? (
+              {activeStreamingReply ? (
                 <div className="flex gap-3">
                   <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white">
                     <Bot className="h-4 w-4" aria-hidden="true" />
                   </span>
                   <div className="rounded-2xl bg-muted/40 px-4 py-3 text-sm text-foreground/58">
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      {t("thinking")}
-                    </span>
+                    {activeStreamingReply.content ? (
+                      <p className="whitespace-pre-wrap text-foreground">{activeStreamingReply.content}</p>
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        {t("thinking")}
+                      </span>
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -874,11 +1054,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                 <div className="flex items-center justify-end px-1 pb-1">
                   <button
                     type="submit"
-                    disabled={isPending || !draft.trim() || !persistenceAvailable}
+                    disabled={isBusy || !draft.trim() || !persistenceAvailable}
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/38"
                     aria-label={t("send")}
                   >
-                    {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
+                    {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
                   </button>
                 </div>
               </form>
@@ -887,8 +1067,75 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
           </>
         )}
       </section>
+      <AuthDialog
+        open={authDialogOpen}
+        onClose={() => {
+          pendingAuthActionRef.current = null;
+          setAuthDialogOpen(false);
+        }}
+        onAuthenticated={handleAuthenticated}
+      />
     </div>
   );
+}
+
+async function streamHomeMessage(
+  conversationId: string,
+  content: string,
+  locale: Locale,
+  onDelta: (content: string) => void
+) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/stream`, {
+    body: JSON.stringify({ content, locale }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST"
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error("Message stream failed.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const event = JSON.parse(line) as MessageStreamEvent;
+
+      if (event.type === "delta") {
+        onDelta(event.content);
+      }
+
+      if (event.type === "done") {
+        return event.conversation;
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  throw new Error("Message stream ended without a final conversation.");
+}
+
+function mergeScripts(primaryScripts: WorkspaceScript[], preferredScripts: WorkspaceScript[]) {
+  const scriptsById = new Map<string, WorkspaceScript>();
+
+  primaryScripts.forEach((script) => scriptsById.set(script.id, script));
+  preferredScripts.forEach((script) => scriptsById.set(script.id, script));
+
+  return Array.from(scriptsById.values());
 }
 
 function groupConversations<T extends { updatedAt: string }>(conversations: T[]) {
@@ -910,15 +1157,19 @@ function groupConversations<T extends { updatedAt: string }>(conversations: T[])
 function ScriptExploreCard({
   isDefault,
   labels,
+  librarySourceLabel,
   onOpen,
   rank,
-  script
+  script,
+  showJoined
 }: {
   isDefault: boolean;
-  labels: { chats: string; creator: string; default: string };
+  labels: { chats: string; creator: string; default: string; joined: string };
+  librarySourceLabel?: string;
   onOpen: () => void;
   rank: number;
-  script: { slug: string; title: string; description: string };
+  script: WorkspaceScript;
+  showJoined: boolean;
 }) {
   return (
     <button
@@ -934,10 +1185,20 @@ function ScriptExploreCard({
       </span>
       <span className="min-w-0">
         <span className="flex items-center gap-2">
-          <span className="truncate text-base font-semibold">{script.title}</span>
+          <span className="min-w-0 truncate text-base font-semibold">{script.title}</span>
           {isDefault ? (
             <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/50">
               {labels.default}
+            </span>
+          ) : null}
+          {librarySourceLabel ? (
+            <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/50">
+              {librarySourceLabel}
+            </span>
+          ) : null}
+          {showJoined && script.inLibrary ? (
+            <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/50">
+              {labels.joined}
             </span>
           ) : null}
         </span>

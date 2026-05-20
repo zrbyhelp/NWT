@@ -6,29 +6,87 @@ datasource db {
   provider = "mysql"
 }
 
-model StoryScript {
-  id            String         @id @default(cuid())
-  slug          String         @unique
-  titleZh       String
-  titleEn       String
-  descriptionZh String         @db.Text
-  descriptionEn String         @db.Text
-  welcomeZh     String         @db.Text
-  welcomeEn     String         @db.Text
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+enum StoryScriptLibrarySource {
+  SELF_CREATED
+  COMMUNITY_ADDED
+}
+
+enum AppUserRole {
+  USER
+  ADMIN
+}
+
+model AppUser {
+  id            String                    @id @default(cuid())
+  slug          String                    @unique
+  account       String?                   @unique
+  passwordHash  String?                   @db.Text
+  role          AppUserRole               @default(USER)
+  displayName   String
+  avatarUrl     String?                   @db.Text
+  showAiThinking Boolean                  @default(false)
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  scriptLibrary StoryScriptLibraryEntry[]
   conversations Conversation[]
+  authSessions  AuthSession[]
+  aiProviders   AiProvider[]
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model StoryScript {
+  id             String                    @id @default(cuid())
+  slug           String                    @unique
+  titleZh        String
+  titleEn        String
+  descriptionZh  String                    @db.Text
+  descriptionEn  String                    @db.Text
+  welcomeZh      String                    @db.Text
+  welcomeEn      String                    @db.Text
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  conversations  Conversation[]
+  libraryEntries StoryScriptLibraryEntry[]
+}
+
+model StoryScriptLibraryEntry {
+  id        String                   @id @default(cuid())
+  userId    String
+  user      AppUser                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scriptId  String
+  script    StoryScript              @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  source    StoryScriptLibrarySource @default(COMMUNITY_ADDED)
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+
+  @@unique([userId, scriptId])
+  @@index([scriptId])
+  @@index([userId, createdAt])
 }
 
 model Conversation {
   id        String        @id @default(cuid())
   title     String
+  userId    String
+  user      AppUser       @relation(fields: [userId], references: [id])
   scriptId  String
   script    StoryScript   @relation(fields: [scriptId], references: [id])
   messages  ChatMessage[]
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
+  @@index([userId, updatedAt])
   @@index([scriptId])
   @@index([updatedAt])
 }
@@ -49,8 +107,10 @@ model ChatMessage {
 
 model AiProvider {
   id              String        @id @default(cuid())
+  userId          String
+  user            AppUser       @relation(fields: [userId], references: [id], onDelete: Cascade)
   name            String
-  slug            String        @unique
+  slug            String
   baseUrl         String
   encryptedApiKey String?       @db.Text
   enabled         Boolean       @default(true)
@@ -58,8 +118,10 @@ model AiProvider {
   updatedAt       DateTime      @updatedAt
   llmModels       LlmModel[]
   vectorModels    VectorModel[]
+  imageModels     ImageModel[]
 
-  @@index([enabled])
+  @@unique([userId, slug])
+  @@index([userId, enabled])
 }
 
 model LlmModel {
@@ -68,7 +130,6 @@ model LlmModel {
   provider      AiProvider @relation(fields: [providerId], references: [id])
   displayName   String
   modelId       String
-  contextWindow Int        @default(128000)
   temperature   Float      @default(0.7)
   enabled       Boolean    @default(true)
   isDefault     Boolean    @default(false)
@@ -92,6 +153,22 @@ model VectorModel {
   isDefault      Boolean    @default(false)
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId])
+  @@index([enabled, isDefault])
+}
+
+model ImageModel {
+  id           String     @id @default(cuid())
+  providerId   String
+  provider     AiProvider @relation(fields: [providerId], references: [id])
+  displayName  String
+  modelId      String
+  enabled      Boolean    @default(true)
+  isDefault    Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   @@unique([providerId, modelId])
   @@index([providerId])

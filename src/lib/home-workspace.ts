@@ -2,7 +2,9 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 import type { Locale } from "@/i18n/routing";
-import { generateDefaultLlmReply } from "@/lib/ai/runtime";
+import { generateDefaultLlmReply, streamDefaultLlmReply, type RuntimeChatMessage, type RuntimeTokenUsage } from "@/lib/ai/runtime";
+import { ensureConfiguredAdminUser, getCurrentViewer, requireAuth } from "@/lib/auth";
+import type { AuthViewer } from "@/lib/auth-types";
 import {
   buildNarrativeLlmMessages,
   createConversationTitle,
@@ -12,8 +14,11 @@ import {
 import { prisma } from "@/lib/prisma";
 
 const baseScriptSlug = "base-ai-script";
+const defaultUserId = "default-local";
+const defaultUserSlug = "default-local";
 const assistantRole = "assistant";
 const userRole = "user";
+const communityAddedSource = "COMMUNITY_ADDED" satisfies WorkspaceScriptLibrarySource;
 
 const builtInScripts = [
   {
@@ -145,7 +150,11 @@ export type WorkspaceScript = {
   title: string;
   description: string;
   welcome: string;
+  inLibrary: boolean;
+  librarySource?: WorkspaceScriptLibrarySource;
 };
+
+export type WorkspaceScriptLibrarySource = "SELF_CREATED" | "COMMUNITY_ADDED";
 
 export type WorkspaceMessage = {
   id: string;
@@ -175,28 +184,56 @@ export type WorkspaceConversation = {
 };
 
 export type WorkspaceData = {
-  scripts: WorkspaceScript[];
+  viewer: AuthViewer | null;
+  myScripts: WorkspaceScript[];
+  communityScripts: WorkspaceScript[];
   conversations: WorkspaceConversation[];
   persistenceAvailable: boolean;
 };
 
 export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceData> {
   try {
-    await ensureBaseScript();
+    const viewer = await getCurrentViewer();
+    const workspaceUserId = viewer?.id ?? defaultUserId;
 
-    const [scripts, conversations] = await Promise.all([
+    await ensureHomeWorkspaceDefaults(workspaceUserId);
+
+    const [communityScripts, libraryEntries, conversations] = await Promise.all([
       prisma.storyScript.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.conversation.findMany({
-        include: {
-          script: true,
-          messages: { orderBy: { createdAt: "asc" } }
-        },
-        orderBy: { updatedAt: "desc" }
-      })
+      prisma.storyScriptLibraryEntry.findMany({
+        where: { userId: workspaceUserId },
+        include: { script: true },
+        orderBy: { createdAt: "asc" }
+      }),
+      viewer
+        ? prisma.conversation.findMany({
+            where: { userId: viewer.id },
+            include: {
+              script: true,
+              messages: { orderBy: { createdAt: "asc" } }
+            },
+            orderBy: { updatedAt: "desc" }
+          })
+        : Promise.resolve([])
     ]);
+    const librarySourceByScriptId = new Map(
+      libraryEntries.map((entry) => [entry.scriptId, entry.source as WorkspaceScriptLibrarySource])
+    );
 
     return {
-      scripts: scripts.map((script) => mapScript(script, locale)),
+      viewer,
+      myScripts: libraryEntries.map((entry) =>
+        mapScript(entry.script, locale, {
+          inLibrary: true,
+          librarySource: entry.source as WorkspaceScriptLibrarySource
+        })
+      ),
+      communityScripts: communityScripts.map((script) =>
+        mapScript(script, locale, {
+          inLibrary: librarySourceByScriptId.has(script.id),
+          librarySource: librarySourceByScriptId.get(script.id)
+        })
+      ),
       conversations: conversations.map((conversation) => {
         const messages = conversation.messages.map(mapMessage);
         const lastMessage = messages.at(-1)?.content ?? mapScript(conversation.script, locale).welcome;
@@ -220,12 +257,16 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
 }
 
 export async function createConversation(scriptId: string, locale: Locale) {
+  const viewer = await requireAuth();
   const script = await prisma.storyScript.findUniqueOrThrow({ where: { id: scriptId } });
   const title = mapScript(script, locale).title;
+
+  await ensureHomeWorkspaceDefaults(viewer.id);
 
   const conversation = await prisma.conversation.create({
     data: {
       title,
+      userId: viewer.id,
       scriptId
     },
     include: {
@@ -249,6 +290,28 @@ export async function createConversation(scriptId: string, locale: Locale) {
 }
 
 export async function sendConversationMessage(conversationId: string, content: string, locale: Locale) {
+  return createConversationReply(conversationId, content, locale, (messages, viewer) =>
+    generateDefaultLlmReply(messages, viewer.id, viewer.showAiThinking, locale)
+  );
+}
+
+export async function streamConversationMessage(
+  conversationId: string,
+  content: string,
+  locale: Locale,
+  onDelta: (content: string) => void
+) {
+  return createConversationReply(conversationId, content, locale, (messages, viewer) =>
+    streamDefaultLlmReply(messages, onDelta, viewer.id, viewer.showAiThinking, locale)
+  );
+}
+
+async function createConversationReply(
+  conversationId: string,
+  content: string,
+  locale: Locale,
+  createReply: (messages: RuntimeChatMessage[], viewer: AuthViewer) => Promise<{ content: string; usage: RuntimeTokenUsage }>
+) {
   const normalizedContent = content.trim();
 
   if (!normalizedContent) {
@@ -262,16 +325,23 @@ export async function sendConversationMessage(conversationId: string, content: s
       messages: { orderBy: { createdAt: "asc" } }
     }
   });
+  const viewer = await requireAuth();
+
+  if (conversation.userId !== viewer.id) {
+    throw new Error("Conversation not found.");
+  }
 
   const script = mapScript(conversation.script, locale);
-  const reply = await generateDefaultLlmReply(
+  const reply = await createReply(
     buildNarrativeLlmMessages({
       existingMessages: conversation.messages.map(mapMessage),
       locale,
+      showThinking: viewer.showAiThinking,
       scriptTitle: script.title,
       scriptWelcome: script.welcome,
       userContent: normalizedContent
-    })
+    }),
+    viewer
   );
   const shouldRetitle = conversation.messages.length === 0;
 
@@ -330,8 +400,10 @@ export async function deleteConversation(conversationId: string, locale: Locale)
     throw new Error("Conversation id is required.");
   }
 
-  await prisma.conversation.delete({
-    where: { id: conversationId }
+  const viewer = await requireAuth();
+
+  await prisma.conversation.deleteMany({
+    where: { id: conversationId, userId: viewer.id }
   });
 
   revalidatePath(`/${locale}`);
@@ -339,16 +411,66 @@ export async function deleteConversation(conversationId: string, locale: Locale)
   return { id: conversationId };
 }
 
-async function ensureBaseScript() {
-  await Promise.all(
-    builtInScripts.map((script) =>
-      prisma.storyScript.upsert({
-        where: { slug: script.slug },
-        update: {},
-        create: script
-      })
-    )
-  );
+async function ensureHomeWorkspaceDefaults(userId = defaultUserId) {
+  await ensureConfiguredAdminUser();
+
+  const [scripts] = await Promise.all([
+    Promise.all(
+      builtInScripts.map((script) =>
+        prisma.storyScript.upsert({
+          where: { slug: script.slug },
+          update: {},
+          create: script
+        })
+      )
+    ),
+    prisma.appUser.upsert({
+      where: { slug: defaultUserSlug },
+      update: {},
+      create: {
+        id: defaultUserId,
+        slug: defaultUserSlug,
+        displayName: "本地默认用户"
+      }
+    })
+  ]);
+  const baseScript = scripts.find((script) => script.slug === baseScriptSlug);
+
+  if (!baseScript) {
+    throw new Error("Base script initialization failed.");
+  }
+
+  await prisma.storyScriptLibraryEntry.upsert({
+    where: {
+      userId_scriptId: {
+        userId: defaultUserId,
+        scriptId: baseScript.id
+      }
+    },
+    update: {},
+    create: {
+      userId: defaultUserId,
+      scriptId: baseScript.id,
+      source: communityAddedSource
+    }
+  });
+
+  if (userId !== defaultUserId) {
+    await prisma.storyScriptLibraryEntry.upsert({
+      where: {
+        userId_scriptId: {
+          userId,
+          scriptId: baseScript.id
+        }
+      },
+      update: {},
+      create: {
+        userId,
+        scriptId: baseScript.id,
+        source: communityAddedSource
+      }
+    });
+  }
 }
 
 function mapScript(
@@ -362,9 +484,14 @@ function mapScript(
     welcomeZh: string;
     welcomeEn: string;
   },
-  locale: Locale
+  locale: Locale,
+  library?: {
+    inLibrary?: boolean;
+    librarySource?: WorkspaceScriptLibrarySource;
+  }
 ): WorkspaceScript {
   const isEnglish = locale === "en-US";
+  const librarySource = library?.librarySource;
 
   return {
     id: script.id,
@@ -372,7 +499,9 @@ function mapScript(
     category: getScriptCategory(script.slug),
     title: isEnglish ? script.titleEn : script.titleZh,
     description: isEnglish ? script.descriptionEn : script.descriptionZh,
-    welcome: isEnglish ? script.welcomeEn : script.welcomeZh
+    welcome: isEnglish ? script.welcomeEn : script.welcomeZh,
+    inLibrary: library?.inLibrary ?? false,
+    ...(librarySource ? { librarySource } : {})
   };
 }
 
@@ -397,8 +526,23 @@ function mapMessage(message: {
 }
 
 function getFallbackWorkspaceData(locale: Locale): WorkspaceData {
+  const fallbackScripts = builtInScripts.map((script) => {
+    const isBaseScript = script.slug === baseScriptSlug;
+
+    return mapScript(
+      { id: script.slug, ...script },
+      locale,
+      {
+        inLibrary: isBaseScript,
+        librarySource: isBaseScript ? communityAddedSource : undefined
+      }
+    );
+  });
+
   return {
-    scripts: builtInScripts.map((script) => mapScript({ id: script.slug, ...script }, locale)),
+    viewer: null,
+    myScripts: fallbackScripts.filter((script) => script.inLibrary),
+    communityScripts: fallbackScripts,
     conversations: [],
     persistenceAvailable: false
   };

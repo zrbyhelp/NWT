@@ -5,6 +5,9 @@ dist/
 coverage/
 .vitepress/cache/
 .vitepress/dist/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+*.tsbuildinfo
 .env
 .env*.local
 !.env.example

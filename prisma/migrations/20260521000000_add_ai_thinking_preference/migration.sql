@@ -1,0 +1,1 @@
+ALTER TABLE `AppUser` ADD COLUMN `showAiThinking` BOOLEAN NOT NULL DEFAULT false;

@@ -8,7 +8,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
 
   return (
     <main className="min-h-screen bg-background">
-      <HomeWorkspace data={data} />
+      <HomeWorkspace key={data.viewer?.id ?? "anonymous"} data={data} />
     </main>
   );
 }

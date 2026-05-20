@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { decryptSecret, encryptSecret } from "@/lib/ai/config-crypto";
-import { aiProviderInputSchema, llmModelInputSchema } from "@/lib/ai/config-types";
+import { aiProviderInputSchema, imageModelInputSchema, llmModelInputSchema } from "@/lib/ai/config-types";
 import { chooseDefaultModel, shouldMakeSavedModelDefault } from "@/lib/ai/model-config-utils";
+import { classifyProviderModelId, normalizeProviderModels } from "@/lib/ai/provider-model-utils";
 
 describe("AI configuration schemas", () => {
   it("validates OpenAI-compatible providers", () => {
@@ -23,19 +24,29 @@ describe("AI configuration schemas", () => {
     ).toThrow();
   });
 
-  it("coerces numeric LLM model fields", () => {
+  it("coerces numeric LLM model fields without requiring context window input", () => {
     const model = llmModelInputSchema.parse({
       providerId: "provider-1",
       displayName: "Narrative Model",
       modelId: "story-model",
-      contextWindow: "128000",
       temperature: "0.8",
       enabled: true,
       isDefault: true
     });
 
-    expect(model.contextWindow).toBe(128000);
     expect(model.temperature).toBe(0.8);
+  });
+
+  it("validates image model fields", () => {
+    expect(
+      imageModelInputSchema.parse({
+        providerId: "provider-1",
+        displayName: "Cover Image Model",
+        modelId: "gpt-image-1",
+        enabled: true,
+        isDefault: true
+      })
+    ).toMatchObject({ modelId: "gpt-image-1" });
   });
 });
 
@@ -49,6 +60,33 @@ describe("AI provider secret encryption", () => {
 
   it("requires an encryption key", () => {
     expect(() => encryptSecret("sk-test-secret", undefined)).toThrow("AI_CONFIG_ENCRYPTION_KEY");
+  });
+});
+
+describe("provider model catalog helpers", () => {
+  it("normalizes OpenAI-compatible model lists", () => {
+    expect(
+      normalizeProviderModels({
+        data: [
+          { id: "gpt-4.1-mini", owned_by: "openai" },
+          { id: "gpt-image-1", owned_by: "openai" },
+          { id: "text-embedding-3-small", owned_by: "openai" },
+          { id: "gpt-4.1-mini", owned_by: "duplicate" },
+          { id: "" }
+        ]
+      })
+    ).toEqual([
+      { displayName: "gpt-4.1-mini", id: "gpt-4.1-mini", kind: "llm", ownedBy: "openai" },
+      { displayName: "gpt-image-1", id: "gpt-image-1", kind: "image", ownedBy: "openai" },
+      { displayName: "text-embedding-3-small", id: "text-embedding-3-small", kind: "embedding", ownedBy: "openai" }
+    ]);
+  });
+
+  it("classifies common chat and embedding model ids", () => {
+    expect(classifyProviderModelId("qwen-plus")).toBe("llm");
+    expect(classifyProviderModelId("bge-large-zh-v1.5")).toBe("embedding");
+    expect(classifyProviderModelId("flux-pro")).toBe("image");
+    expect(classifyProviderModelId("custom-model")).toBe("unknown");
   });
 });
 

@@ -1,14 +1,41 @@
 "use client";
 
-import { Bot, DatabaseZap, Info, KeyRound, Languages, Moon, Monitor, Palette, Settings, Sun, Type, X } from "lucide-react";
+import {
+  Bot,
+  Brain,
+  DatabaseZap,
+  ExternalLink,
+  Info,
+  Image as ImageIcon,
+  KeyRound,
+  Languages,
+  Loader2,
+  LogIn,
+  LogOut,
+  Moon,
+  Monitor,
+  Palette,
+  Settings,
+  ShieldCheck,
+  Sun,
+  Type,
+  UploadCloud,
+  UserRound,
+  X
+} from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import type { FormEvent } from "react";
+import { toast } from "sonner";
+import { changeHomePassword, logoutHomeAccount, updateHomePreferences, updateHomeProfile, uploadHomeAvatar } from "@/app/[locale]/actions";
 import { AiConfigManager } from "@/components/ai-config-manager";
 import { useAppTheme } from "@/components/theme-provider";
+import { UserAvatar } from "@/components/user-avatar";
 import { routing, type Locale } from "@/i18n/routing";
-import { switchLocalePath } from "@/lib/locale-path";
+import { localePath, switchLocalePath } from "@/lib/locale-path";
 import { colorThemes, typographyPresets } from "@/lib/theme-options";
+import type { AuthViewer } from "@/lib/auth-types";
 import { cn } from "@/lib/utils";
 
 const languageNames: Record<Locale, string> = {
@@ -18,29 +45,47 @@ const languageNames: Record<Locale, string> = {
 
 const paletteStorageKey = "nwt-palette";
 const typographyStorageKey = "nwt-typography";
+const mainSiteUrl = "https://zrg.zrbyhelp.com/";
 type PaletteId = (typeof colorThemes)[number]["id"];
 type TypographyId = (typeof typographyPresets)[number]["id"];
-type SettingsTab = "general" | "appearance" | "about";
-type AiSettingsTab = "providers" | "llm" | "vectors";
+type SettingsTab = "general" | "account" | "appearance" | "about";
+type AiSettingsTab = "providers" | "llm" | "vectors" | "images";
 type AnySettingsTab = SettingsTab | AiSettingsTab;
 
-export function SettingsDialog() {
+export function SettingsDialog({
+  onLoginClick,
+  onViewerChange,
+  viewer
+}: {
+  onLoginClick?: () => void;
+  onViewerChange?: (viewer: AuthViewer | null) => void;
+  viewer?: AuthViewer | null;
+}) {
   const locale = useLocale() as Locale;
   const pathname = usePathname();
   const router = useRouter();
   const t = useTranslations("home.settings");
   const actionsT = useTranslations("home.actions");
+  const authT = useTranslations("home.auth");
   const { setTheme, theme, resolvedTheme } = useAppTheme();
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<AnySettingsTab>("general");
   const [palette, setPalette] = useState<PaletteId>(colorThemes[0].id);
   const [typography, setTypography] = useState<TypographyId>(typographyPresets[1].id);
+  const [profileForm, setProfileForm] = useState({ avatarUrl: "", displayName: "" });
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [preferencePending, startPreferenceTransition] = useTransition();
+  const [isAccountPending, startAccountTransition] = useTransition();
+  const lastSavedDisplayNameRef = useRef("");
   const tabs = [
     { id: "general", icon: Languages },
+    { id: "account", icon: UserRound },
     { id: "appearance", icon: Palette },
     { id: "providers", icon: KeyRound },
     { id: "llm", icon: Bot },
     { id: "vectors", icon: DatabaseZap },
+    { id: "images", icon: ImageIcon },
     { id: "about", icon: Info }
   ] as const;
 
@@ -68,17 +113,138 @@ export function SettingsDialog() {
 
   useEffect(() => {
     const preset = typographyPresets.find((item) => item.id === typography) ?? typographyPresets[1];
-    document.documentElement.style.setProperty("--app-font-scale", String(preset.fontScale));
+    const effectiveFontScale = preset.fontScale * (1 + (preset.density - 1) * 0.5);
+
+    document.documentElement.style.setProperty("--app-font-scale", String(effectiveFontScale));
     document.documentElement.style.setProperty("--app-line-height", String(preset.lineHeight));
     document.documentElement.style.setProperty("--app-density", String(preset.density));
     window.localStorage.setItem(typographyStorageKey, typography);
   }, [typography]);
 
+  useEffect(() => {
+    if (!open || !viewer) {
+      return;
+    }
+
+    const displayName = profileForm.displayName.trim();
+
+    if (!displayName || displayName === lastSavedDisplayNameRef.current) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      startAccountTransition(async () => {
+        try {
+          const result = await updateHomeProfile({
+            avatarUrl: profileForm.avatarUrl,
+            displayName
+          });
+          lastSavedDisplayNameRef.current = result.viewer.displayName;
+          onViewerChange?.(result.viewer);
+          toast.success(t("account.profileSaved"));
+          router.refresh();
+        } catch (error) {
+          toast.error(resolveAccountError(error, t));
+        }
+      });
+    }, 800);
+
+    return () => window.clearTimeout(timeout);
+  }, [onViewerChange, open, profileForm.avatarUrl, profileForm.displayName, router, t, viewer]);
+
+  function openSettings() {
+    setProfileForm({
+      avatarUrl: viewer?.avatarUrl ?? "",
+      displayName: viewer?.displayName ?? viewer?.account ?? ""
+    });
+    lastSavedDisplayNameRef.current = viewer?.displayName ?? viewer?.account ?? "";
+    setPasswordForm({ currentPassword: "", newPassword: "" });
+    setOpen(true);
+  }
+
+  function handleAvatarUpload(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("avatar", file);
+
+    startAccountTransition(async () => {
+      try {
+        const result = await uploadHomeAvatar(formData);
+        onViewerChange?.(result.viewer);
+        setProfileForm((current) => ({
+          ...current,
+          avatarUrl: result.viewer.avatarUrl ?? ""
+        }));
+        toast.success(t("account.avatarUploaded"));
+        router.refresh();
+      } catch (error) {
+        toast.error(resolveAccountError(error, t));
+      }
+    });
+  }
+
+  function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    startAccountTransition(async () => {
+      try {
+        await changeHomePassword(passwordForm);
+        setPasswordForm({ currentPassword: "", newPassword: "" });
+        setPasswordDialogOpen(false);
+        toast.success(t("account.passwordSaved"));
+      } catch (error) {
+        toast.error(resolveAccountError(error, t));
+      }
+    });
+  }
+
+  function handleLogout() {
+    startAccountTransition(async () => {
+      await logoutHomeAccount();
+      onViewerChange?.(null);
+      setOpen(false);
+      toast.success(authT("logoutSuccess"));
+      router.refresh();
+    });
+  }
+
+  function requestLoginFromSettings() {
+    setOpen(false);
+
+    if (onLoginClick) {
+      onLoginClick();
+      return;
+    }
+
+    router.push(localePath(locale, "/login") as never);
+  }
+
+  function handleThinkingPreferenceChange(enabled: boolean) {
+    if (!viewer) {
+      requestLoginFromSettings();
+      return;
+    }
+
+    startPreferenceTransition(async () => {
+      try {
+        const result = await updateHomePreferences({ showAiThinking: enabled });
+        onViewerChange?.(result.viewer);
+        toast.success(t("preferenceSaved"));
+        router.refresh();
+      } catch (error) {
+        toast.error(resolveAccountError(error, t));
+      }
+    });
+  }
+
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openSettings}
         className="inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground/72 transition hover:bg-muted hover:text-foreground"
         aria-label={t("title")}
         title={t("title")}
@@ -89,7 +255,7 @@ export function SettingsDialog() {
       {open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={() => setOpen(false)}>
           <section
-            className="flex h-[40rem] max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+            className="flex h-[40rem] max-h-[88vh] w-full max-w-[37.333rem] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <header className="flex h-14 items-center justify-between border-b border-border px-4">
@@ -124,21 +290,158 @@ export function SettingsDialog() {
 
               <div className="scrollbar-autohide min-h-0 overflow-y-auto p-4">
                 {activeTab === "general" ? (
+                  <div className="space-y-3">
+                    <SettingInlineRow
+                      action={
+                        <select
+                          value={locale}
+                          aria-label={actionsT("language")}
+                          onChange={(event) => router.push(switchLocalePath(pathname, event.target.value as Locale) as never)}
+                          className="h-9 w-32 rounded-md border border-border bg-background px-2.5 text-sm outline-none"
+                        >
+                          {routing.locales.map((item) => (
+                            <option key={item} value={item}>
+                              {languageNames[item]}
+                            </option>
+                          ))}
+                        </select>
+                      }
+                      icon={Languages}
+                      title={actionsT("language")}
+                    />
+
+                    <SettingInlineRow
+                      action={
+                        <a
+                          href={mainSiteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground/72 transition hover:bg-muted hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t("mainSiteAction")}
+                        </a>
+                      }
+                      icon={ExternalLink}
+                      title={t("mainSite")}
+                    />
+
+                    <SettingInlineRow
+                      action={
+                        <ToggleSwitch
+                          ariaLabel={t("showThinking")}
+                          checked={viewer?.showAiThinking ?? false}
+                          disabled={preferencePending}
+                          onChange={handleThinkingPreferenceChange}
+                        />
+                      }
+                      description={t("showThinkingDescription")}
+                      icon={Brain}
+                      title={t("showThinking")}
+                    />
+
+                    {viewer ? (
+                      <SettingInlineRow
+                        action={
+                          <button
+                            type="button"
+                            onClick={handleLogout}
+                            disabled={isAccountPending}
+                            className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground/72 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+                          >
+                            {isAccountPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <LogOut className="h-3.5 w-3.5" aria-hidden="true" />}
+                            {t("logoutAction")}
+                          </button>
+                        }
+                        icon={LogOut}
+                        title={authT("logout")}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {activeTab === "account" ? (
                   <div className="space-y-5">
-                    <SettingSection icon={Languages} title={actionsT("language")}>
-                      <select
-                        value={locale}
-                        aria-label={actionsT("language")}
-                        onChange={(event) => router.push(switchLocalePath(pathname, event.target.value as Locale) as never)}
-                        className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none"
-                      >
-                        {routing.locales.map((item) => (
-                          <option key={item} value={item}>
-                            {languageNames[item]}
-                          </option>
-                        ))}
-                      </select>
-                    </SettingSection>
+                    {viewer ? (
+                      <>
+                        <SettingSection icon={UserRound} title={t("account.profileTitle")}>
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-3 px-1 py-1">
+                              <div className="flex min-w-0 flex-1 items-center gap-3">
+                                <UserAvatar
+                                  avatarUrl={profileForm.avatarUrl}
+                                  name={profileForm.displayName || viewer.account}
+                                  className="h-12 w-12 text-base"
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium">{profileForm.displayName || viewer.account}</p>
+                                  <p className="truncate text-xs text-foreground/48">{viewer.account}</p>
+                                </div>
+                              </div>
+                              <label className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground/72 transition hover:bg-muted hover:text-foreground">
+                                {isAccountPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />}
+                                {t("account.uploadAvatar")}
+                                <input
+                                  type="file"
+                                  accept="image/gif,image/jpeg,image/png,image/webp"
+                                  className="sr-only"
+                                  disabled={isAccountPending}
+                                  onChange={(event) => {
+                                    handleAvatarUpload(event.currentTarget.files?.[0]);
+                                    event.currentTarget.value = "";
+                                  }}
+                                />
+                              </label>
+                            </div>
+                            <label className="flex min-h-10 items-center justify-between gap-3 px-1 py-1">
+                              <span className="flex shrink-0 items-center gap-2 text-sm font-medium text-foreground/82">
+                                <Type className="h-4 w-4 text-primary" aria-hidden="true" />
+                                {t("account.displayName")}
+                              </span>
+                              <input
+                                type="text"
+                                value={profileForm.displayName}
+                                onChange={(event) => setProfileForm((current) => ({ ...current, displayName: event.target.value }))}
+                                maxLength={40}
+                                required
+                                className="h-9 w-40 min-w-0 max-w-[55%] rounded-md border border-border bg-background px-2.5 text-right text-sm outline-none transition placeholder:text-foreground/34 focus:border-primary"
+                              />
+                            </label>
+                          </div>
+                        </SettingSection>
+
+                        <section className="space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="flex items-center gap-2 text-sm font-medium">
+                                <ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" />
+                                {t("account.passwordTitle")}
+                              </h3>
+                              <p className="mt-1 text-xs text-foreground/50">{t("account.passwordDescription")}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPasswordDialogOpen(true)}
+                              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground/72 transition hover:bg-muted hover:text-foreground"
+                            >
+                              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                              {t("account.openPasswordDialog")}
+                            </button>
+                          </div>
+                        </section>
+                      </>
+                    ) : (
+                      <SettingSection icon={LogIn} title={t("account.loginTitle")} description={t("account.loginDescription")}>
+                        <button
+                          type="button"
+                          onClick={requestLoginFromSettings}
+                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white transition hover:bg-primary/90"
+                        >
+                          <LogIn className="h-4 w-4" aria-hidden="true" />
+                          {authT("login")}
+                        </button>
+                      </SettingSection>
+                    )}
                   </div>
                 ) : null}
 
@@ -210,7 +513,7 @@ export function SettingsDialog() {
                   </div>
                 ) : null}
 
-                {activeTab === "providers" || activeTab === "llm" || activeTab === "vectors" ? (
+                {activeTab === "providers" || activeTab === "llm" || activeTab === "vectors" || activeTab === "images" ? (
                   <AiConfigManager mode={activeTab} />
                 ) : null}
 
@@ -233,6 +536,11 @@ export function SettingsDialog() {
                           value={t("aboutItems.repository.value")}
                           href={t("aboutItems.repository.value")}
                         />
+                        <AboutItem
+                          label={t("aboutItems.star.label")}
+                          value={t("aboutItems.star.value")}
+                          href={t("aboutItems.repository.value")}
+                        />
                         <AboutItem label={t("aboutItems.vision.label")} value={t("aboutItems.vision.value")} />
                       </div>
                     </SettingSection>
@@ -240,6 +548,47 @@ export function SettingsDialog() {
                 ) : null}
               </div>
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {passwordDialogOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={() => setPasswordDialogOpen(false)}>
+          <section
+            className="w-full max-w-sm rounded-2xl border border-border bg-background p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <KeyRound className="h-4 w-4 text-primary" aria-hidden="true" />
+                {t("account.passwordTitle")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPasswordDialogOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground/58 transition hover:bg-muted hover:text-foreground"
+                aria-label={t("close")}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <form className="space-y-3" onSubmit={handlePasswordSubmit}>
+              <FormTextField
+                label={t("account.currentPassword")}
+                type="password"
+                value={passwordForm.currentPassword}
+                onChange={(value) => setPasswordForm((current) => ({ ...current, currentPassword: value }))}
+                required
+              />
+              <FormTextField
+                label={t("account.newPassword")}
+                type="password"
+                value={passwordForm.newPassword}
+                onChange={(value) => setPasswordForm((current) => ({ ...current, newPassword: value }))}
+                required
+              />
+              <FormActionButton loading={isAccountPending} label={t("account.savePassword")} icon={KeyRound} />
+            </form>
           </section>
         </div>
       ) : null}
@@ -272,6 +621,125 @@ function SettingSection({
   );
 }
 
+function SettingInlineRow({
+  action,
+  description,
+  icon: Icon,
+  title
+}: {
+  action: React.ReactNode;
+  description?: string;
+  icon: React.ElementType;
+  title: string;
+}) {
+  return (
+    <section className="flex min-h-10 items-center justify-between gap-3 px-1 py-1">
+      <div className="min-w-0">
+        <h3 className="flex items-center gap-2 text-sm font-medium">
+          <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+          <span className="truncate">{title}</span>
+        </h3>
+        {description ? <p className="mt-0.5 line-clamp-2 text-xs text-foreground/50">{description}</p> : null}
+      </div>
+      <div className="shrink-0">{action}</div>
+    </section>
+  );
+}
+
+function ToggleSwitch({
+  ariaLabel,
+  checked,
+  disabled,
+  onChange
+}: {
+  ariaLabel: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "relative h-6 w-11 rounded-full border transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-55",
+        checked ? "border-primary/70 bg-primary" : "border-foreground/28 bg-foreground/36"
+      )}
+    >
+      <span
+        className="absolute inset-0 rounded-full"
+        aria-hidden="true"
+      >
+        <span
+          className={cn(
+            "absolute top-0.5 h-5 w-5 rounded-full border border-foreground/18 bg-white shadow-sm transition dark:bg-background",
+            checked ? "left-[1.375rem]" : "left-0.5"
+          )}
+        />
+      </span>
+    </button>
+  );
+}
+
+function FormTextField({
+  label,
+  maxLength,
+  onChange,
+  placeholder,
+  required,
+  type = "text",
+  value
+}: {
+  label: string;
+  maxLength?: number;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  required?: boolean;
+  type?: "password" | "text";
+  value: string;
+}) {
+  return (
+    <label className="space-y-1.5 text-sm">
+      <span className="text-foreground/64">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        required={required}
+        maxLength={maxLength}
+        minLength={required ? 1 : undefined}
+        className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition placeholder:text-foreground/34 focus:border-primary"
+      />
+    </label>
+  );
+}
+
+function FormActionButton({
+  icon: Icon,
+  label,
+  loading
+}: {
+  icon: React.ElementType;
+  label: string;
+  loading: boolean;
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={loading}
+      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/38"
+    >
+      {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Icon className="h-4 w-4" aria-hidden="true" />}
+      {label}
+    </button>
+  );
+}
+
 function AboutItem({ href, label, value }: { href?: string; label: string; value: string }) {
   const content = href ? (
     <a
@@ -292,4 +760,30 @@ function AboutItem({ href, label, value }: { href?: string; label: string; value
       <div className="mt-1">{content}</div>
     </div>
   );
+}
+
+function resolveAccountError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("INVALID_CURRENT_PASSWORD")) {
+    return t("account.errors.invalidCurrentPassword");
+  }
+
+  if (message.includes("INVALID_PASSWORD")) {
+    return t("account.errors.invalidPassword");
+  }
+
+  if (message.includes("INVALID_AVATAR_URL")) {
+    return t("account.errors.invalidAvatarUrl");
+  }
+
+  if (message.includes("INVALID_AVATAR_FILE")) {
+    return t("account.errors.invalidAvatarFile");
+  }
+
+  if (message.includes("INVALID_DISPLAY_NAME")) {
+    return t("account.errors.invalidDisplayName");
+  }
+
+  return t("account.errors.generic");
 }

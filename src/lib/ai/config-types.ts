@@ -22,7 +22,6 @@ export const llmModelInputSchema = z.object({
   providerId: z.string().min(1),
   displayName: z.string().trim().min(1).max(100),
   modelId: z.string().trim().min(1).max(120),
-  contextWindow: z.coerce.number().int().min(1).max(4000000),
   temperature: z.coerce.number().min(0).max(2),
   enabled: z.boolean().default(true),
   isDefault: z.boolean().default(false)
@@ -39,9 +38,28 @@ export const vectorModelInputSchema = z.object({
   isDefault: z.boolean().default(false)
 });
 
+export const imageModelInputSchema = z.object({
+  id: z.string().optional(),
+  providerId: z.string().min(1),
+  displayName: z.string().trim().min(1).max(100),
+  modelId: z.string().trim().min(1).max(120),
+  enabled: z.boolean().default(true),
+  isDefault: z.boolean().default(false)
+});
+
 export type AiProviderInput = z.infer<typeof aiProviderInputSchema>;
+export type ImageModelInput = z.infer<typeof imageModelInputSchema>;
 export type LlmModelInput = z.infer<typeof llmModelInputSchema>;
 export type VectorModelInput = z.infer<typeof vectorModelInputSchema>;
+
+export type ProviderModelKind = "llm" | "embedding" | "image" | "unknown";
+
+export type ProviderModelOption = {
+  id: string;
+  displayName: string;
+  ownedBy?: string;
+  kind: ProviderModelKind;
+};
 
 export type AiProviderView = {
   id: string;
@@ -62,7 +80,6 @@ export type LlmModelView = {
   providerEnabled: boolean;
   displayName: string;
   modelId: string;
-  contextWindow: number;
   temperature: number;
   enabled: boolean;
   isDefault: boolean;
@@ -85,8 +102,22 @@ export type VectorModelView = {
   updatedAt: string;
 };
 
+export type ImageModelView = {
+  id: string;
+  providerId: string;
+  providerName: string;
+  providerEnabled: boolean;
+  displayName: string;
+  modelId: string;
+  enabled: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AiConfigSnapshot = {
   providers: AiProviderView[];
+  imageModels: ImageModelView[];
   llmModels: LlmModelView[];
   vectorModels: VectorModelView[];
 };

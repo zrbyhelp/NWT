@@ -72,7 +72,9 @@ scripts/    # 本地开发或维护脚本
 ```bash
 pnpm install      # 安装依赖
 pnpm test         # 运行测试，不包含打包测试
-pnpm dev          # 启动本地开发服务，由用户自行执行
+pnpm dev          # 同时启动应用与 VitePress 文档开发服务，由用户自行执行
+pnpm run dev:app  # 只启动 Next.js 应用开发服务
+pnpm run dev:docs # 只启动 VitePress 文档开发服务
 pnpm build        # 生产构建，仅在明确需要时运行
 pnpm lint         # 运行静态检查
 pnpm docs:dev     # 启动 VitePress 文档站点，由用户自行执行

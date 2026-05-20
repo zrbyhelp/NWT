@@ -10,6 +10,31 @@
       "admin": "Admin",
       "language": "Language"
     },
+    "auth": {
+      "login": "Log in",
+      "register": "Register",
+      "logout": "Log out",
+      "close": "Close login dialog",
+      "account": "Account",
+      "password": "Password",
+      "loginTitle": "Log in to New World Novel",
+      "loginDescription": "Log in to create conversations, save settings, and use your script library.",
+      "registerTitle": "Create an account",
+      "registerDescription": "Create a user with an account and password to keep your conversations and script library.",
+      "goRegister": "No account yet? Register",
+      "goLogin": "Already have an account? Log in",
+      "loginSuccess": "Logged in",
+      "registerSuccess": "Registered and logged in",
+      "logoutSuccess": "Logged out",
+      "pageHint": "Home and community scripts can be browsed without logging in. Saving content requires an account.",
+      "errors": {
+        "accountExists": "This account already exists. Use another account or log in.",
+        "invalidCredentials": "The account or password is incorrect.",
+        "invalidAccount": "Use 3-64 characters: letters, numbers, underscore, dot, @, or hyphen.",
+        "invalidPassword": "Password must be 6-128 characters.",
+        "generic": "Authentication failed. Please try again later."
+      }
+    },
     "modules": {
       "dialogue": {
         "title": "Streaming Dialogue",
@@ -30,12 +55,20 @@
       "close": "Close settings",
       "tabs": {
         "general": "General",
+        "account": "Account",
         "appearance": "Appearance",
         "providers": "AI Providers",
         "llm": "LLM Models",
         "vectors": "Vector Models",
+        "images": "Image Models",
         "about": "About"
       },
+      "mainSite": "Open Main Site",
+      "mainSiteAction": "Open",
+      "showThinking": "Show thinking content",
+      "showThinkingDescription": "When enabled, provider reasoning content is shown when available.",
+      "logoutAction": "Log out",
+      "preferenceSaved": "Preference saved",
       "mode": "Brightness",
       "modeOption": {
         "system": "System",
@@ -80,9 +113,42 @@
           "label": "GitHub Repository",
           "value": "https://github.com/zrbyhelp/NWT.git"
         },
+        "star": {
+          "label": "GitHub Star",
+          "value": "If New World Novel helps you, please star the GitHub repo to support continued work."
+        },
         "vision": {
           "label": "Goal",
           "value": "Build an AI-driven new-system interactive fiction experience"
+        }
+      },
+      "account": {
+        "profileTitle": "Account Profile",
+        "profileDescription": "Avatar settings",
+        "displayName": "Display name",
+        "uploadAvatar": "Upload avatar",
+        "avatarUploaded": "Avatar uploaded",
+        "avatarHint": "Supports gif/png/jpg/webp up to 5 MB.",
+        "saveProfile": "Save profile",
+        "profileSaved": "Profile saved",
+        "passwordTitle": "Change Password",
+        "passwordDescription": "Use the new password the next time you log in.",
+        "openPasswordDialog": "Change",
+        "currentPassword": "Current password",
+        "newPassword": "New password",
+        "savePassword": "Save new password",
+        "passwordSaved": "Password updated",
+        "sessionTitle": "Session",
+        "sessionDescription": "After logging out, you can still browse home and community scripts.",
+        "loginTitle": "Log in",
+        "loginDescription": "Log in to save your avatar, password, conversations, and personal settings.",
+        "errors": {
+          "invalidCurrentPassword": "The current password is incorrect.",
+          "invalidPassword": "New password must be 6-128 characters.",
+          "invalidAvatarUrl": "Avatar URL is invalid.",
+          "invalidAvatarFile": "Avatar files must be gif/png/jpg/webp and no larger than 5 MB.",
+          "invalidDisplayName": "Display name must be 1-40 characters.",
+          "generic": "Could not save account settings. Please try again later."
         }
       },
       "ai": {
@@ -98,6 +164,8 @@
           "enabled": "Enabled",
           "disabled": "Disabled",
           "default": "Default",
+          "setDefault": "Set as default",
+          "defaultUnavailable": "Disabled models or providers cannot be default",
           "secretReady": "Secret configured",
           "secretMissing": "Secret missing",
           "providerDisabled": "The provider is disabled, so this model will not be used by default."
@@ -113,7 +181,7 @@
           "providerPlaceholder": "Select a provider first",
           "displayName": "Display name",
           "modelId": "Model ID",
-          "contextWindow": "Context window",
+          "modelIdPlaceholder": "Type manually or choose from provider models",
           "temperature": "Default temperature",
           "dimensions": "Vector dimensions",
           "maxInputTokens": "Max input tokens",
@@ -122,7 +190,7 @@
         "providers": {
           "eyebrow": "OpenAI-compatible",
           "title": "AI Provider Management",
-          "description": "Manage OpenAI-compatible model providers. API keys can only be replaced or cleared, never revealed in the UI.",
+          "description": "Manage OpenAI-compatible model providers for the current account. API keys can only be replaced or cleared, never revealed in the UI.",
           "emptyTitle": "No AI providers yet",
           "emptyDescription": "Add a provider before configuring LLM or vector models.",
           "createTitle": "Add provider",
@@ -134,18 +202,18 @@
         "llm": {
           "eyebrow": "Chat model",
           "title": "LLM Model Management",
-          "description": "The default LLM powers home chat replies. Only one enabled model with an enabled provider can be default.",
+          "description": "The default LLM powers home chat replies for the current account. Only one enabled model with an enabled provider can be default.",
           "emptyTitle": "No LLM models yet",
-          "emptyDescription": "Add a model ID, context window, and temperature before choosing the default chat model.",
+          "emptyDescription": "Add a model ID and temperature before choosing the default chat model.",
           "createTitle": "Add LLM model",
           "editTitle": "Edit LLM model",
-          "meta": "{context} tokens / temperature {temperature}",
+          "meta": "temperature {temperature}",
           "deleteConfirm": "Delete LLM model \"{name}\"?"
         },
         "vectors": {
           "eyebrow": "Embedding model",
           "title": "Vector Model Management",
-          "description": "Vector models will support text splitting, semantic retrieval, and Qdrant writes. This version manages configuration and defaults.",
+          "description": "Vector models will support text splitting, semantic retrieval, and Qdrant writes for the current account. This version manages configuration and defaults.",
           "emptyTitle": "No vector models yet",
           "emptyDescription": "Add an embedding model, dimensions, and max input tokens for future memory jobs.",
           "createTitle": "Add vector model",
@@ -153,13 +221,35 @@
           "meta": "{dimensions} dimensions / {tokens} tokens",
           "deleteConfirm": "Delete vector model \"{name}\"?"
         },
+        "images": {
+          "eyebrow": "Image model",
+          "title": "Image Model Management",
+          "description": "Image models will support account-level cover, scene, and character image generation. This version manages configuration and defaults.",
+          "emptyTitle": "No image models yet",
+          "emptyDescription": "Add an image generation model ID before choosing the default image model.",
+          "createTitle": "Add image model",
+          "editTitle": "Edit image model",
+          "meta": "image generation",
+          "deleteConfirm": "Delete image model \"{name}\"?"
+        },
         "errors": {
           "loadTitle": "Could not load AI configuration",
           "loadDescription": "Confirm that the database is connected and the latest Prisma migration has run.",
           "save": "Save failed. Check the fields and try again.",
+          "authRequired": "Log in before managing AI configuration.",
           "providerHasModels": "This provider still has related models. Delete the models first.",
           "missingEncryptionKey": "AI_CONFIG_ENCRYPTION_KEY is required before saving or reading API keys.",
           "noEnabledProvider": "No provider is enabled, so the default model will not take effect."
+        },
+        "modelCatalog": {
+          "selectLabel": "Provider model list",
+          "selectPlaceholder": "Choose a model returned by the provider",
+          "refresh": "Fetch models",
+          "waitingProvider": "Choose a provider to fetch its model list automatically.",
+          "loading": "Fetching models from the provider...",
+          "ready": "Model list loaded. Selecting one fills the model ID.",
+          "empty": "This provider did not return matching models. You can still type a model ID.",
+          "error": "Could not fetch models. Check the provider Base URL and API key."
         }
       }
     },
@@ -173,6 +263,10 @@
       "searchLabel": "Search messages",
       "searchPlaceholder": "Search messages, scripts, or recent content...",
       "conversationList": "Message List",
+      "account": {
+        "anonymous": "Not logged in",
+        "loginHint": "Log in to save personal content"
+      },
       "groups": {
         "today": "Today",
         "earlier": "Earlier"
@@ -193,8 +287,8 @@
       "readyTitle": "Script Ready",
       "inputPlaceholder": "Enter the character, scene, or conflict you want to advance...",
       "send": "Send message",
-      "thinking": "Arranging the next beat",
-      "composerHint": "Enter to send, Shift + Enter for a new line. AI replies use the default LLM model from settings.",
+      "thinking": "Thinking through the next beat",
+      "composerHint": "Enter to send, Shift + Enter for a new line. AI replies stream in as they load.",
       "tokenStats": "Up {upstream} / Down {downstream}",
       "tokenStatsEstimated": "Approx. Up {upstream} / Down {downstream}",
       "tokenStatsHint": "Accumulated AI token usage for the current conversation. Approx. means usage was estimated because the provider did not return usage.",
@@ -229,9 +323,15 @@
       "kicker": "Explore Scripts",
       "heroTitle": "Scripts",
       "heroDescription": "Explore AI scripts for interactive fiction. Scripts define openings, world structure, and dialogue style.",
+      "mineTitle": "My Scripts",
+      "mineDescription": "Review scripts you have joined or created. The Base AI Script is included by default, with more personal scripts to follow when creation opens.",
+      "communityTitle": "Community Scripts",
+      "communityDescription": "Explore community AI scripts for interactive fiction. Scripts define openings, world structure, and dialogue style.",
       "search": "Search scripts",
       "create": "Create",
       "createSoon": "Script creation will be available in a later version.",
+      "viewCommunity": "View Community Scripts",
+      "backToMine": "Back to My Scripts",
       "categories": {
         "featured": "Featured",
         "world": "Worldbuilding",
@@ -241,9 +341,12 @@
       },
       "featuredTitle": "Featured",
       "featuredSubtitle": "Recommended scripts this week",
+      "mineSectionTitle": "My Scripts",
+      "mineSectionSubtitle": "Joined or self-created scripts ready to use",
       "popularTitle": "Popular",
       "popularSubtitle": "Available scripts",
       "default": "Default script",
+      "joined": "Joined",
       "creator": "Creator",
       "close": "Close script detail",
       "startChat": "Start chat",
@@ -260,6 +363,11 @@
         "memory": "Ready for memory and graph capabilities"
       },
       "empty": "No scripts yet.",
+      "mineEmpty": "Your script library is empty. Browse community scripts first.",
+      "source": {
+        "selfCreated": "Self-created",
+        "communityAdded": "Community added"
+      },
       "fields": {
         "slug": "Slug",
         "title": "Title",
@@ -280,6 +388,9 @@
       "brand": "NWT Admin",
       "description": "Operations Core",
       "backHome": "Back home",
+      "noAccessKicker": "Access denied",
+      "noAccessTitle": "Administrator account required",
+      "noAccessDescription": "The current account is not an administrator. Log in with the ADMIN_ACCOUNT and ADMIN_PASSWORD account from environment variables.",
       "nav": {
         "dashboard": "Dashboard",
         "threads": "Threads",

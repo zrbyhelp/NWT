@@ -10,13 +10,15 @@
     "pnpm": ">=10"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev-with-docs.mjs",
+    "dev:app": "next dev",
+    "dev:docs": "vitepress dev docs --host 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "docs:dev": "vitepress docs",
+    "docs:dev": "pnpm run dev:docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "prisma:generate": "prisma generate",

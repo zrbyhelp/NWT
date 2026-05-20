@@ -1,6 +1,14 @@
 import "server-only";
 
 import OpenAI from "openai";
+import type {
+  ChatCompletion,
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParamsStreaming,
+  ChatCompletionMessageParam
+} from "openai/resources/chat/completions";
+import type { Locale } from "@/i18n/routing";
+import type { DefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 import { getDefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 import { estimateTokenCount } from "@/lib/home-workspace-utils";
 
@@ -15,8 +23,11 @@ export type RuntimeTokenUsage = {
   estimated: boolean;
 };
 
-export async function createDefaultOpenAIClient() {
-  const config = await getDefaultLlmRuntimeConfig();
+const defaultReasoningEffort = "medium";
+const defaultLocale: Locale = "zh-CN";
+
+export async function createDefaultOpenAIClient(userId?: string | null) {
+  const config = await getDefaultLlmRuntimeConfig(userId);
 
   return {
     client: new OpenAI({
@@ -27,14 +38,23 @@ export async function createDefaultOpenAIClient() {
   };
 }
 
-export async function generateDefaultLlmReply(messages: RuntimeChatMessage[]) {
-  const { client, config } = await createDefaultOpenAIClient();
-  const completion = await client.chat.completions.create({
-    model: config.modelId,
-    messages,
-    temperature: config.temperature
+export async function generateDefaultLlmReply(
+  messages: RuntimeChatMessage[],
+  userId?: string | null,
+  showThinking = false,
+  locale: Locale = defaultLocale
+) {
+  const { client, config } = await createDefaultOpenAIClient(userId);
+  const completion = await createNonStreamingCompletion(client, config, messages);
+  const message = completion.choices[0]?.message;
+  const answerContent = message?.content?.trim() ?? "";
+  const reasoningContent = showThinking ? extractReasoningContent(message) : "";
+  const content = formatVisibleReply({
+    answerContent,
+    locale,
+    reasoningContent,
+    showThinking
   });
-  const content = completion.choices[0]?.message?.content?.trim();
 
   if (!content) {
     throw new Error("The default LLM returned an empty response.");
@@ -48,6 +68,223 @@ export async function generateDefaultLlmReply(messages: RuntimeChatMessage[]) {
   });
 
   return { content, usage };
+}
+
+export async function streamDefaultLlmReply(
+  messages: RuntimeChatMessage[],
+  onDelta: (content: string) => void,
+  userId?: string | null,
+  showThinking = false,
+  locale: Locale = defaultLocale
+) {
+  const { client, config } = await createDefaultOpenAIClient(userId);
+  const stream = await createStreamingCompletion(client, config, messages);
+  let content = "";
+  let answerStarted = false;
+  let reasoningStarted = false;
+  let promptTokens: number | null | undefined;
+  let completionTokens: number | null | undefined;
+
+  for await (const chunk of stream) {
+    const deltaRecord = chunk.choices[0]?.delta;
+    const reasoningDelta = showThinking ? extractReasoningContent(deltaRecord) : "";
+    const delta = chunk.choices[0]?.delta?.content;
+
+    if (reasoningDelta) {
+      const visibleDelta = reasoningStarted ? reasoningDelta : `${thinkingHeader(locale)}${reasoningDelta}`;
+
+      reasoningStarted = true;
+      content += visibleDelta;
+      onDelta(visibleDelta);
+    }
+
+    if (typeof delta === "string" && delta) {
+      const visibleDelta = showThinking && reasoningStarted && !answerStarted ? `${replyHeader(locale)}${delta}` : delta;
+
+      answerStarted = true;
+      content += visibleDelta;
+      onDelta(visibleDelta);
+    }
+
+    if (chunk.usage) {
+      promptTokens = chunk.usage.prompt_tokens;
+      completionTokens = chunk.usage.completion_tokens;
+    }
+  }
+
+  const trimmedContent = content.trim();
+
+  if (!trimmedContent) {
+    throw new Error("The default LLM returned an empty response.");
+  }
+
+  return {
+    content: trimmedContent,
+    usage: resolveCompletionUsage({
+      completionTokens,
+      content: trimmedContent,
+      messages,
+      promptTokens
+    })
+  };
+}
+
+function buildBaseChatParams(config: DefaultLlmRuntimeConfig, messages: RuntimeChatMessage[]) {
+  return {
+    model: config.modelId,
+    messages: messages as ChatCompletionMessageParam[],
+    temperature: config.temperature
+  };
+}
+
+function withDefaultThinking<T extends Record<string, unknown>>(params: T): T {
+  return {
+    ...params,
+    enable_thinking: true,
+    reasoning_effort: defaultReasoningEffort
+  };
+}
+
+function extractReasoningContent(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  const directReasoning = toText(record.reasoning_content) || toText(record.reasoning);
+
+  if (directReasoning) {
+    return directReasoning;
+  }
+
+  const details = record.reasoning_details;
+
+  if (Array.isArray(details)) {
+    return details.map((item) => extractReasoningContent(item)).filter(Boolean).join("");
+  }
+
+  return "";
+}
+
+function toText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return toText(record.content) || toText(record.text);
+}
+
+function formatVisibleReply({
+  answerContent,
+  locale,
+  reasoningContent,
+  showThinking
+}: {
+  answerContent: string;
+  locale: Locale;
+  reasoningContent: string;
+  showThinking: boolean;
+}) {
+  const normalizedAnswer = answerContent.trim();
+  const normalizedReasoning = reasoningContent.trim();
+
+  if (!showThinking || !normalizedReasoning) {
+    return normalizedAnswer;
+  }
+
+  if (!normalizedAnswer) {
+    return `${thinkingHeader(locale)}${normalizedReasoning}`;
+  }
+
+  return `${thinkingHeader(locale)}${normalizedReasoning}${replyHeader(locale)}${normalizedAnswer}`;
+}
+
+function thinkingHeader(locale: Locale) {
+  return locale === "en-US" ? "Thinking\n" : "【思考】\n";
+}
+
+function replyHeader(locale: Locale) {
+  return locale === "en-US" ? "\n\nReply\n" : "\n\n【回复】\n";
+}
+
+async function createNonStreamingCompletion(
+  client: OpenAI,
+  config: DefaultLlmRuntimeConfig,
+  messages: RuntimeChatMessage[]
+): Promise<ChatCompletion> {
+  const baseParams = buildBaseChatParams(config, messages);
+
+  try {
+    return await client.chat.completions.create(
+      withDefaultThinking({ ...baseParams, stream: false }) as unknown as ChatCompletionCreateParamsNonStreaming
+    );
+  } catch (error) {
+    if (!isRetryableChatParamError(error)) {
+      throw error;
+    }
+
+    return client.chat.completions.create({
+      ...baseParams,
+      stream: false
+    } as ChatCompletionCreateParamsNonStreaming);
+  }
+}
+
+async function createStreamingCompletion(
+  client: OpenAI,
+  config: DefaultLlmRuntimeConfig,
+  messages: RuntimeChatMessage[]
+) {
+  const baseParams = buildBaseChatParams(config, messages);
+  const attempts: Array<Record<string, unknown>> = [
+    withDefaultThinking({
+      ...baseParams,
+      stream: true,
+      stream_options: { include_usage: true }
+    }),
+    withDefaultThinking({
+      ...baseParams,
+      stream: true
+    }),
+    {
+      ...baseParams,
+      stream: true,
+      stream_options: { include_usage: true }
+    },
+    {
+      ...baseParams,
+      stream: true
+    }
+  ];
+  let lastError: unknown;
+
+  for (const params of attempts) {
+    try {
+      return await client.chat.completions.create(params as unknown as ChatCompletionCreateParamsStreaming);
+    } catch (error) {
+      if (!isRetryableChatParamError(error)) {
+        throw error;
+      }
+
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
+function isRetryableChatParamError(error: unknown) {
+  if (!(error instanceof OpenAI.APIError)) {
+    return false;
+  }
+
+  return error.status === 400 || error.status === 422;
 }
 
 function resolveCompletionUsage({
