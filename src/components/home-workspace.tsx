@@ -1649,7 +1649,15 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
           };
         })
       }));
-      toast.success(materialT(result.mode === "direct-cut" ? "sceneForm.panoramaGeneratedFallback" : "sceneForm.panoramaGenerated"));
+      toast.success(
+        materialT(
+          result.qualityBestEffort
+            ? "sceneForm.panoramaGeneratedBestEffort"
+            : result.mode === "direct-cut"
+              ? "sceneForm.panoramaGeneratedFallback"
+              : "sceneForm.panoramaGenerated"
+        )
+      );
     } catch (error) {
       if (isAuthRequiredError(error)) {
         requestAuth((nextViewer) => {
@@ -5709,6 +5717,10 @@ function resolveScenePanoramaError(error: unknown, t: (key: string) => string) {
 
   if (message.includes("SCENE_PANORAMA_QUALITY_FAILED")) {
     return t("sceneForm.panoramaQualityFailed");
+  }
+
+  if (message.includes("SCENE_PANORAMA_REFERENCE_EDIT_UNSUPPORTED")) {
+    return t("sceneForm.panoramaReferenceEditUnsupported");
   }
 
   return t("sceneForm.panoramaGenerateFailed");

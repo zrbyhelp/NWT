@@ -782,10 +782,12 @@
           "bottom": "Bottom"
         },
         "panoramaGenerated": "Block panorama generated.",
+        "panoramaGeneratedBestEffort": "Best available block panorama generated. Seam quality may still need review, so inspect the enlarged preview.",
         "panoramaGeneratedFallback": "Block panorama generated. The current model did not perform reference repainting.",
         "panoramaGenerateFailed": "Failed to generate the block panorama. Please try again later.",
         "panoramaMissingDefaultImage": "No usable default image model is configured. Set one in Experience Settings first.",
         "panoramaQualityFailed": "The block panorama did not pass seam quality checks. Regenerate it.",
+        "panoramaReferenceEditUnsupported": "The default image model does not support reference-image repainting, so it cannot generate production-ready cubemap panoramas. Switch to an image-editing model in Experience Settings.",
         "invalidPanoramaFace": "Panorama faces only support PNG/JPG/WebP up to 10MB, and must be square when saved.",
         "panoramaUploadFailed": "Failed to upload the cubemap faces. Check the R2 storage settings and try again.",
         "panoramaUploadTooLarge": "Failed to upload the cubemap faces. One face is too large, so regenerate or compress it before saving.",

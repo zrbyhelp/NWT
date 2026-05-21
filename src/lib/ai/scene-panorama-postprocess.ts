@@ -15,6 +15,7 @@ export type ScenePanoramaPostprocessEdge = "top" | "right" | "bottom" | "left";
 
 export type ScenePanoramaQualityReport = {
   averageEdgeDelta: number;
+  averageInnerBandDelta: number;
   edgeDeltas: Array<{
     delta: number;
     firstEdge: ScenePanoramaPostprocessEdge;
@@ -24,14 +25,23 @@ export type ScenePanoramaQualityReport = {
     secondFace: ScenePanoramaPostprocessFace;
   }>;
   faceByteSizes: Record<ScenePanoramaPostprocessFace, number>;
+  innerBandDeltas: Array<{
+    bandWidth: number;
+    delta: number;
+    firstEdge: ScenePanoramaPostprocessEdge;
+    firstFace: ScenePanoramaPostprocessFace;
+    reversed: boolean;
+    secondEdge: ScenePanoramaPostprocessEdge;
+    secondFace: ScenePanoramaPostprocessFace;
+  }>;
   largestFaceBytes: number;
   maxEdgeDelta: number;
+  maxInnerBandDelta: number;
   totalBytes: number;
 };
 
 const faceSize = 1024;
-const edgeLockWidth = 96;
-const edgeFeatherWidth = 128;
+const innerBandQualityWidth = 32;
 const maxGeneratedFaceBytes = 9_500_000;
 const webpQualitySteps = [92, 86, 80, 74, 68] as const;
 
@@ -62,32 +72,23 @@ type RgbaImage = {
   width: number;
 };
 
-type RgbStats = {
-  mean: [number, number, number];
-  stddev: [number, number, number];
-};
-
 export async function stabilizeScenePanoramaFaces(
-  referenceFaces: ScenePanoramaPostprocessImage[],
+  _referenceFaces: ScenePanoramaPostprocessImage[],
   candidateFaces: ScenePanoramaPostprocessImage[]
 ): Promise<ScenePanoramaPostprocessImage[]> {
   return Promise.all(
     scenePanoramaPostprocessFaces.map(async (face) => {
-      const reference = referenceFaces.find((item) => item.face === face);
       const candidate = candidateFaces.find((item) => item.face === face);
 
-      if (!reference || !candidate) {
+      if (!candidate) {
         throw new Error(`SCENE_PANORAMA_FACE_MISSING_${face}`);
       }
 
-      const referenceImage = await decodeFaceToRgba(reference.bytes);
       const candidateImage = await decodeFaceToRgba(candidate.bytes);
-      const matchedPixels = matchRgbStats(candidateImage.pixels, calculateRgbStats(candidateImage.pixels), calculateRgbStats(referenceImage.pixels));
-      const lockedPixels = lockReferenceEdges(referenceImage.pixels, matchedPixels, referenceImage.width, referenceImage.height);
 
       return {
         ...candidate,
-        bytes: await encodeRgbaToWebp(lockedPixels, referenceImage.width, referenceImage.height),
+        bytes: await encodeRgbaToWebp(candidateImage.pixels, candidateImage.width, candidateImage.height),
         contentType: "image/webp",
         fileName: candidate.fileName.replace(/\.[a-z0-9]+$/i, ".webp")
       };
@@ -118,15 +119,38 @@ export async function analyzeScenePanoramaFaces(faces: ScenePanoramaPostprocessI
       };
     })
   );
+  const innerBandDeltas = await Promise.all(
+    scenePanoramaAdjacentEdges.map(async (edge) => {
+      const first = getFaceImage(faces, edge.firstFace);
+      const second = getFaceImage(faces, edge.secondFace);
+
+      return {
+        ...edge,
+        bandWidth: innerBandQualityWidth,
+        delta: await measureFaceInnerBandDeltaBetween(
+          first.bytes,
+          second.bytes,
+          edge.firstEdge,
+          edge.secondEdge,
+          edge.reversed,
+          innerBandQualityWidth
+        )
+      };
+    })
+  );
   const totalBytes = Object.values(faceByteSizes).reduce((sum, size) => sum + size, 0);
   const maxEdgeDelta = Math.max(...edgeDeltas.map((edge) => edge.delta));
+  const maxInnerBandDelta = Math.max(...innerBandDeltas.map((edge) => edge.delta));
 
   return {
     averageEdgeDelta: edgeDeltas.reduce((sum, edge) => sum + edge.delta, 0) / Math.max(1, edgeDeltas.length),
+    averageInnerBandDelta: innerBandDeltas.reduce((sum, edge) => sum + edge.delta, 0) / Math.max(1, innerBandDeltas.length),
     edgeDeltas,
     faceByteSizes,
+    innerBandDeltas,
     largestFaceBytes: Math.max(...Object.values(faceByteSizes)),
     maxEdgeDelta,
+    maxInnerBandDelta,
     totalBytes
   };
 }
@@ -163,6 +187,37 @@ async function measureFaceEdgeDeltaBetween(
   return total / Math.max(1, count);
 }
 
+async function measureFaceInnerBandDeltaBetween(
+  firstBytes: Buffer,
+  secondBytes: Buffer,
+  firstEdge: ScenePanoramaPostprocessEdge,
+  secondEdge: ScenePanoramaPostprocessEdge,
+  reverseSecondEdge: boolean,
+  bandWidth: number
+) {
+  const first = await decodeFaceToRgba(firstBytes);
+  const second = await decodeFaceToRgba(secondBytes);
+  let total = 0;
+  let count = 0;
+
+  for (let depth = 0; depth < bandWidth; depth += 1) {
+    for (let i = 0; i < faceSize; i += 1) {
+      const secondOffset = reverseSecondEdge ? faceSize - 1 - i : i;
+      const [firstX, firstY] = getInnerBandPixelPosition(firstEdge, i, depth, first.width, first.height);
+      const [secondX, secondY] = getInnerBandPixelPosition(secondEdge, secondOffset, depth, second.width, second.height);
+      const firstIndex = (firstY * first.width + firstX) * 4;
+      const secondIndex = (secondY * second.width + secondX) * 4;
+
+      total += Math.abs(first.pixels[firstIndex] - second.pixels[secondIndex]);
+      total += Math.abs(first.pixels[firstIndex + 1] - second.pixels[secondIndex + 1]);
+      total += Math.abs(first.pixels[firstIndex + 2] - second.pixels[secondIndex + 2]);
+      count += 3;
+    }
+  }
+
+  return total / Math.max(1, count);
+}
+
 function getFaceImage(faces: ScenePanoramaPostprocessImage[], face: ScenePanoramaPostprocessFace) {
   const image = faces.find((item) => item.face === face);
 
@@ -186,84 +241,6 @@ async function decodeFaceToRgba(bytes: Buffer): Promise<RgbaImage> {
     height: faceSize,
     width: faceSize
   };
-}
-
-function calculateRgbStats(pixels: Buffer): RgbStats {
-  const sum: [number, number, number] = [0, 0, 0];
-  const squareSum: [number, number, number] = [0, 0, 0];
-  const pixelCount = pixels.length / 4;
-
-  for (let index = 0; index < pixels.length; index += 4) {
-    for (let channel = 0; channel < 3; channel += 1) {
-      const value = pixels[index + channel];
-
-      sum[channel] += value;
-      squareSum[channel] += value * value;
-    }
-  }
-
-  return {
-    mean: sum.map((value) => value / pixelCount) as [number, number, number],
-    stddev: squareSum.map((value, channel) => {
-      const mean = sum[channel] / pixelCount;
-      const variance = Math.max(0, value / pixelCount - mean * mean);
-
-      return Math.max(1, Math.sqrt(variance));
-    }) as [number, number, number]
-  };
-}
-
-function matchRgbStats(candidatePixels: Buffer, candidateStats: RgbStats, referenceStats: RgbStats) {
-  const output = Buffer.alloc(candidatePixels.length);
-
-  for (let index = 0; index < candidatePixels.length; index += 4) {
-    for (let channel = 0; channel < 3; channel += 1) {
-      const gain = clampNumber(referenceStats.stddev[channel] / candidateStats.stddev[channel], 0.5, 2);
-      const matched = (candidatePixels[index + channel] - candidateStats.mean[channel]) * gain + referenceStats.mean[channel];
-
-      output[index + channel] = clampByte(matched);
-    }
-
-    output[index + 3] = candidatePixels[index + 3];
-  }
-
-  return output;
-}
-
-function lockReferenceEdges(referencePixels: Buffer, candidatePixels: Buffer, width: number, height: number) {
-  const output = Buffer.alloc(referencePixels.length);
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      const distanceToEdge = Math.min(x, y, width - 1 - x, height - 1 - y);
-      const candidateWeight = getCenterWeight(distanceToEdge);
-
-      for (let channel = 0; channel < 3; channel += 1) {
-        output[index + channel] = clampByte(
-          referencePixels[index + channel] * (1 - candidateWeight) + candidatePixels[index + channel] * candidateWeight
-        );
-      }
-
-      output[index + 3] = 255;
-    }
-  }
-
-  return output;
-}
-
-function getCenterWeight(distanceToEdge: number) {
-  if (distanceToEdge <= edgeLockWidth) {
-    return 0;
-  }
-
-  if (distanceToEdge >= edgeLockWidth + edgeFeatherWidth) {
-    return 1;
-  }
-
-  const progress = (distanceToEdge - edgeLockWidth) / edgeFeatherWidth;
-
-  return progress * progress * (3 - 2 * progress);
 }
 
 async function encodeRgbaToWebp(pixels: Buffer, width: number, height: number) {
@@ -311,10 +288,21 @@ function getEdgePixelPosition(edge: ScenePanoramaPostprocessEdge, offset: number
   }
 }
 
-function clampByte(value: number) {
-  return Math.round(clampNumber(value, 0, 255));
-}
-
-function clampNumber(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
+function getInnerBandPixelPosition(
+  edge: ScenePanoramaPostprocessEdge,
+  offset: number,
+  depth: number,
+  width: number,
+  height: number
+): [number, number] {
+  switch (edge) {
+    case "top":
+      return [offset, depth];
+    case "right":
+      return [width - 1 - depth, offset];
+    case "bottom":
+      return [offset, height - 1 - depth];
+    case "left":
+      return [depth, offset];
+  }
 }

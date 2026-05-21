@@ -1,13 +1,13 @@
 import "server-only";
 
 import OpenAI, { toFile } from "openai";
-import sharp from "sharp";
 import { getDefaultImageRuntimeConfig } from "@/lib/ai/model-config";
 import {
   analyzeScenePanoramaFaces,
   stabilizeScenePanoramaFaces,
   type ScenePanoramaQualityReport
 } from "@/lib/ai/scene-panorama-postprocess";
+import { splitEquirectangularToCubemap } from "@/lib/ai/scene-panorama-projection";
 import { type AiObservationContext, updateAiObservation, withAiObservation } from "@/lib/observability/langfuse";
 
 export const scenePanoramaFaces = ["front", "back", "left", "right", "top", "bottom"] as const;
@@ -35,6 +35,8 @@ export type ScenePanoramaGenerationResult = {
   faces: Record<ScenePanoramaFace, ScenePanoramaFaceImage>;
   mode: "enhanced" | "direct-cut";
   quality?: ScenePanoramaQualityReport;
+  qualityBestEffort?: boolean;
+  qualityPassed?: boolean;
   repaired: boolean;
 };
 
@@ -45,15 +47,19 @@ type FaceBuffer = {
   fileName: string;
 };
 
+type ScenePanoramaRepaintResult = {
+  faces: FaceBuffer[];
+  quality: ScenePanoramaQualityReport;
+  qualityPassed: boolean;
+  qualityRepairRounds: number;
+  qualityRetriedFaces: ScenePanoramaFace[];
+};
+
 const panoramaMotherSize = "1792x1024";
-const normalizedPanoramaWidth = 2048;
-const normalizedPanoramaHeight = 1024;
 const panoramaFaceSize = 1024;
-const sceneFaceEditMaskLockWidth = 176;
-const sceneFaceEditMaskFeatherWidth = 96;
 const maxFaceRedrawAttempts = 3;
 const maxAllowedScenePanoramaEdgeDelta = 18;
-let scenePanoramaCenterEditMaskPromise: Promise<Buffer> | null = null;
+const maxAllowedScenePanoramaInnerBandDelta = 28;
 
 export async function generateDefaultMaskBoardImage(prompt: string, userId: string, observationContext?: AiObservationContext) {
   const config = await getDefaultImageRuntimeConfig(userId);
@@ -192,77 +198,51 @@ export async function generateDefaultScenePanorama(
     });
     const baseFaces = await splitEquirectangularToCubemap(motherImage.bytes);
 
-    try {
-      const enhancedFaces = await redrawScenePanoramaFaces(client, config.modelId, baseFaces, input);
-      const stabilizedFaces = await stabilizeScenePanoramaFaces(baseFaces, enhancedFaces);
-      const quality = await ensureScenePanoramaQuality(stabilizedFaces);
-      const faces = faceBuffersToResult(stabilizedFaces);
+    const repaintResult = await redrawScenePanoramaFacesUntilQualityPasses(client, config.modelId, baseFaces, input);
+    const faces = faceBuffersToResult(repaintResult.faces);
+    const quality = repaintResult.quality;
 
-      updateAiObservation(span, {
-        metadata: {
-          averageEdgeDelta: quality.averageEdgeDelta,
-          faceCount: scenePanoramaFaces.length,
-          largestFaceBytes: quality.largestFaceBytes,
-          maxEdgeDelta: quality.maxEdgeDelta,
-          mode: "enhanced",
-          repaired: true,
-          totalBytes: quality.totalBytes
-        },
-        output: {
-          averageEdgeDelta: quality.averageEdgeDelta,
-          faceCount: scenePanoramaFaces.length,
-          largestFaceBytes: quality.largestFaceBytes,
-          maxEdgeDelta: quality.maxEdgeDelta,
-          mode: "enhanced",
-          repaired: true,
-          totalBytes: quality.totalBytes
-        }
-      });
-
-      return {
-        faces,
+    updateAiObservation(span, {
+      metadata: {
+        averageEdgeDelta: quality.averageEdgeDelta,
+        averageInnerBandDelta: quality.averageInnerBandDelta,
+        faceCount: scenePanoramaFaces.length,
+        largestFaceBytes: quality.largestFaceBytes,
+        maxEdgeDelta: quality.maxEdgeDelta,
+        maxInnerBandDelta: quality.maxInnerBandDelta,
         mode: "enhanced",
-        quality,
-        repaired: true
-      };
-    } catch (error) {
-      if (!isLikelyImageEditUnsupportedError(error)) {
-        throw error;
+        qualityBestEffort: !repaintResult.qualityPassed,
+        qualityPassed: repaintResult.qualityPassed,
+        qualityRepairRounds: repaintResult.qualityRepairRounds,
+        qualityRetriedFaces: repaintResult.qualityRetriedFaces,
+        repaired: true,
+        totalBytes: quality.totalBytes
+      },
+      output: {
+        averageEdgeDelta: quality.averageEdgeDelta,
+        averageInnerBandDelta: quality.averageInnerBandDelta,
+        faceCount: scenePanoramaFaces.length,
+        largestFaceBytes: quality.largestFaceBytes,
+        maxEdgeDelta: quality.maxEdgeDelta,
+        maxInnerBandDelta: quality.maxInnerBandDelta,
+        mode: "enhanced",
+        qualityBestEffort: !repaintResult.qualityPassed,
+        qualityPassed: repaintResult.qualityPassed,
+        qualityRepairRounds: repaintResult.qualityRepairRounds,
+        qualityRetriedFaces: repaintResult.qualityRetriedFaces,
+        repaired: true,
+        totalBytes: quality.totalBytes
       }
+    });
 
-      const stabilizedFaces = await stabilizeScenePanoramaFaces(baseFaces, baseFaces);
-      const quality = await ensureScenePanoramaQuality(stabilizedFaces);
-      const faces = faceBuffersToResult(stabilizedFaces);
-
-      updateAiObservation(span, {
-        metadata: {
-          averageEdgeDelta: quality.averageEdgeDelta,
-          editFallbackReason: getErrorMessage(error),
-          faceCount: scenePanoramaFaces.length,
-          largestFaceBytes: quality.largestFaceBytes,
-          maxEdgeDelta: quality.maxEdgeDelta,
-          mode: "direct-cut",
-          repaired: true,
-          totalBytes: quality.totalBytes
-        },
-        output: {
-          averageEdgeDelta: quality.averageEdgeDelta,
-          faceCount: scenePanoramaFaces.length,
-          largestFaceBytes: quality.largestFaceBytes,
-          maxEdgeDelta: quality.maxEdgeDelta,
-          mode: "direct-cut",
-          repaired: true,
-          totalBytes: quality.totalBytes
-        }
-      });
-
-      return {
-        faces,
-        mode: "direct-cut",
-        quality,
-        repaired: true
-      };
-    }
+    return {
+      faces,
+      mode: "enhanced",
+      quality,
+      qualityBestEffort: !repaintResult.qualityPassed,
+      qualityPassed: repaintResult.qualityPassed,
+      repaired: true
+    };
   });
 }
 
@@ -297,25 +277,21 @@ async function editImageBuffer(
   {
     fileName,
     image,
-    mask,
     modelId,
     prompt
   }: {
     fileName: string;
     image: FaceBuffer;
-    mask?: Buffer | null;
     modelId: string;
     prompt: string;
   }
 ): Promise<FaceBuffer> {
   const imageFile = await toFile(image.bytes, image.fileName, { type: image.contentType });
-  const maskFile = mask ? await toFile(mask, `mask-${image.fileName}`, { type: "image/png" }) : undefined;
   let edited: { data?: Array<{ b64_json?: string; url?: string }> };
 
   try {
     edited = await requestImageEdit(client, {
       imageFile,
-      maskFile,
       modelId,
       prompt,
       useAdvancedOptions: true
@@ -327,7 +303,6 @@ async function editImageBuffer(
 
     edited = await requestImageEdit(client, {
       imageFile,
-      maskFile,
       modelId,
       prompt,
       useAdvancedOptions: false
@@ -345,13 +320,11 @@ async function requestImageEdit(
   client: OpenAI,
   {
     imageFile,
-    maskFile,
     modelId,
     prompt,
     useAdvancedOptions
   }: {
     imageFile: File;
-    maskFile?: File;
     modelId: string;
     prompt: string;
     useAdvancedOptions: boolean;
@@ -359,7 +332,6 @@ async function requestImageEdit(
 ) {
   return (await client.images.edit({
     image: imageFile,
-    mask: maskFile,
     model: modelId,
     n: 1,
     prompt,
@@ -412,221 +384,128 @@ async function extractImageBuffer(
   throw new Error("SCENE_PANORAMA_IMAGE_EMPTY");
 }
 
-async function splitEquirectangularToCubemap(bytes: Buffer): Promise<FaceBuffer[]> {
-  const normalized = await sharp(bytes)
-    .resize(normalizedPanoramaWidth, normalizedPanoramaHeight, { fit: "fill" })
-    .toColorspace("srgb")
-    .ensureAlpha()
-    .raw()
-    .toBuffer();
+async function redrawScenePanoramaFacesUntilQualityPasses(
+  client: OpenAI,
+  modelId: string,
+  referenceFaces: FaceBuffer[],
+  input: ScenePanoramaGenerationInput
+): Promise<ScenePanoramaRepaintResult> {
+  let enhancedFaces = await redrawScenePanoramaFaces(client, modelId, referenceFaces, input, 1);
+  const qualityRetriedFaces = new Set<ScenePanoramaFace>();
+  let bestResult: ScenePanoramaRepaintResult | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
 
-  return Promise.all(
-    scenePanoramaFaces.map(async (face) => ({
-      bytes: await renderCubemapFace(normalized, face),
-      contentType: "image/png",
-      face,
-      fileName: `scene-panorama-${face}.png`
-    }))
-  );
-}
+  for (let attempt = 1; attempt <= maxFaceRedrawAttempts; attempt += 1) {
+    const stabilizedFaces = await stabilizeScenePanoramaFaces(referenceFaces, enhancedFaces);
+    const quality = await analyzeScenePanoramaFaces(stabilizedFaces);
+    const score = getScenePanoramaQualityScore(quality);
 
-async function renderCubemapFace(sourcePixels: Buffer, face: ScenePanoramaFace) {
-  const output = Buffer.alloc(panoramaFaceSize * panoramaFaceSize * 4);
-
-  for (let y = 0; y < panoramaFaceSize; y += 1) {
-    for (let x = 0; x < panoramaFaceSize; x += 1) {
-      const a = (2 * (x + 0.5)) / panoramaFaceSize - 1;
-      const b = (2 * (y + 0.5)) / panoramaFaceSize - 1;
-      const [dx, dy, dz] = getFaceDirection(face, a, b);
-      const length = Math.hypot(dx, dy, dz);
-      const nx = dx / length;
-      const ny = dy / length;
-      const nz = dz / length;
-      const lon = Math.atan2(nx, nz);
-      const lat = Math.asin(ny);
-      const sourceX = wrapCoordinate((lon / (2 * Math.PI) + 0.5) * normalizedPanoramaWidth, normalizedPanoramaWidth);
-      const sourceY = clampCoordinate((0.5 - lat / Math.PI) * normalizedPanoramaHeight, normalizedPanoramaHeight);
-      const color = sampleBilinear(sourcePixels, sourceX, sourceY);
-      const targetIndex = (y * panoramaFaceSize + x) * 4;
-
-      output[targetIndex] = color[0];
-      output[targetIndex + 1] = color[1];
-      output[targetIndex + 2] = color[2];
-      output[targetIndex + 3] = color[3];
+    if (score < bestScore) {
+      bestScore = score;
+      bestResult = {
+        faces: stabilizedFaces,
+        quality,
+        qualityPassed: false,
+        qualityRepairRounds: attempt - 1,
+        qualityRetriedFaces: Array.from(qualityRetriedFaces)
+      };
     }
-  }
 
-  return sharp(output, {
-    raw: {
-      channels: 4,
-      height: panoramaFaceSize,
-      width: panoramaFaceSize
+    if (isScenePanoramaQualityPassing(quality)) {
+      return {
+        faces: stabilizedFaces,
+        quality,
+        qualityPassed: true,
+        qualityRepairRounds: attempt - 1,
+        qualityRetriedFaces: Array.from(qualityRetriedFaces)
+      };
     }
-  }).png().toBuffer();
-}
 
-function getScenePanoramaCenterEditMask() {
-  scenePanoramaCenterEditMaskPromise ??= createScenePanoramaCenterEditMask();
-
-  return scenePanoramaCenterEditMaskPromise;
-}
-
-async function createScenePanoramaCenterEditMask() {
-  const pixels = Buffer.alloc(panoramaFaceSize * panoramaFaceSize * 4);
-
-  for (let y = 0; y < panoramaFaceSize; y += 1) {
-    for (let x = 0; x < panoramaFaceSize; x += 1) {
-      const index = (y * panoramaFaceSize + x) * 4;
-      const distanceToEdge = Math.min(x, y, panoramaFaceSize - 1 - x, panoramaFaceSize - 1 - y);
-      const alpha = getScenePanoramaMaskAlpha(distanceToEdge);
-
-      pixels[index] = 255;
-      pixels[index + 1] = 255;
-      pixels[index + 2] = 255;
-      pixels[index + 3] = alpha;
+    if (attempt >= maxFaceRedrawAttempts) {
+      return bestResult ?? {
+        faces: stabilizedFaces,
+        quality,
+        qualityPassed: false,
+        qualityRepairRounds: attempt - 1,
+        qualityRetriedFaces: Array.from(qualityRetriedFaces)
+      };
     }
+
+    const failedFaces = getScenePanoramaQualityFailedFaces(quality);
+    const redrawnFaces = await Promise.all(
+      failedFaces.map(async (face) => {
+        const referenceFace = getFaceBuffer(referenceFaces, face);
+        qualityRetriedFaces.add(face);
+
+        return redrawScenePanoramaFaceWithRetry(client, modelId, referenceFace, input, attempt + 1);
+      })
+    );
+
+    enhancedFaces = replaceScenePanoramaFaces(enhancedFaces, redrawnFaces);
   }
 
-  return sharp(pixels, {
-    raw: {
-      channels: 4,
-      height: panoramaFaceSize,
-      width: panoramaFaceSize
-    }
-  }).png().toBuffer();
-}
-
-function getScenePanoramaMaskAlpha(distanceToEdge: number) {
-  if (distanceToEdge <= sceneFaceEditMaskLockWidth) {
-    return 255;
+  if (bestResult) {
+    return bestResult;
   }
 
-  if (distanceToEdge >= sceneFaceEditMaskLockWidth + sceneFaceEditMaskFeatherWidth) {
-    return 0;
-  }
-
-  const progress = (distanceToEdge - sceneFaceEditMaskLockWidth) / sceneFaceEditMaskFeatherWidth;
-
-  return Math.round(255 * (1 - smoothstep(progress)));
-}
-
-function getFaceDirection(face: ScenePanoramaFace, a: number, b: number): [number, number, number] {
-  switch (face) {
-    case "front":
-      return [a, -b, 1];
-    case "back":
-      return [-a, -b, -1];
-    case "left":
-      return [-1, -b, a];
-    case "right":
-      return [1, -b, -a];
-    case "top":
-      return [a, 1, b];
-    case "bottom":
-      return [a, -1, -b];
-  }
-}
-
-function sampleBilinear(pixels: Buffer, x: number, y: number): [number, number, number, number] {
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const x1 = (x0 + 1) % normalizedPanoramaWidth;
-  const y1 = Math.min(normalizedPanoramaHeight - 1, y0 + 1);
-  const tx = x - x0;
-  const ty = y - y0;
-  const c00 = readPixel(pixels, x0, y0);
-  const c10 = readPixel(pixels, x1, y0);
-  const c01 = readPixel(pixels, x0, y1);
-  const c11 = readPixel(pixels, x1, y1);
-
-  return [0, 1, 2, 3].map((index) =>
-    Math.round(
-      c00[index] * (1 - tx) * (1 - ty) +
-        c10[index] * tx * (1 - ty) +
-        c01[index] * (1 - tx) * ty +
-        c11[index] * tx * ty
-    )
-  ) as [number, number, number, number];
-}
-
-function readPixel(pixels: Buffer, x: number, y: number): [number, number, number, number] {
-  const index = (y * normalizedPanoramaWidth + x) * 4;
-
-  return [pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]];
-}
-
-function wrapCoordinate(value: number, max: number) {
-  return ((value % max) + max) % max;
-}
-
-function clampCoordinate(value: number, max: number) {
-  return Math.max(0, Math.min(max - 1, value));
-}
-
-function smoothstep(progress: number) {
-  const value = Math.max(0, Math.min(1, progress));
-
-  return value * value * (3 - 2 * value);
+  throw new Error("SCENE_PANORAMA_IMAGE_EMPTY");
 }
 
 async function redrawScenePanoramaFaces(
   client: OpenAI,
   modelId: string,
   faces: FaceBuffer[],
-  input: ScenePanoramaGenerationInput
+  input: ScenePanoramaGenerationInput,
+  firstPromptAttempt = 1
 ) {
-  return Promise.all(faces.map((face) => redrawScenePanoramaFaceWithRetry(client, modelId, face, input)));
+  return Promise.all(faces.map((face) => redrawScenePanoramaFaceWithRetry(client, modelId, face, input, firstPromptAttempt)));
 }
 
 async function redrawScenePanoramaFaceWithRetry(
   client: OpenAI,
   modelId: string,
   face: FaceBuffer,
-  input: ScenePanoramaGenerationInput
+  input: ScenePanoramaGenerationInput,
+  firstPromptAttempt = 1
 ) {
   let lastError: unknown = null;
-  const centerEditMask = await getScenePanoramaCenterEditMask();
 
-  for (let attempt = 1; attempt <= maxFaceRedrawAttempts; attempt += 1) {
+  for (let attempt = firstPromptAttempt; attempt <= maxFaceRedrawAttempts; attempt += 1) {
     const fileName = `scene-panorama-${face.face}.png`;
 
     try {
       return await editImageBuffer(client, {
         fileName,
         image: face,
-        mask: centerEditMask,
         modelId,
-        prompt: buildScenePanoramaFacePrompt(input, face.face, attempt, true)
+        prompt: buildScenePanoramaFacePrompt(input, face.face, attempt)
       });
     } catch (error) {
       lastError = error;
 
-      if (isLikelyMaskUnsupportedError(error)) {
-        try {
-          return await editImageBuffer(client, {
-            fileName,
-            image: face,
-            modelId,
-            prompt: buildScenePanoramaFacePrompt(input, face.face, attempt, false)
-          });
-        } catch (fallbackError) {
-          lastError = fallbackError;
-
-          if (isLikelyImageEditUnsupportedError(fallbackError)) {
-            throw fallbackError;
-          }
-        }
-
-        continue;
-      }
-
       if (isLikelyImageEditUnsupportedError(error)) {
-        throw error;
+        throw new Error("SCENE_PANORAMA_REFERENCE_EDIT_UNSUPPORTED");
       }
     }
   }
 
   throw lastError ?? new Error(`SCENE_PANORAMA_FACE_REDRAW_FAILED_${face.face}`);
+}
+
+function getFaceBuffer(faces: FaceBuffer[], face: ScenePanoramaFace) {
+  const image = faces.find((item) => item.face === face);
+
+  if (!image) {
+    throw new Error(`SCENE_PANORAMA_FACE_MISSING_${face}`);
+  }
+
+  return image;
+}
+
+function replaceScenePanoramaFaces(currentFaces: FaceBuffer[], redrawnFaces: FaceBuffer[]) {
+  const redrawnByFace = new Map(redrawnFaces.map((face) => [face.face, face]));
+
+  return currentFaces.map((face) => redrawnByFace.get(face.face) ?? face);
 }
 
 function faceBuffersToResult(faces: FaceBuffer[]): Record<ScenePanoramaFace, ScenePanoramaFaceImage> {
@@ -648,14 +527,31 @@ function faceBuffersToResult(faces: FaceBuffer[]): Record<ScenePanoramaFace, Sce
   }, {} as Record<ScenePanoramaFace, ScenePanoramaFaceImage>);
 }
 
-async function ensureScenePanoramaQuality(faces: FaceBuffer[]) {
-  const quality = await analyzeScenePanoramaFaces(faces);
+function isScenePanoramaQualityPassing(quality: ScenePanoramaQualityReport) {
+  return quality.maxEdgeDelta <= maxAllowedScenePanoramaEdgeDelta && quality.maxInnerBandDelta <= maxAllowedScenePanoramaInnerBandDelta;
+}
 
-  if (quality.maxEdgeDelta > maxAllowedScenePanoramaEdgeDelta) {
-    throw new Error("SCENE_PANORAMA_QUALITY_FAILED");
-  }
+function getScenePanoramaQualityScore(quality: ScenePanoramaQualityReport) {
+  return quality.maxEdgeDelta / maxAllowedScenePanoramaEdgeDelta + quality.maxInnerBandDelta / maxAllowedScenePanoramaInnerBandDelta;
+}
 
-  return quality;
+function getScenePanoramaQualityFailedFaces(quality: ScenePanoramaQualityReport) {
+  const faces = new Set<ScenePanoramaFace>();
+
+  quality.edgeDeltas.forEach((edge) => {
+    if (edge.delta > maxAllowedScenePanoramaEdgeDelta) {
+      faces.add(edge.firstFace);
+      faces.add(edge.secondFace);
+    }
+  });
+  quality.innerBandDeltas.forEach((edge) => {
+    if (edge.delta > maxAllowedScenePanoramaInnerBandDelta) {
+      faces.add(edge.firstFace);
+      faces.add(edge.secondFace);
+    }
+  });
+
+  return Array.from(faces.size > 0 ? faces : new Set(scenePanoramaFaces));
 }
 
 function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInput) {
@@ -701,58 +597,89 @@ function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInput) {
   ].join("\n");
 }
 
-function buildScenePanoramaFacePrompt(input: ScenePanoramaGenerationInput, face: ScenePanoramaFace, attempt: number, maskedEdit: boolean) {
+function buildScenePanoramaFacePrompt(input: ScenePanoramaGenerationInput, face: ScenePanoramaFace, attempt: number) {
   const direction = getScenePanoramaFaceDescription(face, input.locale);
+  const adjacency = getScenePanoramaFaceAdjacencyDescription(face, input.locale);
+  const retryInstruction = getScenePanoramaFaceRetryInstruction(attempt, input.locale);
   const style = getSceneStylePrompt(input.style, input.locale);
   const drawingStyle = getScenePanoramaDrawingStylePrompt(input.panoramaDrawingStyle, input.locale);
 
   if (input.locale === "en-US") {
     return [
-      "Enhance this cubemap face for a 360-degree interactive fiction panorama.",
-      "Use the input image as strict spatial reference: preserve composition, object placement, perspective, and edge continuity.",
-      maskedEdit
-        ? "A mask protects the seam border. Only the transparent center may be repainted; the opaque border must remain unchanged."
-        : "Treat the outer 18% border as a protected seam zone: keep geometry, brightness, color temperature, horizon lines, and object silhouettes unchanged there.",
-      "Only improve central texture fidelity, light quality, readable materials, and atmosphere without inventing new focal subjects.",
-      "Preserve the same camera height, horizon level, focal length feeling, light direction, time-of-day, material palette, and scale as the reference.",
-      "This face is one side of the same cubemap room/world, not a standalone illustration; do not restyle, recompose, crop differently, or change the scene identity.",
-      "Match the same global exposure, white balance, color grading, lighting direction, and material language as the reference.",
-      "Do not add, remove, resize, rotate, or move any object that touches an edge.",
-      "Keep edge shadows, floor lines, wall lines, ceiling lines, sky gradients, and repeated textures aligned with neighboring faces.",
-      "No text, labels, watermark, UI, or frame.",
+      "Perform pixel-faithful image upscaling, restoration, and enhancement for this cubemap face.",
+      "Use the input image as a strict spatial reference, not as a loose concept sketch.",
+      "Keep the exact composition, camera position, field of view, perspective, crop, rotation, object placement, object scale, and horizon level.",
+      "Do not add objects, remove objects, move objects, resize objects, rotate objects, repaint the scene as a new illustration, or reinterpret the space.",
+      "All wall lines, floor lines, ceiling lines, horizon lines, shadow boundaries, object silhouettes, and material texture directions must stay near the same pixel positions as the reference.",
+      "Allowed improvements: higher apparent resolution, clearer texture detail, material readability, gentle noise cleanup, small missing-detail restoration, and richer light quality.",
+      "Forbidden artifacts: feathered edges, blurred seams, vignette, frame, border, face-specific color shift, restyling, recropping, or standalone-poster composition.",
+      "This face is one side of a shared 360-degree cubemap. Its four edges connect directly to other AI-upscaled faces and must remain sharp, continuous, and stitchable.",
+      "Match the reference global exposure, white balance, color grading, lighting direction, time-of-day, material palette, camera height, and spatial scale.",
       `Face direction: ${direction}.`,
+      `Face adjacency: ${adjacency}.`,
       `Scene: ${input.sceneName}.`,
       `Scene description: ${input.sceneDescription}.`,
       `Block: ${input.blockName}.`,
       `Block description: ${input.blockDescription}.`,
       `Visual style: ${style}.`,
       `Rendering type: ${drawingStyle}.`,
-      `Retry pass: ${attempt}. Keep closer to the reference if uncertain.`
+      retryInstruction
     ].join("\n");
   }
 
   return [
-    "增强这张 360 度全景六面体的单面图。",
-    "必须严格参考输入图：保留构图、物体位置、透视关系和边缘连续性。",
-    maskedEdit
-      ? "当前编辑带有遮罩保护接缝边缘：只允许重绘透明中心区域，不要改变不透明边缘区域。"
-      : "把外侧 18% 边缘视为受保护接缝区：边缘区域的几何、亮度、色温、地平线和物体轮廓都不要改变。",
-    "只增强中心区域的纹理、光影、材质可读性和氛围，不要凭空新增主体。",
-    "必须保留参考图的同一机位高度、同一地平线、同一镜头透视感、同一光照方向、同一时间光线、同一材质色板和同一空间比例。",
-    "这张图只是同一个六面体空间的一面，不是独立插画；不要重新构图、不要换风格、不要换房间、不要改变空间身份。",
-    "必须匹配参考图的统一曝光、白平衡、调色、光照方向和材质语言。",
-    "不要新增、删除、缩放、旋转或移动任何触碰边缘的物体。",
-    "保持边缘阴影、地面线、墙线、天花线、天空渐变和重复纹理能与相邻面接上。",
-    "不要文字、标签、水印、UI 或画框。",
+    "对这张六面体单面图做像素级忠实升级、高清恢复和细节增强。",
+    "输入图是严格空间参考，不是宽松概念草图。",
+    "必须保持完全相同的构图、机位、视场角、透视、裁切、旋转、物体位置、物体比例和地平线高度。",
+    "不要新增物体、删除物体、移动物体、缩放物体、旋转物体、把画面重画成新插画，或重新理解空间。",
+    "所有墙线、地线、天花线、地平线、阴影边界、物体轮廓和材质纹理方向，都必须保持在参考图的相同像素位置附近。",
+    "允许增强：表观分辨率、纹理清晰度、材质可读性、轻微噪点清理、局部缺失细节恢复和光照质感。",
+    "禁止出现：边缘羽化、接缝模糊、暗角、画框、边框、单面独立偏色、风格重绘、重新裁切或海报式构图。",
+    "这张图是同一个 360 度六面体空间的一面，四条边会直接连接其他 AI 高清升级后的面，边缘必须清晰、连续、可拼接。",
+    "必须匹配参考图的统一曝光、白平衡、调色、光照方向、时间光线、材质色板、机位高度和空间比例。",
     `当前方向：${direction}。`,
+    `相邻关系：${adjacency}。`,
     `场景：${input.sceneName}。`,
     `场景说明：${input.sceneDescription}。`,
     `区块：${input.blockName}。`,
     `区块说明：${input.blockDescription}。`,
     `视觉风格：${style}。`,
     `画面类型：${drawingStyle}。`,
-    `重试轮次：${attempt}。如果不确定，请更贴近参考图。`
+    retryInstruction
   ].join("\n");
+}
+
+function getScenePanoramaFaceAdjacencyDescription(face: ScenePanoramaFace, locale: ScenePanoramaGenerationInput["locale"]) {
+  const zh: Record<ScenePanoramaFace, string> = {
+    back: "back.left 接 right.right；back.right 接 left.left；back.top 接 top.top；back.bottom 接 bottom.bottom",
+    bottom: "bottom.top 接 front.bottom；bottom.right 接 right.bottom；bottom.bottom 接 back.bottom；bottom.left 接 left.bottom",
+    front: "front.left 接 left.right；front.right 接 right.left；front.top 接 top.bottom；front.bottom 接 bottom.top",
+    left: "left.left 接 back.right；left.right 接 front.left；left.top 接 top.left；left.bottom 接 bottom.left",
+    right: "right.left 接 front.right；right.right 接 back.left；right.top 接 top.right；right.bottom 接 bottom.right",
+    top: "top.bottom 接 front.top；top.right 接 right.top；top.top 接 back.top；top.left 接 left.top"
+  };
+  const en: Record<ScenePanoramaFace, string> = {
+    back: "back.left connects to right.right; back.right connects to left.left; back.top connects to top.top; back.bottom connects to bottom.bottom",
+    bottom: "bottom.top connects to front.bottom; bottom.right connects to right.bottom; bottom.bottom connects to back.bottom; bottom.left connects to left.bottom",
+    front: "front.left connects to left.right; front.right connects to right.left; front.top connects to top.bottom; front.bottom connects to bottom.top",
+    left: "left.left connects to back.right; left.right connects to front.left; left.top connects to top.left; left.bottom connects to bottom.left",
+    right: "right.left connects to front.right; right.right connects to back.left; right.top connects to top.right; right.bottom connects to bottom.right",
+    top: "top.bottom connects to front.top; top.right connects to right.top; top.top connects to back.top; top.left connects to left.top"
+  };
+
+  return locale === "en-US" ? en[face] : zh[face];
+}
+
+function getScenePanoramaFaceRetryInstruction(attempt: number, locale: ScenePanoramaGenerationInput["locale"]) {
+  if (attempt <= 1) {
+    return locale === "en-US"
+      ? "First pass: preserve the reference exactly and only improve fidelity."
+      : "首次生成：严格保留参考图，只提升清晰度和细节可信度。";
+  }
+
+  return locale === "en-US"
+    ? `Retry pass ${attempt}: the previous attempt changed structure or caused seam mismatch. Reduce creativity, stay closer to the reference, and perform only conservative high-definition restoration.`
+    : `重试轮次 ${attempt}：上一轮可能改变结构或造成接缝不匹配。降低创造性，更贴近参考图，只做保守的高清恢复。`;
 }
 
 function getScenePanoramaFaceDescription(face: ScenePanoramaFace, locale: ScenePanoramaGenerationInput["locale"]) {
@@ -854,19 +781,6 @@ function isLikelyImageEditOptionUnsupportedError(error: unknown) {
       message.includes("unknown parameter") ||
       message.includes("unexpected parameter") ||
       message.includes("unsupported parameter")
-    )
-  );
-}
-
-function isLikelyMaskUnsupportedError(error: unknown) {
-  const message = getErrorMessage(error).toLowerCase();
-  const status = typeof error === "object" && error && "status" in error ? (error as { status?: unknown }).status : null;
-
-  return (
-    status === 400 &&
-    (
-      message.includes("mask") ||
-      message.includes("transparent area")
     )
   );
 }

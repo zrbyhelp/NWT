@@ -1,10 +1,11 @@
+import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateDefaultScenePanorama } from "@/lib/ai/image-runtime";
+import { getScenePanoramaFaceSourceCoordinate, splitEquirectangularToCubemap } from "@/lib/ai/scene-panorama-projection";
 import {
   analyzeScenePanoramaFaces,
-  measureFaceEdgeDelta,
   scenePanoramaPostprocessFaces,
   stabilizeScenePanoramaFaces
 } from "@/lib/ai/scene-panorama-postprocess";
@@ -1015,7 +1016,7 @@ describe("home workspace data", () => {
     expect(result.importedCount).toBe(1);
   });
 
-  it("stabilizes panorama faces and reduces edge color mismatch", async () => {
+  it("stabilizes panorama faces without copying reference pixels back into AI output", async () => {
     const referenceFaces = await Promise.all(
       scenePanoramaPostprocessFaces.map(async (face, index) => ({
         face,
@@ -1033,18 +1034,17 @@ describe("home workspace data", () => {
       }))
     );
 
-    const before = await measureFaceEdgeDelta(candidateFaces[4].bytes, candidateFaces[5].bytes, "right");
     const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
-    const after = await measureFaceEdgeDelta(stabilized[4].bytes, stabilized[5].bytes, "right");
-    const quality = await analyzeScenePanoramaFaces(stabilized);
+    const stabilizedPixel = await readImagePixel(stabilized[0].bytes, 0, 0);
+    const candidatePixel = await readImagePixel(candidateFaces[0].bytes, 0, 0);
+    const referencePixel = await readImagePixel(referenceFaces[0].bytes, 0, 0);
 
-    expect(after).toBeLessThan(before);
-    expect(after).toBeLessThan(8);
+    expect(averageRgbDelta(stabilizedPixel, candidatePixel)).toBeLessThan(8);
+    expect(averageRgbDelta(stabilizedPixel, referencePixel)).toBeGreaterThan(40);
     expect(stabilized.every((face) => face.contentType === "image/webp" && face.fileName.endsWith(".webp"))).toBe(true);
-    expect(quality.largestFaceBytes).toBeLessThan(10 * 1024 * 1024);
   });
 
-  it("reports low edge deltas for production-ready stabilized panorama faces", async () => {
+  it("reports low edge and inner-band deltas for production-ready stabilized panorama faces", async () => {
     const referenceFaces = await Promise.all(
       scenePanoramaPostprocessFaces.map(async (face) => ({
         face,
@@ -1054,11 +1054,11 @@ describe("home workspace data", () => {
       }))
     );
     const candidateFaces = await Promise.all(
-      scenePanoramaPostprocessFaces.map(async (face, index) => ({
+      scenePanoramaPostprocessFaces.map(async (face) => ({
         face,
         fileName: `${face}.png`,
         contentType: "image/png",
-        bytes: await createSolidFacePng(200 - index * 12, 60 + index * 8, 48 + index * 5)
+        bytes: await createSolidFacePng(200, 96, 72)
       }))
     );
 
@@ -1066,8 +1066,89 @@ describe("home workspace data", () => {
     const quality = await analyzeScenePanoramaFaces(stabilized);
 
     expect(quality.edgeDeltas).toHaveLength(12);
+    expect(quality.innerBandDeltas).toHaveLength(12);
     expect(quality.maxEdgeDelta).toBeLessThan(4);
+    expect(quality.maxInnerBandDelta).toBeLessThan(4);
     expect(quality.totalBytes).toBeLessThan(10 * 1024 * 1024);
+  });
+
+  it("rotates cubemap sampling so the back face center avoids the equirectangular seam", () => {
+    const normalizedWidth = 2048;
+    const normalizedHeight = 1024;
+    const front = getScenePanoramaFaceSourceCoordinate("front", 0, 0, { normalizedHeight, normalizedWidth });
+    const back = getScenePanoramaFaceSourceCoordinate("back", 0, 0, { normalizedHeight, normalizedWidth });
+    const right = getScenePanoramaFaceSourceCoordinate("right", 0, 0, { normalizedHeight, normalizedWidth });
+    const left = getScenePanoramaFaceSourceCoordinate("left", 0, 0, { normalizedHeight, normalizedWidth });
+
+    expect(front.sourceX).toBeCloseTo(normalizedWidth * 0.625, 0);
+    expect(right.sourceX).toBeCloseTo(normalizedWidth * 0.875, 0);
+    expect(back.sourceX).toBeCloseTo(normalizedWidth * 0.125, 0);
+    expect(left.sourceX).toBeCloseTo(normalizedWidth * 0.375, 0);
+    expect(back.sourceX).toBeGreaterThan(normalizedWidth * 0.1);
+    expect(back.sourceX).toBeLessThan(normalizedWidth * 0.15);
+  });
+
+  it("keeps cubemap adjacent edges continuous after yaw rotation", async () => {
+    const mother = await createSmoothEquirectangularPng(256, 128);
+    const faces = await splitEquirectangularToCubemap(mother, {
+      faceSize: 64,
+      normalizedHeight: 128,
+      normalizedWidth: 256
+    });
+    const quality = await analyzeScenePanoramaFaces(faces);
+
+    expect(quality.edgeDeltas).toHaveLength(12);
+    expect(quality.maxEdgeDelta).toBeLessThan(12);
+    expect(quality.edgeDeltas.find((edge) => edge.firstFace === "right" && edge.secondFace === "back")?.delta).toBeLessThan(12);
+    expect(quality.edgeDeltas.find((edge) => edge.firstFace === "left" && edge.secondFace === "back")?.delta).toBeLessThan(12);
+    expect(quality.edgeDeltas.find((edge) => edge.firstFace === "back" && edge.secondFace === "top")?.delta).toBeLessThan(12);
+    expect(quality.edgeDeltas.find((edge) => edge.firstFace === "back" && edge.secondFace === "bottom")?.delta).toBeLessThan(12);
+  });
+
+  it("preserves AI face details during stabilization instead of blending reference seams", async () => {
+    const candidateBytes = await createCheckerFacePng();
+    const referenceBytes = await createCheckerFacePng({ edgeColor: [128, 128, 128], edgeWidth: 12 });
+    const candidateFaces = scenePanoramaPostprocessFaces.map((face) => ({
+      face,
+      fileName: `${face}.png`,
+      contentType: "image/png",
+      bytes: candidateBytes
+    }));
+    const referenceFaces = scenePanoramaPostprocessFaces.map((face) => ({
+      face,
+      fileName: `${face}.png`,
+      contentType: "image/png",
+      bytes: referenceBytes
+    }));
+
+    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
+    const originalEdgePixel = await readImagePixel(candidateBytes, 4, 4);
+    const stabilizedEdgePixel = await readImagePixel(stabilized[0].bytes, 4, 4);
+    const referenceEdgePixel = await readImagePixel(referenceBytes, 4, 4);
+
+    expect(averageRgbDelta(originalEdgePixel, stabilizedEdgePixel)).toBeLessThan(35);
+    expect(averageRgbDelta(referenceEdgePixel, stabilizedEdgePixel)).toBeGreaterThan(35);
+  });
+
+  it("uses pixel-faithful face prompts without mask or seam-protection wording", async () => {
+    const source = await readFile("src/lib/ai/image-runtime.ts", "utf8");
+    const promptSource = source.slice(
+      source.indexOf("function buildScenePanoramaFacePrompt"),
+      source.indexOf("function getScenePanoramaFaceDescription")
+    );
+
+    expect(promptSource).not.toContain("mask");
+    expect(promptSource).not.toContain("protected seam strip");
+    expect(promptSource).not.toContain("outer 5%");
+    expect(promptSource).not.toContain("透明中心区域");
+    expect(promptSource).not.toContain("受保护接缝区");
+    expect(promptSource).toContain("pixel-faithful image upscaling");
+    expect(promptSource).toContain("same pixel positions");
+    expect(promptSource).toContain("像素级忠实升级");
+    expect(promptSource).toContain("高清恢复");
+    expect(promptSource).toContain("相同像素位置");
+    expect(promptSource).toContain("不要新增物体、删除物体、移动物体");
+    expect(promptSource).toContain("边缘必须清晰、连续、可拼接");
   });
 
   it("rejects invalid material archives", async () => {
@@ -1287,6 +1368,89 @@ async function createSolidFacePng(red: number, green: number, blue: number) {
   })
     .png()
     .toBuffer();
+}
+
+async function createSmoothEquirectangularPng(width: number, height: number) {
+  const pixels = Buffer.alloc(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const longitude = (x / width) * 2 * Math.PI - Math.PI;
+
+      pixels[index] = Math.round(128 + 72 * Math.cos(longitude));
+      pixels[index + 1] = Math.round(128 + 72 * Math.sin(longitude));
+      pixels[index + 2] = Math.round(48 + (160 * y) / Math.max(1, height - 1));
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height,
+      width
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function createCheckerFacePng(options: { edgeColor?: [number, number, number]; edgeWidth?: number } = {}) {
+  const size = 1024;
+  const square = 16;
+  const pixels = Buffer.alloc(size * size * 4);
+
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = (y * size + x) * 4;
+      const isEdge = options.edgeWidth
+        ? x < options.edgeWidth || y < options.edgeWidth || x >= size - options.edgeWidth || y >= size - options.edgeWidth
+        : false;
+      const checker = (Math.floor(x / square) + Math.floor(y / square)) % 2 === 0;
+      const color = isEdge && options.edgeColor
+        ? options.edgeColor
+        : checker
+          ? [38, 72, 168]
+          : [222, 234, 248];
+
+      pixels[index] = color[0];
+      pixels[index + 1] = color[1];
+      pixels[index + 2] = color[2];
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height: size,
+      width: size
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function readImagePixel(bytes: Buffer, x: number, y: number): Promise<[number, number, number]> {
+  const metadata = await sharp(bytes).metadata();
+  const width = metadata.width ?? 0;
+  const pixels = await sharp(bytes)
+    .toColorspace("srgb")
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+  const index = (y * width + x) * 4;
+
+  return [pixels[index], pixels[index + 1], pixels[index + 2]];
+}
+
+function averageRgbDelta(first: [number, number, number], second: [number, number, number]) {
+  return (
+    Math.abs(first[0] - second[0]) +
+    Math.abs(first[1] - second[1]) +
+    Math.abs(first[2] - second[2])
+  ) / 3;
 }
 
 async function createMaterialArchiveBytes({

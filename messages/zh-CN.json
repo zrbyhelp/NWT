@@ -782,10 +782,12 @@
           "bottom": "下"
         },
         "panoramaGenerated": "区块全景已生成。",
+        "panoramaGeneratedBestEffort": "区块全景已生成最佳结果；接缝质检仍有风险，请放大预览后确认。",
         "panoramaGeneratedFallback": "区块全景已生成，当前模型未进行参考重绘。",
         "panoramaGenerateFailed": "区块全景生成失败，请稍后再试。",
         "panoramaMissingDefaultImage": "还没有可用的默认图片模型，请先在体验设置中配置。",
         "panoramaQualityFailed": "区块全景接缝质检未通过，请重新生成。",
+        "panoramaReferenceEditUnsupported": "当前默认图片模型不支持参考图重绘，无法生成生产级六面全景；请在体验设置中切换支持图片编辑的模型。",
         "invalidPanoramaFace": "全景单面仅支持 PNG/JPG/WebP，不能超过 10MB，且保存时必须为正方形。",
         "panoramaUploadFailed": "六面图上传失败，请检查 R2 存储配置后重试。",
         "panoramaUploadTooLarge": "六面图上传失败，单面图片过大，请重新生成或压缩后再保存。",
