@@ -1,7 +1,14 @@
 import JSZip from "jszip";
+import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateDefaultScenePanorama } from "@/lib/ai/image-runtime";
-import { uploadMaskBoardImage, uploadMaterialImageBytes } from "@/lib/storage/material";
+import {
+  analyzeScenePanoramaFaces,
+  measureFaceEdgeDelta,
+  scenePanoramaPostprocessFaces,
+  stabilizeScenePanoramaFaces
+} from "@/lib/ai/scene-panorama-postprocess";
+import { deleteMaterialImagesByUrls, uploadMaskBoardImage, uploadMaterialImageBytes } from "@/lib/storage/material";
 import type { MaskMaterialCreateInput, SceneMaterialCreateInput } from "@/lib/home-workspace";
 
 type ScriptRecord = {
@@ -481,6 +488,29 @@ describe("home workspace data", () => {
       previewUrl: "https://cdn.example.com/scene/main-front.png",
       title: "废弃研究所"
     });
+  });
+
+  it("normalizes scene record failures while keeping uploaded face cleanup best-effort", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { createSceneMaterial } = await import("@/lib/home-workspace");
+    const input = createSceneInput();
+    const uploadedFaceUrls = Object.values(input.blocks[0].panorama!.faces);
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    mocks.prisma.storyMaterial.create.mockRejectedValueOnce(
+      Object.assign(new Error("Invalid value for enum StoryMaterialCategory: SCENE"), { code: "P2022" })
+    );
+    vi.mocked(deleteMaterialImagesByUrls).mockRejectedValueOnce(new Error("cleanup failed"));
+
+    await expect(createSceneMaterial(input, uploadedFaceUrls, "zh-CN")).rejects.toThrow("SCENE_MATERIAL_CATEGORY_MIGRATION_REQUIRED");
+    expect(deleteMaterialImagesByUrls).toHaveBeenCalledWith(uploadedFaceUrls);
   });
 
   it("passes the selected panorama type into scene panorama generation", async () => {
@@ -985,6 +1015,61 @@ describe("home workspace data", () => {
     expect(result.importedCount).toBe(1);
   });
 
+  it("stabilizes panorama faces and reduces edge color mismatch", async () => {
+    const referenceFaces = await Promise.all(
+      scenePanoramaPostprocessFaces.map(async (face, index) => ({
+        face,
+        fileName: `${face}.png`,
+        contentType: "image/png",
+        bytes: await createSolidFacePng(80 + index * 10, 110 + index * 6, 160 + index * 4)
+      }))
+    );
+    const candidateFaces = await Promise.all(
+      scenePanoramaPostprocessFaces.map(async (face, index) => ({
+        face,
+        fileName: `${face}.png`,
+        contentType: "image/png",
+        bytes: await createSolidFacePng(210 - index * 8, 70 + index * 9, 40 + index * 7)
+      }))
+    );
+
+    const before = await measureFaceEdgeDelta(candidateFaces[4].bytes, candidateFaces[5].bytes, "right");
+    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
+    const after = await measureFaceEdgeDelta(stabilized[4].bytes, stabilized[5].bytes, "right");
+    const quality = await analyzeScenePanoramaFaces(stabilized);
+
+    expect(after).toBeLessThan(before);
+    expect(after).toBeLessThan(8);
+    expect(stabilized.every((face) => face.contentType === "image/webp" && face.fileName.endsWith(".webp"))).toBe(true);
+    expect(quality.largestFaceBytes).toBeLessThan(10 * 1024 * 1024);
+  });
+
+  it("reports low edge deltas for production-ready stabilized panorama faces", async () => {
+    const referenceFaces = await Promise.all(
+      scenePanoramaPostprocessFaces.map(async (face) => ({
+        face,
+        fileName: `${face}.png`,
+        contentType: "image/png",
+        bytes: await createSolidFacePng(96, 132, 168)
+      }))
+    );
+    const candidateFaces = await Promise.all(
+      scenePanoramaPostprocessFaces.map(async (face, index) => ({
+        face,
+        fileName: `${face}.png`,
+        contentType: "image/png",
+        bytes: await createSolidFacePng(200 - index * 12, 60 + index * 8, 48 + index * 5)
+      }))
+    );
+
+    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
+    const quality = await analyzeScenePanoramaFaces(stabilized);
+
+    expect(quality.edgeDeltas).toHaveLength(12);
+    expect(quality.maxEdgeDelta).toBeLessThan(4);
+    expect(quality.totalBytes).toBeLessThan(10 * 1024 * 1024);
+  });
+
   it("rejects invalid material archives", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { importMaterialsZip } = await import("@/lib/material-transfer");
@@ -1189,6 +1274,19 @@ function createSceneMetadata(panoramaDrawingStyle = "realistic") {
       }
     ]
   };
+}
+
+async function createSolidFacePng(red: number, green: number, blue: number) {
+  return sharp({
+    create: {
+      channels: 4,
+      height: 64,
+      width: 64,
+      background: { alpha: 1, b: blue, g: green, r: red }
+    }
+  })
+    .png()
+    .toBuffer();
 }
 
 async function createMaterialArchiveBytes({

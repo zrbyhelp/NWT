@@ -89,10 +89,24 @@ export async function uploadHomeScenePanoramaFace(formData: FormData) {
     throw new Error("INVALID_SCENE_PANORAMA_FACE_FILE");
   }
 
-  return {
-    face,
-    url: await uploadScenePanoramaFace(viewer.id, file)
-  };
+  try {
+    return {
+      face,
+      url: await uploadScenePanoramaFace(viewer.id, file)
+    };
+  } catch (error) {
+    throw normalizeScenePanoramaUploadError(error);
+  }
+}
+
+function normalizeScenePanoramaUploadError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE") || message.includes("INVALID_MATERIAL_IMAGE_FILE")) {
+    return new Error("INVALID_SCENE_PANORAMA_FACE_FILE");
+  }
+
+  return new Error("SCENE_PANORAMA_UPLOAD_FAILED");
 }
 
 export async function createHomeMaskMaterial(formData: FormData, locale: Locale) {

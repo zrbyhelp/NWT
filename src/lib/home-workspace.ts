@@ -949,9 +949,81 @@ export async function createSceneMaterial(input: SceneMaterialCreateInput, uploa
       librarySource: "SELF_CREATED"
     });
   } catch (error) {
-    await deleteMaterialImagesByUrls(uploadedFaceUrls);
-    throw error;
+    await cleanupUploadedScenePanoramaFaces(uploadedFaceUrls);
+    throw normalizeSceneMaterialPersistenceError(error);
   }
+}
+
+function normalizeSceneMaterialPersistenceError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = getErrorCode(error);
+
+  if (
+    message.includes("SCENE_NAME_REQUIRED") ||
+    message.includes("SCENE_DESCRIPTION_REQUIRED") ||
+    message.includes("SCENE_BLOCK_REQUIRED") ||
+    message.includes("SCENE_BLOCK_NAME_REQUIRED") ||
+    message.includes("SCENE_BLOCK_DESCRIPTION_REQUIRED") ||
+    message.includes("SCENE_PANORAMA_FACE_REQUIRED") ||
+    message.includes("MATERIAL_NOT_EDITABLE")
+  ) {
+    return error instanceof Error ? error : new Error(message);
+  }
+
+  if (
+    code === "P2021" ||
+    code === "P2022" ||
+    message.includes("Data truncated") ||
+    message.includes("Incorrect enum") ||
+    message.includes("Invalid value for enum") ||
+    message.includes("StoryMaterialCategory") ||
+    message.includes("Value \"SCENE\"") ||
+    message.includes("invalid input value") ||
+    (message.includes("SCENE") && message.includes("category"))
+  ) {
+    return new Error("SCENE_MATERIAL_CATEGORY_MIGRATION_REQUIRED");
+  }
+
+  if (
+    code === "P2000" ||
+    message.includes("Data too long") ||
+    message.includes("max_allowed_packet") ||
+    message.includes("Packet for query is too large") ||
+    message.includes("request entity too large")
+  ) {
+    return new Error("SCENE_MATERIAL_METADATA_TOO_LARGE");
+  }
+
+  if (
+    message.includes("R2") ||
+    message.includes("S3") ||
+    message.includes("AccessDenied") ||
+    message.includes("NoSuchBucket") ||
+    message.includes("SignatureDoesNotMatch") ||
+    message.includes("CredentialsProviderError")
+  ) {
+    return new Error("SCENE_PANORAMA_UPLOAD_FAILED");
+  }
+
+  if (code?.startsWith("P")) {
+    return new Error("SCENE_MATERIAL_DATABASE_FAILED");
+  }
+
+  return new Error("SCENE_MATERIAL_PERSISTENCE_FAILED");
+}
+
+async function cleanupUploadedScenePanoramaFaces(urls: string[]) {
+  try {
+    await deleteMaterialImagesByUrls(urls);
+  } catch {
+    // Best-effort cleanup: preserve the original persistence failure for the UI.
+  }
+}
+
+function getErrorCode(error: unknown) {
+  return typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : null;
 }
 
 export async function updateSceneMaterial(
@@ -1014,8 +1086,8 @@ export async function updateSceneMaterial(
       librarySource: "SELF_CREATED"
     });
   } catch (error) {
-    await deleteMaterialImagesByUrls(uploadedFaceUrls);
-    throw error;
+    await cleanupUploadedScenePanoramaFaces(uploadedFaceUrls);
+    throw normalizeSceneMaterialPersistenceError(error);
   }
 }
 

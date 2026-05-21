@@ -3214,6 +3214,7 @@ function SceneMaterialDetail({
 }) {
   const record = getSceneMaterialMetadata(metadata);
   const [activeBlockId, setActiveBlockId] = useState(record?.blocks[0]?.id ?? "");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   if (!record || record.kind !== "scene") {
     return null;
@@ -3227,6 +3228,7 @@ function SceneMaterialDetail({
         return result;
       }, {} as Record<ScenePanoramaFace, string>)
     : null;
+  const completeFaces = faces && isCompleteScenePanoramaFaceUrls(faces) ? faces : null;
 
   return (
     <div className="mx-auto mt-8 max-w-md space-y-6 text-left">
@@ -3255,10 +3257,22 @@ function SceneMaterialDetail({
               <h3 className="text-sm font-semibold text-foreground/72">{activeBlock.name}</h3>
               <p className="mt-2 whitespace-pre-line text-sm leading-7 text-foreground/68">{activeBlock.description}</p>
             </div>
-            <ScenePanoramaViewer faces={faces && isCompleteScenePanoramaFaceUrls(faces) ? faces : null} emptyLabel={t("sceneForm.panoramaEmpty")} />
+            <ScenePanoramaViewer
+              faces={completeFaces}
+              emptyLabel={t("sceneForm.panoramaEmpty")}
+              expandLabel={t("sceneForm.panoramaPreviewOpen")}
+              onExpand={completeFaces ? () => setPreviewOpen(true) : undefined}
+            />
           </div>
         ) : null}
       </section>
+      {previewOpen && completeFaces ? (
+        <ScenePanoramaPreviewDialog
+          faces={completeFaces}
+          onClose={() => setPreviewOpen(false)}
+          t={t}
+        />
+      ) : null}
     </div>
   );
 }
@@ -4299,6 +4313,8 @@ function SceneBlockPanoramaPanel({
   onSelectFace: (face: ScenePanoramaFace, file: File | null) => void;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+
   return (
     <section className="mt-3 space-y-2.5 border-t border-border/70 pt-3" aria-label={t("sceneForm.panoramaTitle")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4330,7 +4346,12 @@ function SceneBlockPanoramaPanel({
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(16rem,1fr)]">
-        <ScenePanoramaViewer faces={faces} emptyLabel={t("sceneForm.panoramaEmpty")} />
+        <ScenePanoramaViewer
+          faces={faces}
+          emptyLabel={t("sceneForm.panoramaEmpty")}
+          expandLabel={t("sceneForm.panoramaPreviewOpen")}
+          onExpand={faces ? () => setPreviewOpen(true) : undefined}
+        />
 
         <div className="grid grid-cols-3 gap-2">
           {scenePanoramaFaces.map((face) => {
@@ -4368,6 +4389,13 @@ function SceneBlockPanoramaPanel({
           })}
         </div>
       </div>
+      {previewOpen && faces ? (
+        <ScenePanoramaPreviewDialog
+          faces={faces}
+          onClose={() => setPreviewOpen(false)}
+          t={t}
+        />
+      ) : null}
     </section>
   );
 }
@@ -4438,14 +4466,25 @@ function SceneAssistantPanel({
 }
 
 function ScenePanoramaViewer({
+  className,
   emptyLabel,
-  faces
+  expandLabel,
+  faces,
+  onExpand
 }: {
+  className?: string;
   emptyLabel: string;
+  expandLabel?: string;
   faces: Record<ScenePanoramaFace, string> | null;
+  onExpand?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const onExpandRef = useRef(onExpand);
   const [webglReady, setWebglReady] = useState(false);
+
+  useEffect(() => {
+    onExpandRef.current = onExpand;
+  }, [onExpand]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -4460,6 +4499,8 @@ function ScenePanoramaViewer({
     let cleanup = () => {};
 
     async function init() {
+      setWebglReady(false);
+
       try {
         const canvas = document.createElement("canvas");
         const hasWebgl = Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
@@ -4470,10 +4511,16 @@ function ScenePanoramaViewer({
         }
 
         const THREE = await import("three");
+        THREE.ColorManagement.enabled = true;
         const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
-        const loader = new THREE.TextureLoader();
+        camera.position.set(0, 0, 0.1);
+        const loader = new THREE.CubeTextureLoader();
+        let cubeTexture: import("three").CubeTexture | null = null;
+        let observer: ResizeObserver | null = null;
+        const removeListeners: Array<() => void> = [];
         let lon = 0;
         let lat = 0;
         let pointerDown = false;
@@ -4481,32 +4528,39 @@ function ScenePanoramaViewer({
         let startY = 0;
         let startLon = 0;
         let startLat = 0;
+        let movedSincePointerDown = false;
 
+        loader.setCrossOrigin("anonymous");
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
+        renderer.domElement.style.display = "block";
+        renderer.domElement.style.touchAction = "none";
         containerRef.current.appendChild(renderer.domElement);
+        cleanup = () => {
+          observer?.disconnect();
+          removeListeners.forEach((removeListener) => removeListener());
+          cubeTexture?.dispose();
+          renderer.domElement.remove();
+          renderer.dispose();
+        };
 
-        const textures = await Promise.all(
-          scenePanoramaThreeFaceOrder.map(
-            (face) =>
-              new Promise<import("three").Texture>((resolve, reject) => {
-                loader.load(currentFaces[face], resolve, undefined, reject);
-              })
-          )
-        );
+        cubeTexture = await new Promise<import("three").CubeTexture>((resolve, reject) => {
+          loader.load(
+            scenePanoramaThreeFaceOrder.map((face) => currentFaces[face]),
+            resolve,
+            undefined,
+            reject
+          );
+        });
 
         if (disposed) {
-          textures.forEach((texture) => texture.dispose());
-          renderer.dispose();
+          cleanup();
           return;
         }
 
-        const cube = new THREE.Mesh(
-          new THREE.BoxGeometry(10, 10, 10),
-          textures.map((texture) => new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide }))
-        );
-
-        scene.add(cube);
+        cubeTexture.colorSpace = THREE.SRGBColorSpace;
+        scene.background = cubeTexture;
+        scene.environment = cubeTexture;
 
         function updateCamera() {
           lat = Math.max(-85, Math.min(85, lat));
@@ -4543,11 +4597,13 @@ function ScenePanoramaViewer({
 
         function onPointerDown(event: PointerEvent) {
           pointerDown = true;
+          movedSincePointerDown = false;
           startX = event.clientX;
           startY = event.clientY;
           startLon = lon;
           startLat = lat;
           renderer.domElement.setPointerCapture(event.pointerId);
+          renderer.domElement.classList.add("cursor-grabbing");
         }
 
         function onPointerMove(event: PointerEvent) {
@@ -4555,14 +4611,28 @@ function ScenePanoramaViewer({
             return;
           }
 
-          lon = startLon - (event.clientX - startX) * 0.12;
-          lat = startLat + (event.clientY - startY) * 0.12;
+          const deltaX = event.clientX - startX;
+          const deltaY = event.clientY - startY;
+
+          movedSincePointerDown ||= Math.hypot(deltaX, deltaY) > 6;
+          lon = startLon - deltaX * 0.12;
+          lat = startLat + deltaY * 0.12;
           render();
         }
 
         function onPointerUp(event: PointerEvent) {
+          const shouldExpand = pointerDown && !movedSincePointerDown && event.type === "pointerup" && Boolean(onExpandRef.current);
+
           pointerDown = false;
-          renderer.domElement.releasePointerCapture(event.pointerId);
+          renderer.domElement.classList.remove("cursor-grabbing");
+
+          if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+            renderer.domElement.releasePointerCapture(event.pointerId);
+          }
+
+          if (shouldExpand) {
+            onExpandRef.current?.();
+          }
         }
 
         function onWheel(event: WheelEvent) {
@@ -4572,30 +4642,28 @@ function ScenePanoramaViewer({
           render();
         }
 
-        const observer = new ResizeObserver(resize);
+        observer = new ResizeObserver(resize);
 
         renderer.domElement.className = "h-full w-full cursor-grab rounded-xl";
         renderer.domElement.addEventListener("pointerdown", onPointerDown);
         renderer.domElement.addEventListener("pointermove", onPointerMove);
         renderer.domElement.addEventListener("pointerup", onPointerUp);
+        renderer.domElement.addEventListener("pointercancel", onPointerUp);
+        renderer.domElement.addEventListener("lostpointercapture", onPointerUp);
         renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+        removeListeners.push(
+          () => renderer.domElement.removeEventListener("pointerdown", onPointerDown),
+          () => renderer.domElement.removeEventListener("pointermove", onPointerMove),
+          () => renderer.domElement.removeEventListener("pointerup", onPointerUp),
+          () => renderer.domElement.removeEventListener("pointercancel", onPointerUp),
+          () => renderer.domElement.removeEventListener("lostpointercapture", onPointerUp),
+          () => renderer.domElement.removeEventListener("wheel", onWheel)
+        );
         observer.observe(containerRef.current);
         resize();
         setWebglReady(true);
-
-        cleanup = () => {
-          observer.disconnect();
-          renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-          renderer.domElement.removeEventListener("pointermove", onPointerMove);
-          renderer.domElement.removeEventListener("pointerup", onPointerUp);
-          renderer.domElement.removeEventListener("wheel", onWheel);
-          textures.forEach((texture) => texture.dispose());
-          cube.geometry.dispose();
-          (cube.material as import("three").Material[]).forEach((material) => material.dispose());
-          renderer.domElement.remove();
-          renderer.dispose();
-        };
       } catch {
+        cleanup();
         setWebglReady(false);
       }
     }
@@ -4610,14 +4678,19 @@ function ScenePanoramaViewer({
 
   if (!faces) {
     return (
-      <div className="flex aspect-video w-full items-center justify-center rounded-xl border border-dashed border-border bg-background/70 px-4 text-center text-sm text-foreground/48">
+      <div
+        className={cn(
+          "flex w-full items-center justify-center rounded-xl border border-dashed border-border bg-background/70 px-4 text-center text-sm text-foreground/48",
+          className ?? "aspect-video"
+        )}
+      >
         {emptyLabel}
       </div>
     );
   }
 
   return (
-    <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-border bg-background/70">
+    <div className={cn("relative w-full overflow-hidden rounded-xl border border-border bg-background/70", className ?? "aspect-video")}>
       <div ref={containerRef} className="absolute inset-0" />
       {!webglReady ? (
         <div className="grid h-full grid-cols-3 gap-1 p-1">
@@ -4627,6 +4700,76 @@ function ScenePanoramaViewer({
           ))}
         </div>
       ) : null}
+      {!webglReady && onExpand ? (
+        <button
+          type="button"
+          onClick={onExpand}
+          className="absolute inset-0 cursor-zoom-in"
+          aria-label={expandLabel ?? ""}
+        >
+          <span className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background/88 text-foreground/68 shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground">
+            <Maximize2 className="h-4 w-4" aria-hidden="true" />
+          </span>
+        </button>
+      ) : null}
+      {webglReady && onExpand ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onExpand();
+          }}
+          className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background/88 text-foreground/68 shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+          aria-label={expandLabel ?? ""}
+        >
+          <Maximize2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ScenePanoramaPreviewDialog({
+  faces,
+  onClose,
+  t
+}: {
+  faces: Record<ScenePanoramaFace, string>;
+  onClose: () => void;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/40 p-3 backdrop-blur-sm sm:p-5">
+      <section className="relative flex h-[min(82vh,52rem)] w-[min(94vw,76rem)] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl shadow-foreground/25">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <h3 className="text-sm font-semibold text-foreground/72">{t("sceneForm.panoramaPreviewTitle")}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-foreground/68 transition hover:bg-muted hover:text-foreground"
+            aria-label={t("sceneForm.panoramaPreviewClose")}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <ScenePanoramaViewer
+          className="min-h-0 flex-1 rounded-none border-0"
+          faces={faces}
+          emptyLabel={t("sceneForm.panoramaEmpty")}
+        />
+      </section>
     </div>
   );
 }
@@ -5564,22 +5707,71 @@ function resolveScenePanoramaError(error: unknown, t: (key: string) => string) {
     return t("sceneForm.invalidPanoramaFace");
   }
 
+  if (message.includes("SCENE_PANORAMA_QUALITY_FAILED")) {
+    return t("sceneForm.panoramaQualityFailed");
+  }
+
   return t("sceneForm.panoramaGenerateFailed");
 }
 
 function resolveSceneSaveError(error: unknown, t: (key: string) => string, isEditing = false) {
   const message = error instanceof Error ? error.message : "";
 
-  if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE")) {
+  if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE") || message.includes("INVALID_MATERIAL_IMAGE_FILE")) {
     return t("sceneForm.invalidPanoramaFace");
+  }
+
+  if (
+    message.includes("Body exceeded") ||
+    message.includes("request body") ||
+    message.includes("Payload Too Large") ||
+    message.includes("413")
+  ) {
+    return t("sceneForm.panoramaUploadTooLarge");
+  }
+
+  if (message.includes("SCENE_PANORAMA_UPLOAD_FAILED")) {
+    return t("sceneForm.panoramaUploadFailed");
+  }
+
+  if (message.includes("R2") || message.includes("S3") || message.includes("AccessDenied") || message.includes("NoSuchBucket")) {
+    return t("sceneForm.panoramaUploadFailed");
+  }
+
+  if (message.includes("SCENE_MATERIAL_CATEGORY_MIGRATION_REQUIRED")) {
+    return t("sceneForm.migrationRequired");
+  }
+
+  if (message.includes("SCENE_MATERIAL_METADATA_TOO_LARGE")) {
+    return t("sceneForm.metadataTooLarge");
+  }
+
+  if (message.includes("SCENE_MATERIAL_DATABASE_FAILED") || message.includes("SCENE_MATERIAL_PERSISTENCE_FAILED")) {
+    return t("sceneForm.recordSaveFailed");
+  }
+
+  if (message.includes("SCENE_NAME_REQUIRED")) {
+    return t("sceneForm.errors.nameRequired");
   }
 
   if (message.includes("SCENE_DESCRIPTION_REQUIRED")) {
     return t("sceneForm.errors.descriptionRequired");
   }
 
+  if (message.includes("SCENE_BLOCK_REQUIRED")) {
+    return t("sceneForm.errors.blockRequired");
+  }
+
+  if (message.includes("SCENE_BLOCK_NAME_REQUIRED")) {
+    return t("sceneForm.errors.blockNameRequired");
+  }
+
   if (message.includes("SCENE_BLOCK_DESCRIPTION_REQUIRED")) {
     return t("sceneForm.errors.blockDescriptionRequired");
+  }
+
+  if (message.includes("SCENE_PANORAMA_FACE_REQUIRED") || message.includes("SCENE_PANORAMA_INCOMPLETE")) {
+    return t("sceneForm.errors.panoramaIncomplete");
   }
 
   return t(isEditing ? "sceneForm.updateFailed" : "sceneForm.saveFailed");

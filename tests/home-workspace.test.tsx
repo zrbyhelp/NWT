@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zhMessages from "../messages/zh-CN.json";
 import {
   assistHomeMaskDraft,
+  cleanupHomeUploadedMaterialImages,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
   deleteHomeMaterial,
@@ -531,6 +532,10 @@ describe("HomeWorkspace script manager", () => {
       expect(screen.getByText("AI 辅助")).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole("button", { name: "放大全景预览" }));
+    expect(screen.getByRole("heading", { name: "全景预览" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭全景预览" }));
+
     fireEvent.click(screen.getByRole("button", { name: "保存场景" }));
 
     await waitFor(() => {
@@ -555,6 +560,95 @@ describe("HomeWorkspace script manager", () => {
           }
         })
       ]
+    });
+  });
+
+  it("shows a concrete scene record save error after cubemap upload succeeds", async () => {
+    vi.mocked(generateHomeSceneBlockPanorama).mockResolvedValue({
+      mode: "enhanced",
+      repaired: true,
+      faces: {
+        front: { contentType: "image/png", dataUrl: "data:image/png;base64,Zm9udA==", face: "front", fileName: "front.png" },
+        back: { contentType: "image/png", dataUrl: "data:image/png;base64,YmFjaw==", face: "back", fileName: "back.png" },
+        left: { contentType: "image/png", dataUrl: "data:image/png;base64,bGVmdA==", face: "left", fileName: "left.png" },
+        right: { contentType: "image/png", dataUrl: "data:image/png;base64,cmlnaHQ=", face: "right", fileName: "right.png" },
+        top: { contentType: "image/png", dataUrl: "data:image/png;base64,dG9w", face: "top", fileName: "top.png" },
+        bottom: { contentType: "image/png", dataUrl: "data:image/png;base64,Ym90dG9t", face: "bottom", fileName: "bottom.png" }
+      }
+    });
+    vi.mocked(uploadHomeScenePanoramaFace).mockImplementation(async (formData) => ({
+      face: String(formData.get("face")),
+      url: `https://cdn.example.com/materials/${String(formData.get("face"))}.png`
+    }));
+    vi.mocked(createHomeSceneMaterial).mockRejectedValue(new Error("SCENE_MATERIAL_DATABASE_FAILED"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith("data:")) {
+          return new Response("face", {
+            headers: {
+              "Content-Type": "image/png"
+            }
+          });
+        }
+
+        return new Response(null, { status: 404 });
+      })
+    );
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "场景" }));
+    fireEvent.change(screen.getByLabelText("场景名称"), { target: { value: "废弃研究所" } });
+    fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
+    fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
+    fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("区块全景已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "保存场景" }));
+
+    await waitFor(() => {
+      expect(uploadHomeScenePanoramaFace).toHaveBeenCalledTimes(6);
+      expect(cleanupHomeUploadedMaterialImages).toHaveBeenCalledWith([
+        "https://cdn.example.com/materials/front.png",
+        "https://cdn.example.com/materials/back.png",
+        "https://cdn.example.com/materials/left.png",
+        "https://cdn.example.com/materials/right.png",
+        "https://cdn.example.com/materials/top.png",
+        "https://cdn.example.com/materials/bottom.png"
+      ]);
+      expect(toast.error).toHaveBeenCalledWith(
+        "六面图上传完成，但场景记录写入失败；系统已尝试清理本次上传图片，请检查数据库连接或迁移后重试。"
+      );
+    });
+  });
+
+  it("shows a quality failure when panorama seam checks fail", async () => {
+    vi.mocked(generateHomeSceneBlockPanorama).mockRejectedValue(new Error("SCENE_PANORAMA_QUALITY_FAILED"));
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "场景" }));
+    fireEvent.change(screen.getByLabelText("场景名称"), { target: { value: "废弃研究所" } });
+    fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
+    fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
+    fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("区块全景接缝质检未通过，请重新生成。");
     });
   });
 
