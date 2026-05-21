@@ -11,6 +11,12 @@ import type { Locale } from "@/i18n/routing";
 import type { DefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 import { getDefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 import { estimateTokenCount } from "@/lib/home-workspace-utils";
+import {
+  createObservedOpenAIClient,
+  type AiObservationContext,
+  updateAiObservation,
+  withAiObservation
+} from "@/lib/observability/langfuse";
 
 export type RuntimeChatMessage = {
   role: "system" | "user" | "assistant";
@@ -26,14 +32,29 @@ export type RuntimeTokenUsage = {
 const defaultReasoningEffort = "medium";
 const defaultLocale: Locale = "zh-CN";
 
-export async function createDefaultOpenAIClient(userId?: string | null) {
+export async function createDefaultOpenAIClient(userId?: string | null, observationContext?: AiObservationContext) {
   const config = await getDefaultLlmRuntimeConfig(userId);
+  const context = withRuntimeModelContext(
+    {
+      feature: "llm.default",
+      userId,
+      ...observationContext
+    },
+    config
+  );
 
   return {
-    client: new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseUrl
-    }),
+    client: createObservedOpenAIClient(
+      {
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        modelId: config.modelId,
+        providerName: config.providerName,
+        source: config.source,
+        temperature: config.temperature
+      },
+      context
+    ),
     config
   };
 }
@@ -42,32 +63,67 @@ export async function generateDefaultLlmReply(
   messages: RuntimeChatMessage[],
   userId?: string | null,
   showThinking = false,
-  locale: Locale = defaultLocale
+  locale: Locale = defaultLocale,
+  observationContext?: AiObservationContext
 ) {
-  const { client, config } = await createDefaultOpenAIClient(userId);
-  const completion = await createNonStreamingCompletion(client, config, messages);
-  const message = completion.choices[0]?.message;
-  const answerContent = message?.content?.trim() ?? "";
-  const reasoningContent = showThinking ? extractReasoningContent(message) : "";
-  const content = formatVisibleReply({
-    answerContent,
+  const baseContext = buildLlmObservationContext({
+    feature: "llm.generate",
+    input: messages,
     locale,
-    reasoningContent,
-    showThinking
+    observationContext,
+    userId
   });
 
-  if (!content) {
-    throw new Error("The default LLM returned an empty response.");
-  }
+  return withAiObservation(baseContext.traceName ?? baseContext.feature, baseContext, async (span) => {
+    const { client, config } = await createDefaultOpenAIClient(userId, baseContext);
+    const enrichedContext = withRuntimeModelContext(baseContext, config);
 
-  const usage = resolveCompletionUsage({
-    completionTokens: completion.usage?.completion_tokens,
-    content,
-    messages,
-    promptTokens: completion.usage?.prompt_tokens
+    updateAiObservation(span, {
+      input: messages,
+      metadata: {
+        ...enrichedContext.metadata,
+        modelId: config.modelId,
+        providerName: config.providerName,
+        temperature: config.temperature
+      }
+    });
+
+    const completion = await createNonStreamingCompletion(client, config, messages);
+    const message = completion.choices[0]?.message;
+    const answerContent = message?.content?.trim() ?? "";
+    const reasoningContent = showThinking ? extractReasoningContent(message) : "";
+    const content = formatVisibleReply({
+      answerContent,
+      locale,
+      reasoningContent,
+      showThinking
+    });
+
+    if (!content) {
+      throw new Error("The default LLM returned an empty response.");
+    }
+
+    const usage = resolveCompletionUsage({
+      completionTokens: completion.usage?.completion_tokens,
+      content,
+      messages,
+      promptTokens: completion.usage?.prompt_tokens
+    });
+
+    updateAiObservation(span, {
+      metadata: {
+        ...enrichedContext.metadata,
+        completionTokens: usage.completionTokens,
+        modelId: config.modelId,
+        promptTokens: usage.promptTokens,
+        providerName: config.providerName,
+        tokenUsageEstimated: usage.estimated
+      },
+      output: content
+    });
+
+    return { content, usage };
   });
-
-  return { content, usage };
 }
 
 export async function streamDefaultLlmReply(
@@ -75,57 +131,129 @@ export async function streamDefaultLlmReply(
   onDelta: (content: string) => void,
   userId?: string | null,
   showThinking = false,
-  locale: Locale = defaultLocale
+  locale: Locale = defaultLocale,
+  observationContext?: AiObservationContext
 ) {
-  const { client, config } = await createDefaultOpenAIClient(userId);
-  const stream = await createStreamingCompletion(client, config, messages);
-  let content = "";
-  let answerStarted = false;
-  let reasoningStarted = false;
-  let promptTokens: number | null | undefined;
-  let completionTokens: number | null | undefined;
+  const baseContext = buildLlmObservationContext({
+    feature: "llm.stream",
+    input: messages,
+    locale,
+    observationContext,
+    userId
+  });
 
-  for await (const chunk of stream) {
-    const deltaRecord = chunk.choices[0]?.delta;
-    const reasoningDelta = showThinking ? extractReasoningContent(deltaRecord) : "";
-    const delta = chunk.choices[0]?.delta?.content;
+  return withAiObservation(baseContext.traceName ?? baseContext.feature, baseContext, async (span) => {
+    const { client, config } = await createDefaultOpenAIClient(userId, baseContext);
+    const enrichedContext = withRuntimeModelContext(baseContext, config);
 
-    if (reasoningDelta) {
-      const visibleDelta = reasoningStarted ? reasoningDelta : `${thinkingHeader(locale)}${reasoningDelta}`;
+    updateAiObservation(span, {
+      input: messages,
+      metadata: {
+        ...enrichedContext.metadata,
+        modelId: config.modelId,
+        providerName: config.providerName,
+        temperature: config.temperature
+      }
+    });
 
-      reasoningStarted = true;
-      content += visibleDelta;
-      onDelta(visibleDelta);
+    const stream = await createStreamingCompletion(client, config, messages);
+    let content = "";
+    let answerStarted = false;
+    let reasoningStarted = false;
+    let promptTokens: number | null | undefined;
+    let completionTokens: number | null | undefined;
+
+    for await (const chunk of stream) {
+      const deltaRecord = chunk.choices[0]?.delta;
+      const reasoningDelta = showThinking ? extractReasoningContent(deltaRecord) : "";
+      const delta = chunk.choices[0]?.delta?.content;
+
+      if (reasoningDelta) {
+        const visibleDelta = reasoningStarted ? reasoningDelta : `${thinkingHeader(locale)}${reasoningDelta}`;
+
+        reasoningStarted = true;
+        content += visibleDelta;
+        onDelta(visibleDelta);
+      }
+
+      if (typeof delta === "string" && delta) {
+        const visibleDelta = showThinking && reasoningStarted && !answerStarted ? `${replyHeader(locale)}${delta}` : delta;
+
+        answerStarted = true;
+        content += visibleDelta;
+        onDelta(visibleDelta);
+      }
+
+      if (chunk.usage) {
+        promptTokens = chunk.usage.prompt_tokens;
+        completionTokens = chunk.usage.completion_tokens;
+      }
     }
 
-    if (typeof delta === "string" && delta) {
-      const visibleDelta = showThinking && reasoningStarted && !answerStarted ? `${replyHeader(locale)}${delta}` : delta;
+    const trimmedContent = content.trim();
 
-      answerStarted = true;
-      content += visibleDelta;
-      onDelta(visibleDelta);
+    if (!trimmedContent) {
+      throw new Error("The default LLM returned an empty response.");
     }
 
-    if (chunk.usage) {
-      promptTokens = chunk.usage.prompt_tokens;
-      completionTokens = chunk.usage.completion_tokens;
-    }
-  }
-
-  const trimmedContent = content.trim();
-
-  if (!trimmedContent) {
-    throw new Error("The default LLM returned an empty response.");
-  }
-
-  return {
-    content: trimmedContent,
-    usage: resolveCompletionUsage({
+    const usage = resolveCompletionUsage({
       completionTokens,
       content: trimmedContent,
       messages,
       promptTokens
-    })
+    });
+
+    updateAiObservation(span, {
+      metadata: {
+        ...enrichedContext.metadata,
+        completionTokens: usage.completionTokens,
+        modelId: config.modelId,
+        promptTokens: usage.promptTokens,
+        providerName: config.providerName,
+        tokenUsageEstimated: usage.estimated
+      },
+      output: trimmedContent
+    });
+
+    return {
+      content: trimmedContent,
+      usage
+    };
+  });
+}
+
+function buildLlmObservationContext({
+  feature,
+  input,
+  locale,
+  observationContext,
+  userId
+}: {
+  feature: string;
+  input: RuntimeChatMessage[];
+  locale: Locale;
+  observationContext?: AiObservationContext;
+  userId?: string | null;
+}): AiObservationContext {
+  return {
+    ...observationContext,
+    feature: observationContext?.feature ?? feature,
+    input,
+    locale,
+    sessionId: observationContext?.sessionId ?? observationContext?.conversationId,
+    userId: observationContext?.userId ?? userId
+  };
+}
+
+function withRuntimeModelContext(context: AiObservationContext, config: DefaultLlmRuntimeConfig): AiObservationContext {
+  return {
+    ...context,
+    metadata: {
+      ...(context.metadata ?? {}),
+      modelSource: config.source
+    },
+    modelId: config.modelId,
+    providerName: config.providerName
   };
 }
 
@@ -145,7 +273,7 @@ function withDefaultThinking<T extends Record<string, unknown>>(params: T): T {
   };
 }
 
-function extractReasoningContent(value: unknown) {
+function extractReasoningContent(value: unknown): string {
   if (!value || typeof value !== "object") {
     return "";
   }

@@ -29,13 +29,25 @@ NEO4J_PASSWORD="password"
 AI_CONFIG_ENCRYPTION_KEY="至少 16 位的随机字符串"
 ```
 
-如果希望直接使用 `.env` 兜底 LLM，还需要：
+如果需要没有用户上下文的内部 LLM 兜底配置，还可以补充：
 
 ```bash
 OPENAI_BASE_URL="https://api.example.com/v1"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="..."
 ```
+
+首页登录用户聊天不会使用这组 `.env` 兜底配置，需要在右上角“体验设置”中为当前账号配置 AI 供应商和默认 LLM 模型。
+
+真实 AI 访问必须接入 Langfuse 观测。若使用本地 Langfuse Docker，请把 `.env.langfuse.local` 中初始化项目的 key 同步到 `.env.local`：
+
+```bash
+LANGFUSE_PUBLIC_KEY="lf_pk_..."
+LANGFUSE_SECRET_KEY="lf_sk_..."
+LANGFUSE_BASE_URL="http://localhost:3001"
+```
+
+旧变量名 `LANGFUSE_BASEURL` 仍可兼容读取，但新配置统一使用 `LANGFUSE_BASE_URL`。
 
 管理员账号使用：
 
@@ -77,7 +89,7 @@ pnpm run dev:docs
 ## 首次使用流程
 
 1. 打开 `http://localhost:3000/zh-CN`。
-2. 浏览首页或社区剧本不需要登录。
-3. 创建会话、发送消息或保存设置时会要求登录。
+2. 浏览首页、社区剧本或社区素材不需要登录。
+3. 创建会话、发送消息、加入社区素材或保存设置时会要求登录。
 4. 进入右上角“体验设置”，先配置 AI 供应商，再添加默认 LLM 模型。
 5. 后续可继续配置向量模型和图片模型，供记忆检索与图片生成能力使用。

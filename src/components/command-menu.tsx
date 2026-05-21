@@ -35,7 +35,7 @@ export function CommandMenu() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-background/55 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
+    <div className="fixed inset-0 z-50 bg-background/55 p-4 backdrop-blur-sm">
       <Command
         className="mx-auto mt-24 w-full max-w-xl overflow-hidden rounded-md border border-border bg-background shadow-xl"
         onClick={(event) => event.stopPropagation()}

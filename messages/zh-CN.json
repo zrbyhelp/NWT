@@ -256,6 +256,7 @@
     "workspace": {
       "newMessage": "新消息",
       "scripts": "剧本",
+      "materials": "素材",
       "sidebar": {
         "collapse": "收起菜单",
         "expand": "展开菜单"
@@ -271,7 +272,7 @@
         "today": "今天",
         "earlier": "更早"
       },
-      "persistenceUnavailable": "数据库未连接或迁移未执行，当前只能查看剧本选择。请先启动 MySQL 并执行 Prisma 迁移。",
+      "persistenceUnavailable": "数据库未连接或迁移未执行，当前只能查看剧本选择与素材浏览。请先启动 MySQL 并执行 Prisma 迁移。",
       "emptySearch": "没有匹配的消息。",
       "emptyConversations": "还没有消息，先选择一个剧本开始。",
       "scriptKicker": "剧本选择",
@@ -314,6 +315,8 @@
         "persistence": "数据库未连接，暂时不能创建消息。",
         "create": "创建消息失败，请稍后再试。",
         "send": "发送消息失败，请稍后再试。",
+        "missingDefaultLlm": "还没有可用的默认 LLM 模型，请前往右上角体验设置的 LLM 模型页添加并设为默认。",
+        "missingProviderSecret": "默认 LLM 的供应商还没有 API Key，请前往右上角体验设置的 AI 供应商页补全配置。",
         "delete": "删除会话失败，请稍后再试。"
       }
     },
@@ -373,6 +376,374 @@
         "title": "标题",
         "description": "描述",
         "welcome": "欢迎语"
+      }
+    },
+    "materials": {
+      "title": "素材管理",
+      "subtitle": "按内容风格整理假面、地图、物品与生物素材，类型会显示在卡片标签上。",
+      "mineTitle": "我的素材",
+      "mineDescription": "查看你已加入或自己创建的素材。顶部按写实、玄幻、科幻等内容风格分区，卡片显示假面、地图、物品、生物类型。假面只保留人物外观、性格、说话方式等外显内容。",
+      "communityTitle": "社区素材",
+      "communityDescription": "浏览社区开放的素材版本，加入后会进入你的素材库。素材先按内容风格浏览，再通过卡片类型标签区分假面、地图、物品和生物。",
+      "search": "搜索素材",
+      "create": "创建",
+      "chooseType": "选择类型",
+      "createSoon": "素材创建功能将在后续版本开放。",
+      "cancel": "取消",
+      "saveMask": "保存假面",
+      "edit": "编辑",
+      "delete": "删除",
+      "deleteConfirm": "确定永久删除素材“{name}”吗？删除后无法恢复。",
+      "deletedToast": "素材已删除。",
+      "previewOpen": "放大素材图片",
+      "previewClose": "关闭素材图片预览",
+      "previewAlt": "素材图片预览",
+      "shareToCommunity": "分享到社区",
+      "shareHint": "打开后，其他用户可在社区素材中浏览并加入这个素材。",
+      "shareEnabled": "已分享",
+      "shareDisabled": "未分享",
+      "shareEnabledToast": "素材已分享到社区。",
+      "shareDisabledToast": "素材已从社区隐藏。",
+      "maskForm": {
+        "title": "新建假面",
+        "editTitle": "编辑假面",
+        "description": "只记录人物外观、体态、年龄感和颜色等外显内容，不包含背景故事。",
+        "editDescription": "修改已保存的假面素材，仍只更新外观、声音、性格和设定板等外显内容。",
+        "basicTitle": "基础信息",
+        "name": "名称",
+        "namePlaceholder": "输入假面名称",
+        "style": "内容风格",
+        "intro": "假面介绍",
+        "introPlaceholder": "概述外观、性格、说话方式、动作习惯等外显特征",
+        "introHint": "不要填写人物背景故事、身世经历或世界关系。",
+        "bodyTitle": "身体信息收集",
+        "bodyDescription": "身高、体重可直接输入数值；其他外观项可直接填写，也可参考预置建议。",
+        "colorTitle": "身体颜色配置",
+        "colorDescription": "可使用常用色板，也可以打开颜色选择器微调。",
+        "inputPlaceholder": "直接输入",
+        "numericPlaceholder": "输入数值",
+        "suggestionsLabel": "建议：{values}",
+        "suggestionsEmpty": "没有匹配的建议，可继续直接输入。",
+        "openSuggestions": "展开{field}建议",
+        "scoreValue": "{value}/100",
+        "speechSpeedValue": "{value} 字/分钟",
+        "lowValueLabel": "低值：",
+        "highValueLabel": "高值：",
+        "saveSuccess": "假面已创建并加入我的素材。",
+        "saveFailed": "假面创建失败，请稍后再试。",
+        "saveEdit": "保存修改",
+        "updateSuccess": "假面修改已保存。",
+        "updateFailed": "假面修改失败，请稍后再试。",
+        "missingProviderSecret": "默认模型的供应商缺少 API Key，请先在体验设置中补全配置。",
+        "aiTitle": "AI 辅助",
+        "aiDescription": "用对话描述想调整的外显效果，AI 会自动写入左侧表单。",
+        "aiEmpty": "可以让 AI 帮你细化外观、口吻、语音数值或性格滑块。它只会处理假面的外显内容。",
+        "aiPlaceholder": "例如：让她更冷淡、更像古风剑客，但不要写背景",
+        "aiSend": "发送 AI 辅助消息",
+        "aiMissingDefaultLlm": "还没有可用的默认 LLM 模型，请先在体验设置中配置。",
+        "aiFailed": "AI 辅助失败，请稍后再试。",
+        "boardTitle": "角色设定板",
+        "boardDescription": "横版 16:9 设定板，上传或生成后会在保存假面时写入素材。",
+        "boardEmpty": "点击上传横版设定板",
+        "boardUpload": "上传设定板",
+        "boardReplace": "替换上传",
+        "boardDrawingStyle": "绘制风格",
+        "boardGenerate": "生成",
+        "boardGenerated": "角色设定板已生成。",
+        "boardGenerateFailed": "角色设定板生成失败，请稍后再试。",
+        "boardMissingDefaultImage": "还没有可用的默认图片模型，请先在体验设置中配置。",
+        "invalidBoardImage": "设定板仅支持 PNG/JPG/WebP，且不能超过 10MB。",
+        "boardPreviewOpen": "放大设定板",
+        "boardPreviewClose": "关闭预览",
+        "boardPreviewAlt": "设定板预览",
+        "boardRemove": "删除设定板",
+        "boardSource": {
+          "uploaded": "上传图片",
+          "generated": "AI 生成"
+        },
+        "boardDrawingStyles": {
+          "realistic": "写实",
+          "anime": "二次元",
+          "painterly": "厚涂",
+          "cel": "赛璐璐",
+          "guofeng": "国风",
+          "comic": "漫画",
+          "concept": "概念设定"
+        },
+        "pickColor": "拾色",
+        "colorSwatchLabel": "选择{field} {color}",
+        "colorPickerLabel": "{field}颜色选择器",
+        "units": {
+          "cm": "cm",
+          "kg": "kg"
+        },
+        "bodyFields": {
+          "hairStyle": { "label": "发型" },
+          "browShape": { "label": "眉型" },
+          "faceShape": { "label": "脸型" },
+          "eyeShape": { "label": "眼睛形" },
+          "noseType": { "label": "鼻子类型" },
+          "mouthShape": { "label": "嘴型" },
+          "earShape": { "label": "耳朵形状" },
+          "height": { "label": "身高" },
+          "weight": { "label": "体重" },
+          "gender": { "label": "性别" },
+          "ageStage": { "label": "年龄阶段" },
+          "bodyType": { "label": "体型" }
+        },
+        "bodyOptions": {
+          "hairStyle": {
+            "short": "短发",
+            "long": "长发",
+            "tied": "束发",
+            "wavy": "微卷发",
+            "curly": "卷发",
+            "buzz": "寸头"
+          },
+          "browShape": {
+            "straight": "平眉",
+            "arched": "弯眉",
+            "sword": "剑眉",
+            "soft": "柔眉",
+            "thick": "浓眉",
+            "thin": "细眉"
+          },
+          "faceShape": {
+            "oval": "鹅蛋脸",
+            "round": "圆脸",
+            "square": "方脸",
+            "heart": "心形脸",
+            "long": "长脸",
+            "sharp": "削瘦脸"
+          },
+          "eyeShape": {
+            "almond": "杏眼",
+            "round": "圆眼",
+            "phoenix": "凤眼",
+            "narrow": "细长眼",
+            "drooping": "下垂眼",
+            "deepSet": "深邃眼"
+          },
+          "noseType": {
+            "straight": "直鼻",
+            "highBridge": "高鼻梁",
+            "small": "小巧鼻",
+            "broad": "宽鼻",
+            "hooked": "鹰钩鼻",
+            "roundTip": "圆鼻头"
+          },
+          "mouthShape": {
+            "thin": "薄唇",
+            "full": "厚唇",
+            "bow": "弓形唇",
+            "wide": "宽嘴",
+            "small": "小嘴",
+            "firm": "紧抿唇"
+          },
+          "earShape": {
+            "round": "圆耳",
+            "pointed": "尖耳",
+            "small": "小耳",
+            "broad": "宽耳",
+            "long": "长耳",
+            "hidden": "发间隐耳"
+          },
+          "gender": {
+            "female": "女性",
+            "male": "男性",
+            "androgynous": "中性",
+            "nonbinary": "非二元"
+          },
+          "ageStage": {
+            "child": "幼年",
+            "youth": "青年",
+            "adult": "壮年",
+            "elder": "老年"
+          },
+          "bodyType": {
+            "slim": "纤细",
+            "athletic": "矫健",
+            "soft": "柔和",
+            "sturdy": "结实",
+            "graceful": "修长",
+            "imposing": "威严"
+          }
+        },
+        "colorFields": {
+          "hairColor": { "label": "发色" },
+          "eyeColor": { "label": "瞳色" },
+          "browColor": { "label": "眉色" },
+          "skinColor": { "label": "肤色" }
+        },
+        "voiceTitle": "语音特征",
+        "voiceDescription": "用连续滑块描述声音外显效果，后续可交给语音或角色生成逻辑使用。",
+        "voiceFields": {
+          "pitch": {
+            "label": "音高",
+            "description": "决定声音偏萝莉、少女、御姐或低沉。",
+            "low": "成熟、冷感、压迫感",
+            "high": "年轻、轻盈、活泼",
+            "ticks": {
+              "first": "极低沉",
+              "second": "低沉",
+              "third": "中性",
+              "fourth": "偏高",
+              "fifth": "很高"
+            }
+          },
+          "speechSpeed": {
+            "label": "语速",
+            "description": "决定角色的说话节奏感。",
+            "low": "高级感、冷静",
+            "high": "兴奋、亲近、主播感",
+            "ticks": {
+              "first": "很慢",
+              "second": "偏慢",
+              "third": "正常",
+              "fourth": "偏快",
+              "fifth": "很快"
+            }
+          },
+          "volume": {
+            "label": "音量",
+            "description": "决定角色说话时的存在感。",
+            "low": "温柔、距离感",
+            "high": "外向、压迫感",
+            "ticks": {
+              "first": "很轻",
+              "second": "偏轻",
+              "third": "普通",
+              "fourth": "偏大",
+              "fifth": "很强势"
+            }
+          },
+          "intonation": {
+            "label": "语气起伏",
+            "description": "决定说话听起来更死板还是更生动。",
+            "low": "冷淡、AI感、高级感",
+            "high": "主播感、元气感、网红感",
+            "ticks": {
+              "first": "几乎无起伏",
+              "second": "微弱",
+              "third": "普通",
+              "fourth": "丰富",
+              "fifth": "非常夸张"
+            }
+          },
+          "emotionExposure": {
+            "label": "情绪外显度",
+            "description": "决定说话里的情绪是否明显。",
+            "low": "非常克制、喜怒不明显",
+            "high": "情绪强烈、开心容易听出来、容易撒娇",
+            "ticks": {
+              "first": "非常克制",
+              "second": "偏克制",
+              "third": "正常",
+              "fourth": "明显",
+              "fifth": "强烈"
+            }
+          },
+          "nasalResonance": {
+            "label": "鼻音程度",
+            "description": "影响自然感、软妹感和主播感。",
+            "low": "自然、干净",
+            "high": "软妹、夹子音、主播感",
+            "ticks": {
+              "first": "无鼻音",
+              "second": "轻微",
+              "third": "普通",
+              "fourth": "偏重",
+              "fifth": "很重"
+            }
+          },
+          "breathiness": {
+            "label": "气声比例",
+            "description": "决定声音的性感感和轻柔感。",
+            "low": "干净、正式",
+            "high": "温柔、亲密、性感",
+            "ticks": {
+              "first": "完全实声",
+              "second": "偏实",
+              "third": "均衡",
+              "fourth": "偏气声",
+              "fifth": "强气声"
+            }
+          }
+        },
+        "personalityTitle": "性格特征",
+        "personalityDescription": "只记录外显性格、社交方式和关系表现，不包含人物背景故事。",
+        "personalityGroups": {
+          "basic": "基础人格",
+          "social": "社交表现",
+          "emotion": "情绪表现",
+          "relationship": "关系表现",
+          "behavior": "行为倾向"
+        },
+        "personalityFields": {
+          "extroversion": { "label": "外向度", "low": "慢热、安静、被动", "high": "主动、健谈、爱分享" },
+          "dominance": { "label": "强势度", "low": "顺从、温和、不争抢", "high": "控场、主导、压制感" },
+          "rationality": { "label": "理性感", "low": "感受型、情绪化表达", "high": "分析型、冷静、结构化" },
+          "emotionalStability": { "label": "情绪稳定度", "low": "易急、易破防、易上头", "high": "冷静、稳定、不容易失控" },
+          "confidence": { "label": "自信度", "low": "犹豫、不确定、容易退让", "high": "果断、明确、有存在感" },
+          "affinity": { "label": "亲和度", "low": "距离感、高冷", "high": "温柔、治愈、好接触" },
+          "sharingDesire": { "label": "分享欲", "low": "神秘、很少自曝", "high": "喜欢表达、高频分享" },
+          "humor": { "label": "幽默感", "low": "正经、严肃", "high": "爱接梗、活跃气氛" },
+          "aggression": { "label": "攻击性", "low": "温和、无害", "high": "阴阳、嘲讽、锐利" },
+          "politeness": { "label": "礼貌度", "low": "随意、网络化", "high": "客气、正式" },
+          "coquetry": { "label": "撒娇倾向", "low": "独立、克制", "high": "黏人、软化表达" },
+          "sensitivity": { "label": "敏感度", "low": "钝感、不在意", "high": "容易察觉情绪、容易多想" },
+          "possessiveness": { "label": "占有欲", "low": "自由感、放养型", "high": "黏人、在意关系归属" },
+          "dependency": { "label": "依赖感", "low": "独立、自我驱动", "high": "喜欢陪伴、需要回应" },
+          "proactiveCare": { "label": "主动关心度", "low": "很少主动问候", "high": "高频关心、高频反馈" },
+          "boundaries": { "label": "边界感", "low": "很容易亲近、自来熟", "high": "慢热、保持距离" },
+          "loyalty": { "label": "忠诚感", "low": "飘忽、社交广泛", "high": "专注、专一感强" },
+          "action": { "label": "行动力", "low": "拖延、慢节奏", "high": "立即行动、推进感强" },
+          "curiosity": { "label": "好奇心", "low": "保守、不爱探索", "high": "爱问、爱尝试" },
+          "performative": { "label": "表演欲", "low": "克制、不抢镜", "high": "戏精、镜头感强、情绪表达丰富" }
+        }
+      },
+      "viewCommunity": "查看社区版本",
+      "backToMine": "返回我的素材",
+      "styles": {
+        "realistic": "写实",
+        "fantasy": "玄幻",
+        "sciFi": "科幻",
+        "mystery": "悬疑",
+        "cyberpunk": "赛博",
+        "classical": "古风",
+        "apocalyptic": "末世"
+      },
+      "types": {
+        "mask": "假面",
+        "map": "地图",
+        "item": "物品",
+        "creature": "生物"
+      },
+      "categories": {
+        "mask": "假面",
+        "map": "地图",
+        "item": "物品",
+        "creature": "生物"
+      },
+      "mineSectionSubtitle": "该风格下已加入或自己创建的素材",
+      "communitySectionSubtitle": "该风格下可加入我的素材库的社区版本",
+      "itemCount": "{count} 个素材",
+      "joined": "已加入",
+      "join": "加入我的素材",
+      "joinedToast": "素材已加入我的素材库。",
+      "close": "关闭素材详情",
+      "libraryStatus": "我的素材库",
+      "empty": "暂无素材。",
+      "mineEmpty": "我的素材库暂无素材，可以先查看社区版本。",
+      "source": {
+        "selfCreated": "自己创建",
+        "communityAdded": "社区添加"
+      },
+      "errors": {
+        "persistence": "数据库未连接，暂时不能加入素材。",
+        "join": "加入素材失败，请稍后再试。",
+        "delete": "删除素材失败，请稍后再试。",
+        "share": "更新分享状态失败，请稍后再试。"
       }
     },
     "command": {

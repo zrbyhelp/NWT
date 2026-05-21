@@ -256,6 +256,7 @@
     "workspace": {
       "newMessage": "New Message",
       "scripts": "Scripts",
+      "materials": "Materials",
       "sidebar": {
         "collapse": "Collapse menu",
         "expand": "Expand menu"
@@ -271,7 +272,7 @@
         "today": "Today",
         "earlier": "Earlier"
       },
-      "persistenceUnavailable": "The database is not connected or migrations have not run. Script selection is shown in read-only mode until MySQL and Prisma migrations are ready.",
+      "persistenceUnavailable": "The database is not connected or migrations have not run. Script selection and material browsing are read-only until MySQL and Prisma migrations are ready.",
       "emptySearch": "No matching messages.",
       "emptyConversations": "No messages yet. Choose a script to begin.",
       "scriptKicker": "Script Selection",
@@ -314,6 +315,8 @@
         "persistence": "The database is not connected, so messages cannot be created yet.",
         "create": "Failed to create the message. Please try again later.",
         "send": "Failed to send the message. Please try again later.",
+        "missingDefaultLlm": "No usable default LLM is configured. Open Experience Settings, then add and set a default LLM model.",
+        "missingProviderSecret": "The default LLM provider has no API key. Open Experience Settings, then complete the AI provider configuration.",
         "delete": "Failed to delete the conversation. Please try again later."
       }
     },
@@ -373,6 +376,374 @@
         "title": "Title",
         "description": "Description",
         "welcome": "Welcome message"
+      }
+    },
+    "materials": {
+      "title": "Material Management",
+      "subtitle": "Organize facades, maps, items, and creatures by content style, with material type shown on each card.",
+      "mineTitle": "My Materials",
+      "mineDescription": "Review materials you have joined or created. The top sections use content styles such as realistic, fantasy, and sci-fi, while cards show facade, map, item, or creature type labels.",
+      "communityTitle": "Community Materials",
+      "communityDescription": "Browse community material versions. Joined materials enter your library. Materials are grouped by content style and distinguished by type labels on the cards.",
+      "search": "Search materials",
+      "create": "Create",
+      "chooseType": "Choose Type",
+      "createSoon": "Material creation will be available in a later version.",
+      "cancel": "Cancel",
+      "saveMask": "Save Facade",
+      "edit": "Edit",
+      "delete": "Delete",
+      "deleteConfirm": "Delete material \"{name}\" permanently? This cannot be undone.",
+      "deletedToast": "Material deleted.",
+      "previewOpen": "Open material image",
+      "previewClose": "Close material image preview",
+      "previewAlt": "Material image preview",
+      "shareToCommunity": "Share to Community",
+      "shareHint": "When enabled, other users can browse and join this material from Community Materials.",
+      "shareEnabled": "Shared",
+      "shareDisabled": "Private",
+      "shareEnabledToast": "Material shared to the community.",
+      "shareDisabledToast": "Material hidden from the community.",
+      "maskForm": {
+        "title": "New Facade",
+        "editTitle": "Edit Facade",
+        "description": "Capture only external presentation such as appearance, build, age impression, and colors, without backstory.",
+        "editDescription": "Update an existing facade while keeping the changes limited to outward presentation, voice, personality, and the board.",
+        "basicTitle": "Basic Info",
+        "name": "Name",
+        "namePlaceholder": "Enter a facade name",
+        "style": "Content Style",
+        "intro": "Facade Introduction",
+        "introPlaceholder": "Summarize outward appearance, personality, speech style, and habits",
+        "introHint": "Do not include backstory, life history, or world relationships.",
+        "bodyTitle": "Body Information",
+        "bodyDescription": "Height and weight can be typed directly. Other appearance fields can also be typed directly, with preset suggestions for reference.",
+        "colorTitle": "Body Colors",
+        "colorDescription": "Use common swatches or fine-tune with the color picker.",
+        "inputPlaceholder": "Type directly",
+        "numericPlaceholder": "Enter a value",
+        "suggestionsLabel": "Suggestions: {values}",
+        "suggestionsEmpty": "No matching suggestions. You can keep typing.",
+        "openSuggestions": "Open {field} suggestions",
+        "scoreValue": "{value}/100",
+        "speechSpeedValue": "{value} chars/min",
+        "lowValueLabel": "Low: ",
+        "highValueLabel": "High: ",
+        "saveSuccess": "Facade created and added to My Materials.",
+        "saveFailed": "Failed to create the facade. Please try again later.",
+        "saveEdit": "Save Changes",
+        "updateSuccess": "Facade changes saved.",
+        "updateFailed": "Failed to save facade changes. Please try again later.",
+        "missingProviderSecret": "The default model provider has no API key. Complete it in Experience Settings first.",
+        "aiTitle": "AI Assist",
+        "aiDescription": "Describe the outward change you want. AI will apply it to the form automatically.",
+        "aiEmpty": "Ask AI to refine appearance, tone, voice values, or personality sliders. It only edits external facade content.",
+        "aiPlaceholder": "Example: Make them colder and more classical, without writing backstory",
+        "aiSend": "Send AI assist message",
+        "aiMissingDefaultLlm": "No usable default LLM is configured. Set one in Experience Settings first.",
+        "aiFailed": "AI assist failed. Please try again later.",
+        "boardTitle": "Character Board",
+        "boardDescription": "A 16:9 horizontal board. Uploaded or generated images are saved with the facade.",
+        "boardEmpty": "Click to upload a horizontal board",
+        "boardUpload": "Upload Board",
+        "boardReplace": "Replace Upload",
+        "boardDrawingStyle": "Drawing Style",
+        "boardGenerate": "Generate",
+        "boardGenerated": "Character board generated.",
+        "boardGenerateFailed": "Failed to generate the character board. Please try again later.",
+        "boardMissingDefaultImage": "No usable default image model is configured. Set one in Experience Settings first.",
+        "invalidBoardImage": "Boards only support PNG/JPG/WebP up to 10MB.",
+        "boardPreviewOpen": "Open board preview",
+        "boardPreviewClose": "Close preview",
+        "boardPreviewAlt": "Board preview",
+        "boardRemove": "Remove board",
+        "boardSource": {
+          "uploaded": "Uploaded image",
+          "generated": "AI generated"
+        },
+        "boardDrawingStyles": {
+          "realistic": "Realistic",
+          "anime": "Anime",
+          "painterly": "Painterly",
+          "cel": "Cel Shaded",
+          "guofeng": "Guofeng",
+          "comic": "Comic",
+          "concept": "Concept Art"
+        },
+        "pickColor": "Pick",
+        "colorSwatchLabel": "Choose {field} {color}",
+        "colorPickerLabel": "{field} color picker",
+        "units": {
+          "cm": "cm",
+          "kg": "kg"
+        },
+        "bodyFields": {
+          "hairStyle": { "label": "Hair Style" },
+          "browShape": { "label": "Brow Shape" },
+          "faceShape": { "label": "Face Shape" },
+          "eyeShape": { "label": "Eye Shape" },
+          "noseType": { "label": "Nose Type" },
+          "mouthShape": { "label": "Mouth Shape" },
+          "earShape": { "label": "Ear Shape" },
+          "height": { "label": "Height" },
+          "weight": { "label": "Weight" },
+          "gender": { "label": "Gender" },
+          "ageStage": { "label": "Age Stage" },
+          "bodyType": { "label": "Body Type" }
+        },
+        "bodyOptions": {
+          "hairStyle": {
+            "short": "Short hair",
+            "long": "Long hair",
+            "tied": "Tied hair",
+            "wavy": "Wavy hair",
+            "curly": "Curly hair",
+            "buzz": "Buzz cut"
+          },
+          "browShape": {
+            "straight": "Straight brows",
+            "arched": "Arched brows",
+            "sword": "Sword brows",
+            "soft": "Soft brows",
+            "thick": "Thick brows",
+            "thin": "Thin brows"
+          },
+          "faceShape": {
+            "oval": "Oval face",
+            "round": "Round face",
+            "square": "Square face",
+            "heart": "Heart-shaped face",
+            "long": "Long face",
+            "sharp": "Sharp face"
+          },
+          "eyeShape": {
+            "almond": "Almond eyes",
+            "round": "Round eyes",
+            "phoenix": "Phoenix eyes",
+            "narrow": "Narrow eyes",
+            "drooping": "Drooping eyes",
+            "deepSet": "Deep-set eyes"
+          },
+          "noseType": {
+            "straight": "Straight nose",
+            "highBridge": "High bridge",
+            "small": "Small nose",
+            "broad": "Broad nose",
+            "hooked": "Hooked nose",
+            "roundTip": "Round tip"
+          },
+          "mouthShape": {
+            "thin": "Thin lips",
+            "full": "Full lips",
+            "bow": "Bow lips",
+            "wide": "Wide mouth",
+            "small": "Small mouth",
+            "firm": "Firm lips"
+          },
+          "earShape": {
+            "round": "Round ears",
+            "pointed": "Pointed ears",
+            "small": "Small ears",
+            "broad": "Broad ears",
+            "long": "Long ears",
+            "hidden": "Hidden ears"
+          },
+          "gender": {
+            "female": "Female",
+            "male": "Male",
+            "androgynous": "Androgynous",
+            "nonbinary": "Nonbinary"
+          },
+          "ageStage": {
+            "child": "Child",
+            "youth": "Youth",
+            "adult": "Adult",
+            "elder": "Elder"
+          },
+          "bodyType": {
+            "slim": "Slim",
+            "athletic": "Athletic",
+            "soft": "Soft",
+            "sturdy": "Sturdy",
+            "graceful": "Graceful",
+            "imposing": "Imposing"
+          }
+        },
+        "colorFields": {
+          "hairColor": { "label": "Hair Color" },
+          "eyeColor": { "label": "Eye Color" },
+          "browColor": { "label": "Brow Color" },
+          "skinColor": { "label": "Skin Color" }
+        },
+        "voiceTitle": "Voice Traits",
+        "voiceDescription": "Use continuous sliders to describe audible presentation for future voice or character generation.",
+        "voiceFields": {
+          "pitch": {
+            "label": "Pitch",
+            "description": "Sets whether the voice feels deep, mature, girlish, or bright.",
+            "low": "Mature, cool, imposing",
+            "high": "Young, light, lively",
+            "ticks": {
+              "first": "Very deep",
+              "second": "Deep",
+              "third": "Neutral",
+              "fourth": "Higher",
+              "fifth": "Very high"
+            }
+          },
+          "speechSpeed": {
+            "label": "Speech Speed",
+            "description": "Sets the character's speaking rhythm.",
+            "low": "Refined, calm",
+            "high": "Excited, intimate, streamer-like",
+            "ticks": {
+              "first": "Very slow",
+              "second": "Slow",
+              "third": "Normal",
+              "fourth": "Fast",
+              "fifth": "Very fast"
+            }
+          },
+          "volume": {
+            "label": "Volume",
+            "description": "Sets how present the character sounds.",
+            "low": "Gentle, distant",
+            "high": "Outgoing, imposing",
+            "ticks": {
+              "first": "Very soft",
+              "second": "Soft",
+              "third": "Normal",
+              "fourth": "Loud",
+              "fifth": "Forceful"
+            }
+          },
+          "intonation": {
+            "label": "Intonation",
+            "description": "Sets whether speech feels flat or expressive.",
+            "low": "Detached, AI-like, refined",
+            "high": "Streamer-like, energetic, influencer-like",
+            "ticks": {
+              "first": "Almost flat",
+              "second": "Subtle",
+              "third": "Normal",
+              "fourth": "Expressive",
+              "fifth": "Exaggerated"
+            }
+          },
+          "emotionExposure": {
+            "label": "Emotion Exposure",
+            "description": "Sets how obvious the speaking emotion is.",
+            "low": "Very restrained, emotion is hard to hear",
+            "high": "Strong emotion, joy is obvious, easily coquettish",
+            "ticks": {
+              "first": "Very restrained",
+              "second": "Restrained",
+              "third": "Normal",
+              "fourth": "Obvious",
+              "fifth": "Strong"
+            }
+          },
+          "nasalResonance": {
+            "label": "Nasal Resonance",
+            "description": "Shapes naturalness, soft-girl tone, and streamer feel.",
+            "low": "Natural, clean",
+            "high": "Soft-girl, cutesy, streamer-like",
+            "ticks": {
+              "first": "None",
+              "second": "Light",
+              "third": "Normal",
+              "fourth": "Heavy",
+              "fifth": "Very heavy"
+            }
+          },
+          "breathiness": {
+            "label": "Breathiness",
+            "description": "Sets how soft, intimate, or sensual the voice feels.",
+            "low": "Clean, formal",
+            "high": "Gentle, intimate, sensual",
+            "ticks": {
+              "first": "Fully voiced",
+              "second": "Less airy",
+              "third": "Balanced",
+              "fourth": "Airy",
+              "fifth": "Very airy"
+            }
+          }
+        },
+        "personalityTitle": "Personality Traits",
+        "personalityDescription": "Capture only outward personality, social style, and relationship presentation, without backstory.",
+        "personalityGroups": {
+          "basic": "Core Personality",
+          "social": "Social Presentation",
+          "emotion": "Emotional Presentation",
+          "relationship": "Relationship Presentation",
+          "behavior": "Behavior Tendencies"
+        },
+        "personalityFields": {
+          "extroversion": { "label": "Extroversion", "low": "Slow to warm up, quiet, passive", "high": "Proactive, talkative, likes sharing" },
+          "dominance": { "label": "Dominance", "low": "Compliant, gentle, noncompetitive", "high": "Takes control, leads, imposing" },
+          "rationality": { "label": "Rationality", "low": "Feeling-led, emotional expression", "high": "Analytical, calm, structured" },
+          "emotionalStability": { "label": "Emotional Stability", "low": "Impatient, easily shaken, easily carried away", "high": "Calm, stable, hard to derail" },
+          "confidence": { "label": "Confidence", "low": "Hesitant, uncertain, easily yields", "high": "Decisive, clear, has presence" },
+          "affinity": { "label": "Affinity", "low": "Distant, aloof", "high": "Gentle, healing, approachable" },
+          "sharingDesire": { "label": "Sharing Desire", "low": "Mysterious, rarely self-discloses", "high": "Expressive, shares frequently" },
+          "humor": { "label": "Humor", "low": "Serious, formal", "high": "Plays along, livens the mood" },
+          "aggression": { "label": "Aggression", "low": "Gentle, harmless", "high": "Sarcastic, mocking, sharp" },
+          "politeness": { "label": "Politeness", "low": "Casual, internet-like", "high": "Courteous, formal" },
+          "coquetry": { "label": "Coquetry", "low": "Independent, restrained", "high": "Clingy, softened expression" },
+          "sensitivity": { "label": "Sensitivity", "low": "Insensitive, unconcerned", "high": "Notices emotion easily, overthinks easily" },
+          "possessiveness": { "label": "Possessiveness", "low": "Free, hands-off", "high": "Clingy, cares about relationship belonging" },
+          "dependency": { "label": "Dependency", "low": "Independent, self-driven", "high": "Likes company, needs response" },
+          "proactiveCare": { "label": "Proactive Care", "low": "Rarely checks in", "high": "Frequent care, frequent feedback" },
+          "boundaries": { "label": "Boundaries", "low": "Easily close, overly familiar", "high": "Slow to warm up, keeps distance" },
+          "loyalty": { "label": "Loyalty", "low": "Drifting, socially broad", "high": "Focused, strongly devoted" },
+          "action": { "label": "Action", "low": "Procrastinating, slow-paced", "high": "Acts immediately, strong momentum" },
+          "curiosity": { "label": "Curiosity", "low": "Conservative, avoids exploration", "high": "Asks often, likes trying things" },
+          "performative": { "label": "Performative Drive", "low": "Restrained, does not steal focus", "high": "Dramatic, camera-aware, emotionally expressive" }
+        }
+      },
+      "viewCommunity": "View Community Versions",
+      "backToMine": "Back to My Materials",
+      "styles": {
+        "realistic": "Realistic",
+        "fantasy": "Fantasy",
+        "sciFi": "Sci-Fi",
+        "mystery": "Mystery",
+        "cyberpunk": "Cyberpunk",
+        "classical": "Classical",
+        "apocalyptic": "Apocalyptic"
+      },
+      "types": {
+        "mask": "Facades",
+        "map": "Maps",
+        "item": "Items",
+        "creature": "Creatures"
+      },
+      "categories": {
+        "mask": "Facades",
+        "map": "Maps",
+        "item": "Items",
+        "creature": "Creatures"
+      },
+      "mineSectionSubtitle": "Joined or self-created materials in this style",
+      "communitySectionSubtitle": "Community versions in this style",
+      "itemCount": "{count} materials",
+      "joined": "Joined",
+      "join": "Join My Materials",
+      "joinedToast": "Material added to your library.",
+      "close": "Close material detail",
+      "libraryStatus": "My material library",
+      "empty": "No materials yet.",
+      "mineEmpty": "Your material library is empty. Browse community versions first.",
+      "source": {
+        "selfCreated": "Self-created",
+        "communityAdded": "Community added"
+      },
+      "errors": {
+        "persistence": "The database is not connected, so materials cannot be joined yet.",
+        "join": "Failed to join the material. Please try again later.",
+        "delete": "Failed to delete the material. Please try again later.",
+        "share": "Failed to update sharing status. Please try again later."
       }
     },
     "command": {

@@ -11,6 +11,23 @@ enum StoryScriptLibrarySource {
   COMMUNITY_ADDED
 }
 
+enum StoryMaterialCategory {
+  MASK
+  MAP
+  ITEM
+  CREATURE
+}
+
+enum StoryMaterialStyle {
+  REALISTIC
+  FANTASY
+  SCI_FI
+  MYSTERY
+  CYBERPUNK
+  CLASSICAL
+  APOCALYPTIC
+}
+
 enum AppUserRole {
   USER
   ADMIN
@@ -28,6 +45,7 @@ model AppUser {
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
   scriptLibrary StoryScriptLibraryEntry[]
+  materialLibrary StoryMaterialLibraryEntry[]
   conversations Conversation[]
   authSessions  AuthSession[]
   aiProviders   AiProvider[]
@@ -72,6 +90,41 @@ model StoryScriptLibraryEntry {
 
   @@unique([userId, scriptId])
   @@index([scriptId])
+  @@index([userId, createdAt])
+}
+
+model StoryMaterial {
+  id             String                      @id @default(cuid())
+  slug           String                      @unique
+  category       StoryMaterialCategory
+  style          StoryMaterialStyle          @default(REALISTIC)
+  titleZh        String
+  titleEn        String
+  descriptionZh  String                      @db.Text
+  descriptionEn  String                      @db.Text
+  previewUrl     String?                     @db.Text
+  metadata       Json?
+  communityVisible Boolean                   @default(true)
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+  libraryEntries StoryMaterialLibraryEntry[]
+
+  @@index([category, createdAt])
+  @@index([style, createdAt])
+}
+
+model StoryMaterialLibraryEntry {
+  id         String                   @id @default(cuid())
+  userId     String
+  user       AppUser                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  materialId String
+  material   StoryMaterial            @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  source     StoryScriptLibrarySource @default(COMMUNITY_ADDED)
+  createdAt  DateTime                 @default(now())
+  updatedAt  DateTime                 @updatedAt
+
+  @@unique([userId, materialId])
+  @@index([materialId])
   @@index([userId, createdAt])
 }
 

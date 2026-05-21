@@ -21,7 +21,7 @@ export function AuthDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm">
       <section
         className="w-full max-w-md rounded-2xl border border-border bg-background p-5 shadow-2xl"
         onClick={(event) => event.stopPropagation()}

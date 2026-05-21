@@ -1,7 +1,10 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import type { StoryMaterialStyle as PrismaStoryMaterialStyle } from "@prisma/client";
 import type { Locale } from "@/i18n/routing";
+import { generateDefaultMaskBoardImage } from "@/lib/ai/image-runtime";
 import { generateDefaultLlmReply, streamDefaultLlmReply, type RuntimeChatMessage, type RuntimeTokenUsage } from "@/lib/ai/runtime";
 import { ensureConfiguredAdminUser, getCurrentViewer, requireAuth } from "@/lib/auth";
 import type { AuthViewer } from "@/lib/auth-types";
@@ -12,6 +15,7 @@ import {
   summarizeConversationTokenUsage
 } from "@/lib/home-workspace-utils";
 import { prisma } from "@/lib/prisma";
+import { uploadMaskBoardImage } from "@/lib/storage/material";
 
 const baseScriptSlug = "base-ai-script";
 const defaultUserId = "default-local";
@@ -19,6 +23,15 @@ const defaultUserSlug = "default-local";
 const assistantRole = "assistant";
 const userRole = "user";
 const communityAddedSource = "COMMUNITY_ADDED" satisfies WorkspaceScriptLibrarySource;
+const defaultMaterialSlugs = [
+  "echo-mask",
+  "mirror-mourning-mask",
+  "floating-city-map",
+  "tidal-route-chart",
+  "echo-compass",
+  "neon-access-chip",
+  "mistguard-beast"
+];
 
 const builtInScripts = [
   {
@@ -143,6 +156,91 @@ const builtInScripts = [
   }
 ];
 
+const builtInMaterials = [
+  {
+    slug: "echo-mask",
+    category: "MASK",
+    style: "REALISTIC",
+    titleZh: "回声假面",
+    titleEn: "Echo Mask",
+    descriptionZh: "记录人物外观轮廓、性格倾向、说话方式和动作习惯的假面素材，不包含身世与背景故事。",
+    descriptionEn:
+      "A mask material for recording appearance, temperament, speech style, and habitual gestures, without backstory."
+  },
+  {
+    slug: "mirror-mourning-mask",
+    category: "MASK",
+    style: "MYSTERY",
+    titleZh: "镜语假面",
+    titleEn: "Mirror Voice Mask",
+    descriptionZh: "只收纳表层呈现的神态、语气和姿态，便于独立整理角色的外在呈现。",
+    descriptionEn: "Stores only the surface presentation of expression, tone, and posture for a clean external character profile."
+  },
+  {
+    slug: "floating-city-map",
+    category: "MAP",
+    style: "SCI_FI",
+    titleZh: "悬空城地图",
+    titleEn: "Floating City Map",
+    descriptionZh: "标注环层街区、升降塔和禁飞风道的城市地图，适合空中都市和阶层冲突。",
+    descriptionEn: "A city map of ring districts, lift towers, and forbidden windways for aerial cities and class conflict."
+  },
+  {
+    slug: "tidal-route-chart",
+    category: "MAP",
+    style: "FANTASY",
+    titleZh: "潮汐航线图",
+    titleEn: "Tidal Route Chart",
+    descriptionZh: "随月相改写航线的海图素材，适合远航、走私、失落岛屿和时间差谜题。",
+    descriptionEn: "A sea chart whose routes shift with the moon, useful for voyages, smuggling, lost islands, and timing puzzles."
+  },
+  {
+    slug: "echo-compass",
+    category: "ITEM",
+    style: "CLASSICAL",
+    titleZh: "回声罗盘",
+    titleEn: "Echo Compass",
+    descriptionZh: "指向最近一次承诺回声的物品素材，适合寻人、追踪契约和情感债务。",
+    descriptionEn: "An item that points toward the echo of the latest promise, ideal for searches, vows, and emotional debts."
+  },
+  {
+    slug: "neon-access-chip",
+    category: "ITEM",
+    style: "CYBERPUNK",
+    titleZh: "霓虹门禁芯片",
+    titleEn: "Neon Access Chip",
+    descriptionZh: "嵌有城市监控权限码的门禁芯片，适合潜入、黑市交易和企业身份伪装。",
+    descriptionEn: "A gate chip carrying city surveillance permissions, suited to infiltration, black market deals, and corporate disguise."
+  },
+  {
+    slug: "night-ink-vial",
+    category: "ITEM",
+    style: "MYSTERY",
+    titleZh: "夜墨瓶",
+    titleEn: "Night Ink Vial",
+    descriptionZh: "只在无光处显影的墨水素材，适合密信、禁书批注和被隐藏的地图层。",
+    descriptionEn: "Ink that appears only in darkness, suited to secret letters, forbidden annotations, and hidden map layers."
+  },
+  {
+    slug: "mistguard-beast",
+    category: "CREATURE",
+    style: "APOCALYPTIC",
+    titleZh: "雾卫兽",
+    titleEn: "Mistguard Beast",
+    descriptionZh: "守在废墟边界的雾生生物，能嗅出谎言和旧血，适合作为遗迹守卫或同行者。",
+    descriptionEn: "A mist-born creature guarding ruin borders, able to scent lies and old blood as a sentinel or companion."
+  },
+  {
+    slug: "lantern-wisp",
+    category: "CREATURE",
+    style: "FANTASY",
+    titleZh: "灯焰灵",
+    titleEn: "Lantern Wisp",
+    descriptionZh: "寄居在旧灯中的微光生物，会被未完成的愿望吸引，适合引路、交易和温柔怪谈。",
+    descriptionEn: "A small light creature living in old lanterns, drawn to unfinished wishes for guidance, bargains, and soft uncanny tales."
+  }
+] as const;
+
 export type WorkspaceScript = {
   id: string;
   slug: string;
@@ -155,6 +253,135 @@ export type WorkspaceScript = {
 };
 
 export type WorkspaceScriptLibrarySource = "SELF_CREATED" | "COMMUNITY_ADDED";
+
+export type WorkspaceMaterialCategory = "mask" | "map" | "item" | "creature";
+
+export type WorkspaceMaterialStyle =
+  | "realistic"
+  | "fantasy"
+  | "sciFi"
+  | "mystery"
+  | "cyberpunk"
+  | "classical"
+  | "apocalyptic";
+
+export type WorkspaceMaterialLibrarySource = WorkspaceScriptLibrarySource;
+
+export type WorkspaceMaterial = {
+  id: string;
+  slug: string;
+  category: WorkspaceMaterialCategory;
+  style: WorkspaceMaterialStyle;
+  title: string;
+  description: string;
+  previewUrl: string | null;
+  metadata?: WorkspaceMaterialMetadata | null;
+  communityVisible: boolean;
+  inLibrary: boolean;
+  librarySource?: WorkspaceMaterialLibrarySource;
+};
+
+export type MaskDraftPatch = {
+  name?: string;
+  intro?: string;
+  style?: WorkspaceMaterialStyle;
+  body?: Partial<Record<WorkspaceMaskBodyFieldId, string>>;
+  colors?: Partial<Record<WorkspaceMaskColorFieldId, string>>;
+  voice?: Partial<Record<WorkspaceMaskVoiceFieldId, number>>;
+  personality?: Partial<Record<WorkspaceMaskPersonalityFieldId, number>>;
+};
+
+export type MaskAiAssistResult = {
+  message: string;
+  patch: MaskDraftPatch;
+};
+
+export type MaskBoardGenerationResult = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+};
+
+export type MaskMaterialCreateInput = {
+  name: string;
+  intro: string;
+  style: WorkspaceMaterialStyle;
+  body: Record<WorkspaceMaskBodyFieldId, string>;
+  colors: Record<WorkspaceMaskColorFieldId, string>;
+  voice: Record<WorkspaceMaskVoiceFieldId, number>;
+  personality: Record<WorkspaceMaskPersonalityFieldId, number>;
+  boardDrawingStyle?: WorkspaceMaskBoardDrawingStyle;
+  boardImageSource?: "uploaded" | "generated" | null;
+};
+
+type WorkspaceMaskBoardDrawingStyle = "realistic" | "anime" | "painterly" | "cel" | "guofeng" | "comic" | "concept";
+
+type WorkspaceMaskBodyFieldId =
+  | "hairStyle"
+  | "browShape"
+  | "faceShape"
+  | "eyeShape"
+  | "noseType"
+  | "mouthShape"
+  | "earShape"
+  | "height"
+  | "weight"
+  | "gender"
+  | "ageStage"
+  | "bodyType";
+
+type WorkspaceMaskColorFieldId = "hairColor" | "eyeColor" | "browColor" | "skinColor";
+type WorkspaceMaskBoardImageSource = "uploaded" | "generated";
+type WorkspaceMaskVoiceFieldId =
+  | "pitch"
+  | "speechSpeed"
+  | "volume"
+  | "intonation"
+  | "emotionExposure"
+  | "nasalResonance"
+  | "breathiness";
+type WorkspaceMaskPersonalityFieldId =
+  | "extroversion"
+  | "dominance"
+  | "rationality"
+  | "emotionalStability"
+  | "confidence"
+  | "affinity"
+  | "sharingDesire"
+  | "humor"
+  | "aggression"
+  | "politeness"
+  | "coquetry"
+  | "sensitivity"
+  | "possessiveness"
+  | "dependency"
+  | "proactiveCare"
+  | "boundaries"
+  | "loyalty"
+  | "action"
+  | "curiosity"
+  | "performative";
+
+export type WorkspaceMaskMaterialMetadata = {
+  kind: "mask";
+  version: 1;
+  name: string;
+  intro: string;
+  style: WorkspaceMaterialStyle;
+  body: Record<WorkspaceMaskBodyFieldId, string>;
+  colors: Record<WorkspaceMaskColorFieldId, string>;
+  voice: Record<WorkspaceMaskVoiceFieldId, number>;
+  personality: Record<WorkspaceMaskPersonalityFieldId, number>;
+  boardDrawingStyle: WorkspaceMaskBoardDrawingStyle;
+  boardImage: {
+    source: WorkspaceMaskBoardImageSource;
+    url: string;
+  } | null;
+};
+
+export type WorkspaceMaterialMetadata = WorkspaceMaskMaterialMetadata | Record<string, unknown>;
+
+export type MaskMaterialBoardImageMode = "keep" | "replace" | "clear";
 
 export type WorkspaceMessage = {
   id: string;
@@ -187,6 +414,8 @@ export type WorkspaceData = {
   viewer: AuthViewer | null;
   myScripts: WorkspaceScript[];
   communityScripts: WorkspaceScript[];
+  myMaterials: WorkspaceMaterial[];
+  communityMaterials: WorkspaceMaterial[];
   conversations: WorkspaceConversation[];
   persistenceAvailable: boolean;
 };
@@ -198,11 +427,20 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
 
     await ensureHomeWorkspaceDefaults(workspaceUserId);
 
-    const [communityScripts, libraryEntries, conversations] = await Promise.all([
+    const [communityScripts, libraryEntries, communityMaterials, materialLibraryEntries, conversations] = await Promise.all([
       prisma.storyScript.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.storyScriptLibraryEntry.findMany({
         where: { userId: workspaceUserId },
         include: { script: true },
+        orderBy: { createdAt: "asc" }
+      }),
+      prisma.storyMaterial.findMany({
+        where: { communityVisible: true },
+        orderBy: { createdAt: "asc" }
+      }),
+      prisma.storyMaterialLibraryEntry.findMany({
+        where: { userId: workspaceUserId },
+        include: { material: true },
         orderBy: { createdAt: "asc" }
       }),
       viewer
@@ -219,6 +457,9 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
     const librarySourceByScriptId = new Map(
       libraryEntries.map((entry) => [entry.scriptId, entry.source as WorkspaceScriptLibrarySource])
     );
+    const librarySourceByMaterialId = new Map(
+      materialLibraryEntries.map((entry) => [entry.materialId, entry.source as WorkspaceMaterialLibrarySource])
+    );
 
     return {
       viewer,
@@ -232,6 +473,18 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
         mapScript(script, locale, {
           inLibrary: librarySourceByScriptId.has(script.id),
           librarySource: librarySourceByScriptId.get(script.id)
+        })
+      ),
+      myMaterials: materialLibraryEntries.map((entry) =>
+        mapMaterial(entry.material, locale, {
+          inLibrary: true,
+          librarySource: entry.source as WorkspaceMaterialLibrarySource
+        })
+      ),
+      communityMaterials: communityMaterials.map((material) =>
+        mapMaterial(material, locale, {
+          inLibrary: librarySourceByMaterialId.has(material.id),
+          librarySource: librarySourceByMaterialId.get(material.id)
         })
       ),
       conversations: conversations.map((conversation) => {
@@ -291,7 +544,11 @@ export async function createConversation(scriptId: string, locale: Locale) {
 
 export async function sendConversationMessage(conversationId: string, content: string, locale: Locale) {
   return createConversationReply(conversationId, content, locale, (messages, viewer) =>
-    generateDefaultLlmReply(messages, viewer.id, viewer.showAiThinking, locale)
+    generateDefaultLlmReply(messages, viewer.id, viewer.showAiThinking, locale, {
+      conversationId,
+      feature: "conversation.reply",
+      sessionId: conversationId
+    })
   );
 }
 
@@ -302,7 +559,11 @@ export async function streamConversationMessage(
   onDelta: (content: string) => void
 ) {
   return createConversationReply(conversationId, content, locale, (messages, viewer) =>
-    streamDefaultLlmReply(messages, onDelta, viewer.id, viewer.showAiThinking, locale)
+    streamDefaultLlmReply(messages, onDelta, viewer.id, viewer.showAiThinking, locale, {
+      conversationId,
+      feature: "conversation.stream",
+      sessionId: conversationId
+    })
   );
 }
 
@@ -411,16 +672,282 @@ export async function deleteConversation(conversationId: string, locale: Locale)
   return { id: conversationId };
 }
 
+export async function addMaterialToLibrary(materialId: string, locale: Locale) {
+  if (!materialId) {
+    throw new Error("Material id is required.");
+  }
+
+  const viewer = await requireAuth();
+
+  await ensureHomeWorkspaceDefaults(viewer.id);
+
+  const entry = await prisma.storyMaterialLibraryEntry.upsert({
+    where: {
+      userId_materialId: {
+        userId: viewer.id,
+        materialId
+      }
+    },
+    update: {},
+    create: {
+      userId: viewer.id,
+      materialId,
+      source: communityAddedSource
+    },
+    include: {
+      material: true
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapMaterial(entry.material, locale, {
+    inLibrary: true,
+    librarySource: entry.source as WorkspaceMaterialLibrarySource
+  });
+}
+
+export async function createMaskMaterial(input: MaskMaterialCreateInput, boardImageFile: File | null, locale: Locale) {
+  const viewer = await requireAuth();
+  const name = input.name.trim();
+  const intro = input.intro.trim();
+
+  if (!name) {
+    throw new Error("MASK_NAME_REQUIRED");
+  }
+
+  await ensureHomeWorkspaceDefaults(viewer.id);
+
+  const previewUrl = boardImageFile && boardImageFile.size > 0 ? await uploadMaskBoardImage(viewer.id, boardImageFile) : null;
+  const material = await prisma.storyMaterial.create({
+    data: {
+      slug: createUserMaterialSlug(name),
+      category: "MASK",
+      style: toStoryMaterialStyle(input.style),
+      titleZh: name,
+      titleEn: name,
+      descriptionZh: intro || name,
+      descriptionEn: intro || name,
+      previewUrl,
+      metadata: buildMaskMaterialMetadata(input, previewUrl, input.boardImageSource),
+      communityVisible: false,
+      libraryEntries: {
+        create: {
+          userId: viewer.id,
+          source: "SELF_CREATED"
+        }
+      }
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapMaterial(material, locale, {
+    inLibrary: true,
+    librarySource: "SELF_CREATED"
+  });
+}
+
+export async function updateMaskMaterial(
+  materialId: string,
+  input: MaskMaterialCreateInput,
+  boardImageFile: File | null,
+  boardImageMode: MaskMaterialBoardImageMode,
+  locale: Locale
+) {
+  const viewer = await requireAuth();
+  const name = input.name.trim();
+  const intro = input.intro.trim();
+
+  if (!name) {
+    throw new Error("MASK_NAME_REQUIRED");
+  }
+
+  const entry = await prisma.storyMaterialLibraryEntry.findFirst({
+    where: {
+      userId: viewer.id,
+      materialId,
+      source: "SELF_CREATED"
+    },
+    include: {
+      material: true
+    }
+  });
+
+  if (!entry || normalizeMaterialCategory(entry.material.category) !== "mask") {
+    throw new Error("MATERIAL_NOT_EDITABLE");
+  }
+
+  let previewUrl = entry.material.previewUrl ?? null;
+  let boardImageSource = getExistingMaskBoardImageSource(entry.material.metadata) ?? input.boardImageSource ?? null;
+
+  if (boardImageMode === "replace") {
+    if (!boardImageFile || boardImageFile.size <= 0) {
+      throw new Error("INVALID_MATERIAL_IMAGE_FILE");
+    }
+
+    previewUrl = await uploadMaskBoardImage(viewer.id, boardImageFile);
+    boardImageSource = input.boardImageSource ?? "uploaded";
+  } else if (boardImageMode === "clear") {
+    previewUrl = null;
+    boardImageSource = null;
+  } else if (previewUrl && !boardImageSource) {
+    boardImageSource = "uploaded";
+  }
+
+  const material = await prisma.storyMaterial.update({
+    where: {
+      id: entry.material.id
+    },
+    data: {
+      category: "MASK",
+      style: toStoryMaterialStyle(input.style),
+      titleZh: name,
+      titleEn: name,
+      descriptionZh: intro || name,
+      descriptionEn: intro || name,
+      previewUrl,
+      metadata: buildMaskMaterialMetadata(
+        input,
+        previewUrl,
+        boardImageSource ?? input.boardImageSource ?? null
+      )
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapMaterial(material, locale, {
+    inLibrary: true,
+    librarySource: "SELF_CREATED"
+  });
+}
+
+export async function deleteSelfCreatedMaterial(materialId: string, locale: Locale) {
+  const viewer = await requireAuth();
+  const entry = await prisma.storyMaterialLibraryEntry.findFirst({
+    where: {
+      userId: viewer.id,
+      materialId,
+      source: "SELF_CREATED"
+    },
+    include: {
+      material: true
+    }
+  });
+
+  if (!entry) {
+    throw new Error("MATERIAL_NOT_EDITABLE");
+  }
+
+  await prisma.storyMaterial.delete({
+    where: {
+      id: entry.material.id
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return { id: entry.material.id };
+}
+
+export async function setMaterialCommunitySharing(materialId: string, shared: boolean, locale: Locale) {
+  const viewer = await requireAuth();
+  const entry = await prisma.storyMaterialLibraryEntry.findFirst({
+    where: {
+      userId: viewer.id,
+      materialId,
+      source: "SELF_CREATED"
+    },
+    include: {
+      material: true
+    }
+  });
+
+  if (!entry) {
+    throw new Error("MATERIAL_NOT_EDITABLE");
+  }
+
+  const material = await prisma.storyMaterial.update({
+    where: {
+      id: entry.material.id
+    },
+    data: {
+      communityVisible: shared
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapMaterial(material, locale, {
+    inLibrary: true,
+    librarySource: "SELF_CREATED"
+  });
+}
+
+export async function assistMaskDraft(input: MaskMaterialCreateInput, instruction: string, locale: Locale): Promise<MaskAiAssistResult> {
+  const viewer = await requireAuth();
+  const normalizedInstruction = instruction.trim();
+
+  if (!normalizedInstruction) {
+    throw new Error("MASK_ASSIST_EMPTY_INSTRUCTION");
+  }
+
+  const reply = await generateDefaultLlmReply(
+    buildMaskAssistMessages(input, normalizedInstruction, locale),
+    viewer.id,
+    false,
+    locale,
+    {
+      feature: "mask.assist",
+      input: {
+        currentDraft: input,
+        instruction: normalizedInstruction
+      }
+    }
+  );
+  const parsed = parseJsonObject(reply.content);
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : reply.content.trim();
+
+  return {
+    message,
+    patch: sanitizeMaskDraftPatch(record.patch)
+  };
+}
+
+export async function generateMaskBoard(input: MaskMaterialCreateInput, locale: Locale): Promise<MaskBoardGenerationResult> {
+  const viewer = await requireAuth();
+
+  return generateDefaultMaskBoardImage(buildMaskBoardPrompt(input, locale), viewer.id, {
+    feature: "mask.board.generate",
+    input: {
+      draft: input,
+      locale
+    },
+    locale
+  });
+}
+
 async function ensureHomeWorkspaceDefaults(userId = defaultUserId) {
   await ensureConfiguredAdminUser();
 
-  const [scripts] = await Promise.all([
+  const [scripts, materials] = await Promise.all([
     Promise.all(
       builtInScripts.map((script) =>
         prisma.storyScript.upsert({
           where: { slug: script.slug },
           update: {},
           create: script
+        })
+      )
+    ),
+    Promise.all(
+      builtInMaterials.map((material) =>
+        prisma.storyMaterial.upsert({
+          where: { slug: material.slug },
+          update: { communityVisible: true, style: material.style },
+          create: material
         })
       )
     ),
@@ -471,6 +998,48 @@ async function ensureHomeWorkspaceDefaults(userId = defaultUserId) {
       }
     });
   }
+
+  const sharedMaterials = materials.filter((material) => defaultMaterialSlugs.includes(material.slug));
+
+  await Promise.all(
+    sharedMaterials.map((material) =>
+      prisma.storyMaterialLibraryEntry.upsert({
+        where: {
+          userId_materialId: {
+            userId: defaultUserId,
+            materialId: material.id
+          }
+        },
+        update: {},
+        create: {
+          userId: defaultUserId,
+          materialId: material.id,
+          source: communityAddedSource
+        }
+      })
+    )
+  );
+
+  if (userId !== defaultUserId) {
+    await Promise.all(
+      sharedMaterials.map((material) =>
+        prisma.storyMaterialLibraryEntry.upsert({
+          where: {
+            userId_materialId: {
+              userId,
+              materialId: material.id
+            }
+          },
+          update: {},
+          create: {
+            userId,
+            materialId: material.id,
+            source: communityAddedSource
+          }
+        })
+      )
+    );
+  }
 }
 
 function mapScript(
@@ -505,6 +1074,355 @@ function mapScript(
   };
 }
 
+function mapMaterial(
+  material: {
+    id: string;
+    slug: string;
+    category: string;
+    style?: string | null;
+    titleZh: string;
+    titleEn: string;
+    descriptionZh: string;
+    descriptionEn: string;
+    previewUrl?: string | null;
+    metadata?: unknown;
+    communityVisible?: boolean | null;
+  },
+  locale: Locale,
+  library?: {
+    inLibrary?: boolean;
+    librarySource?: WorkspaceMaterialLibrarySource;
+  }
+): WorkspaceMaterial {
+  const isEnglish = locale === "en-US";
+  const librarySource = library?.librarySource;
+
+  return {
+    id: material.id,
+    slug: material.slug,
+    category: normalizeMaterialCategory(material.category),
+    style: normalizeMaterialStyle(material.style),
+    title: isEnglish ? material.titleEn : material.titleZh,
+    description: isEnglish ? material.descriptionEn : material.descriptionZh,
+    previewUrl: material.previewUrl ?? null,
+    metadata: (material.metadata as WorkspaceMaterialMetadata | null | undefined) ?? null,
+    communityVisible: material.communityVisible ?? true,
+    inLibrary: library?.inLibrary ?? false,
+    ...(librarySource ? { librarySource } : {})
+  };
+}
+
+function buildMaskMaterialMetadata(
+  input: MaskMaterialCreateInput,
+  previewUrl: string | null,
+  boardImageSource?: WorkspaceMaskBoardImageSource | null
+): WorkspaceMaskMaterialMetadata {
+  const name = input.name.trim();
+  const intro = input.intro.trim();
+
+  return {
+    kind: "mask",
+    version: 1,
+    name,
+    intro,
+    style: input.style,
+    body: input.body,
+    colors: input.colors,
+    voice: input.voice,
+    personality: input.personality,
+    boardDrawingStyle: normalizeMaskBoardDrawingStyle(input.boardDrawingStyle),
+    boardImage: previewUrl
+      ? {
+          source: boardImageSource ?? input.boardImageSource ?? "uploaded",
+          url: previewUrl
+        }
+      : null
+  };
+}
+
+function getExistingMaskBoardImageSource(metadata: unknown): WorkspaceMaskBoardImageSource | null {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const boardImage = (metadata as Record<string, unknown>).boardImage;
+
+  if (!boardImage || typeof boardImage !== "object") {
+    return null;
+  }
+
+  const source = (boardImage as Record<string, unknown>).source;
+
+  return source === "generated" || source === "uploaded" ? source : null;
+}
+
+function createUserMaterialSlug(name: string) {
+  const normalized = name
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+
+  return `mask-${normalized || "custom"}-${randomUUID().slice(0, 8)}`;
+}
+
+function toStoryMaterialStyle(style: WorkspaceMaterialStyle): PrismaStoryMaterialStyle {
+  const styles: Record<WorkspaceMaterialStyle, PrismaStoryMaterialStyle> = {
+    apocalyptic: "APOCALYPTIC",
+    classical: "CLASSICAL",
+    cyberpunk: "CYBERPUNK",
+    fantasy: "FANTASY",
+    mystery: "MYSTERY",
+    realistic: "REALISTIC",
+    sciFi: "SCI_FI"
+  };
+
+  return styles[style] ?? "REALISTIC";
+}
+
+function normalizeMaskBoardDrawingStyle(style?: string | null): WorkspaceMaskBoardDrawingStyle {
+  if (["anime", "painterly", "cel", "guofeng", "comic", "concept"].includes(style ?? "")) {
+    return style as WorkspaceMaskBoardDrawingStyle;
+  }
+
+  return "realistic";
+}
+
+function getMaskBoardDrawingStylePrompt(style: WorkspaceMaskBoardDrawingStyle, locale: Locale) {
+  const zh: Record<WorkspaceMaskBoardDrawingStyle, string> = {
+    anime: "二次元插画，干净线条，角色辨识度高",
+    cel: "赛璐璐动画风，清晰色块，边缘利落",
+    comic: "漫画分镜设定风，线稿明确，视觉张力强",
+    concept: "概念设定稿，设计感强，适合角色设定板",
+    guofeng: "国风插画，东方审美，服饰与气质细节克制精致",
+    painterly: "厚涂插画，笔触丰富，光影和材质表现更强",
+    realistic: "写实角色设计，比例自然，质感可信"
+  };
+  const en: Record<WorkspaceMaskBoardDrawingStyle, string> = {
+    anime: "anime illustration, clean linework, high character readability",
+    cel: "cel-shaded animation style, crisp color blocks, clean edges",
+    comic: "comic character sheet style, clear ink lines, strong visual energy",
+    concept: "concept art character sheet, design-forward and production-ready",
+    guofeng: "Chinese-inspired illustration, refined eastern aesthetics and restrained costume details",
+    painterly: "painterly illustration, rich brushwork, stronger lighting and material rendering",
+    realistic: "realistic character design, natural proportions, believable texture"
+  };
+
+  return locale === "en-US" ? en[style] : zh[style];
+}
+
+function buildMaskAssistMessages(input: MaskMaterialCreateInput, instruction: string, locale: Locale): RuntimeChatMessage[] {
+  const isEnglish = locale === "en-US";
+  const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are an assistant for editing a facade material in New World Novel.",
+        "A facade only includes outward presentation: appearance, personality expression, speech style, voice traits, and habits.",
+        "Never create backstory, life history, origin, family history, plot events, or world relationships.",
+        "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
+        "Patch may only include: name, intro, style, body, colors, voice, personality.",
+        "style must be one of realistic, fantasy, sciFi, mystery, cyberpunk, classical, apocalyptic.",
+        "voice and personality values must be numbers from 0 to 100, except speechSpeed from 80 to 220.",
+        languageRule
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        currentDraft: input,
+        instruction
+      })
+    }
+  ];
+}
+
+function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
+  const isEnglish = locale === "en-US";
+  const drawingStyle = getMaskBoardDrawingStylePrompt(normalizeMaskBoardDrawingStyle(input.boardDrawingStyle), locale);
+  const body = Object.entries(input.body)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ");
+  const colors = Object.entries(input.colors)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ");
+
+  if (isEnglish) {
+    return [
+      "Create a 16:9 horizontal character setting board for an interactive novel facade.",
+      "Focus only on outward presentation: appearance, expression, posture, clothing mood, speaking aura, and visual temperament.",
+      "Do not depict backstory scenes, family history, plot events, or world relationships.",
+      `Name: ${input.name || "Untitled facade"}.`,
+      `Introduction: ${input.intro || "No introduction yet"}.`,
+      `Drawing style: ${drawingStyle}.`,
+      `Body details: ${body || "unspecified"}.`,
+      `Colors: ${colors}.`,
+      "Composition: clean character design sheet, half-body character view, subtle annotation zones, refined UI-like setting board."
+    ].join("\n");
+  }
+
+  return [
+    "生成一张 16:9 横版角色设定板，用于交互小说的假面素材。",
+    "只表现外显内容：外观、神态、姿态、服饰氛围、说话气质和视觉性格。",
+    "不要画人物背景故事、身世经历、剧情事件、家族关系或世界关系。",
+    `名称：${input.name || "未命名假面"}。`,
+    `介绍：${input.intro || "暂无介绍"}。`,
+    `绘制风格：${drawingStyle}。`,
+    `身体信息：${body || "未指定"}。`,
+    `颜色：${colors}。`,
+    "构图：干净的角色设计稿、半身角色、轻量标注区域、精致的设定板界面感。"
+  ].join("\n");
+}
+
+function parseJsonObject(content: string) {
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fenced ?? content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
+
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeMaskDraftPatch(value: unknown): MaskDraftPatch {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const patch: MaskDraftPatch = {};
+
+  if (typeof record.name === "string") {
+    patch.name = record.name.slice(0, 120);
+  }
+
+  if (typeof record.intro === "string") {
+    patch.intro = record.intro.slice(0, 1200);
+  }
+
+  if (typeof record.style === "string" && isWorkspaceMaterialStyle(record.style)) {
+    patch.style = record.style;
+  }
+
+  patch.body = pickStringRecord(record.body, maskBodyFieldIds);
+  patch.colors = pickColorRecord(record.colors, maskColorFieldIds);
+  patch.voice = pickNumberRecord(record.voice, maskVoiceFieldIds, { speechSpeed: [80, 220] });
+  patch.personality = pickNumberRecord(record.personality, maskPersonalityFieldIds);
+
+  return patch;
+}
+
+const maskBodyFieldIds: WorkspaceMaskBodyFieldId[] = [
+  "hairStyle",
+  "browShape",
+  "faceShape",
+  "eyeShape",
+  "noseType",
+  "mouthShape",
+  "earShape",
+  "height",
+  "weight",
+  "gender",
+  "ageStage",
+  "bodyType"
+];
+const maskColorFieldIds: WorkspaceMaskColorFieldId[] = ["hairColor", "eyeColor", "browColor", "skinColor"];
+const maskVoiceFieldIds: WorkspaceMaskVoiceFieldId[] = [
+  "pitch",
+  "speechSpeed",
+  "volume",
+  "intonation",
+  "emotionExposure",
+  "nasalResonance",
+  "breathiness"
+];
+const maskPersonalityFieldIds: WorkspaceMaskPersonalityFieldId[] = [
+  "extroversion",
+  "dominance",
+  "rationality",
+  "emotionalStability",
+  "confidence",
+  "affinity",
+  "sharingDesire",
+  "humor",
+  "aggression",
+  "politeness",
+  "coquetry",
+  "sensitivity",
+  "possessiveness",
+  "dependency",
+  "proactiveCare",
+  "boundaries",
+  "loyalty",
+  "action",
+  "curiosity",
+  "performative"
+];
+
+function pickStringRecord<T extends string>(value: unknown, keys: T[]) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const result: Partial<Record<T, string>> = {};
+
+  keys.forEach((key) => {
+    if (typeof source[key] === "string") {
+      result[key] = source[key].slice(0, 160);
+    }
+  });
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function pickColorRecord<T extends string>(value: unknown, keys: T[]) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const result: Partial<Record<T, string>> = {};
+
+  keys.forEach((key) => {
+    const color = typeof source[key] === "string" ? source[key].trim() : "";
+
+    if (/^#[0-9a-f]{6}$/i.test(color)) {
+      result[key] = color.toUpperCase();
+    }
+  });
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function pickNumberRecord<T extends string>(value: unknown, keys: T[], ranges: Partial<Record<T, [number, number]>> = {}) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const result: Partial<Record<T, number>> = {};
+
+  keys.forEach((key) => {
+    if (typeof source[key] !== "number" || !Number.isFinite(source[key])) {
+      return;
+    }
+
+    const [min, max] = ranges[key] ?? [0, 100];
+    result[key] = Math.min(max, Math.max(min, Math.round(source[key])));
+  });
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function isWorkspaceMaterialStyle(style: string): style is WorkspaceMaterialStyle {
+  return ["realistic", "fantasy", "sciFi", "mystery", "cyberpunk", "classical", "apocalyptic"].includes(style);
+}
+
 function mapMessage(message: {
   id: string;
   role: string;
@@ -534,7 +1452,19 @@ function getFallbackWorkspaceData(locale: Locale): WorkspaceData {
       locale,
       {
         inLibrary: isBaseScript,
-        librarySource: isBaseScript ? communityAddedSource : undefined
+      librarySource: isBaseScript ? communityAddedSource : undefined
+      }
+    );
+  });
+  const fallbackMaterials = builtInMaterials.map((material) => {
+    const isShared = defaultMaterialSlugs.includes(material.slug);
+
+    return mapMaterial(
+      { id: material.slug, ...material },
+      locale,
+      {
+        inLibrary: isShared,
+        librarySource: isShared ? communityAddedSource : undefined
       }
     );
   });
@@ -543,9 +1473,55 @@ function getFallbackWorkspaceData(locale: Locale): WorkspaceData {
     viewer: null,
     myScripts: fallbackScripts.filter((script) => script.inLibrary),
     communityScripts: fallbackScripts,
+    myMaterials: fallbackMaterials.filter((material) => material.inLibrary),
+    communityMaterials: fallbackMaterials,
     conversations: [],
     persistenceAvailable: false
   };
+}
+
+function normalizeMaterialCategory(category: string): WorkspaceMaterialCategory {
+  if (category === "MASK") {
+    return "mask";
+  }
+
+  if (category === "MAP") {
+    return "map";
+  }
+
+  if (category === "CREATURE") {
+    return "creature";
+  }
+
+  return "item";
+}
+
+function normalizeMaterialStyle(style?: string | null): WorkspaceMaterialStyle {
+  if (style === "FANTASY") {
+    return "fantasy";
+  }
+
+  if (style === "SCI_FI") {
+    return "sciFi";
+  }
+
+  if (style === "MYSTERY") {
+    return "mystery";
+  }
+
+  if (style === "CYBERPUNK") {
+    return "cyberpunk";
+  }
+
+  if (style === "CLASSICAL") {
+    return "classical";
+  }
+
+  if (style === "APOCALYPTIC") {
+    return "apocalyptic";
+  }
+
+  return "realistic";
 }
 
 function getScriptCategory(slug: string): WorkspaceScript["category"] {

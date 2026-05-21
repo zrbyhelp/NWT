@@ -1040,7 +1040,7 @@ function FormDialog({
   const t = useTranslations("home.settings.ai");
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm">
       <section
         className="flex max-h-[86vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
         onClick={(event) => event.stopPropagation()}

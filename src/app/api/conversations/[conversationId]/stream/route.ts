@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import type { Locale } from "@/i18n/routing";
 import { routing } from "@/i18n/routing";
+import { AiConfigError } from "@/lib/ai/config-types";
 import { authRequiredCode, isAuthRequiredError } from "@/lib/auth-types";
 import { streamConversationMessage } from "@/lib/home-workspace";
 
@@ -32,7 +33,7 @@ export async function POST(
 
         send({ type: "done", conversation });
       } catch (error) {
-        send({ type: "error", message: isAuthRequiredError(error) ? authRequiredCode : "stream-failed" });
+        send({ type: "error", message: resolveStreamErrorCode(error) });
       } finally {
         controller.close();
       }
@@ -46,6 +47,18 @@ export async function POST(
       "X-Accel-Buffering": "no"
     }
   });
+}
+
+function resolveStreamErrorCode(error: unknown) {
+  if (isAuthRequiredError(error)) {
+    return authRequiredCode;
+  }
+
+  if (error instanceof AiConfigError) {
+    return error.code;
+  }
+
+  return "stream-failed";
 }
 
 function resolveLocale(locale: unknown): Locale {

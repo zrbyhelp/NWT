@@ -3,20 +3,13 @@ import "server-only";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { getR2PublicObjectUrl, r2, r2BucketName } from "@/lib/storage/r2";
-
-const maxAvatarBytes = 5 * 1024 * 1024;
-const avatarContentTypes = new Map([
-  ["image/gif", "gif"],
-  ["image/jpeg", "jpg"],
-  ["image/png", "png"],
-  ["image/webp", "webp"]
-]);
+import { avatarContentTypeExtensions, isValidAvatarFile } from "@/lib/storage/avatar-constraints";
 
 export async function uploadUserAvatar(userId: string, file: File) {
   const contentType = file.type.toLowerCase();
-  const extension = avatarContentTypes.get(contentType);
+  const extension = avatarContentTypeExtensions[contentType as keyof typeof avatarContentTypeExtensions];
 
-  if (!extension || file.size <= 0 || file.size > maxAvatarBytes) {
+  if (!extension || !isValidAvatarFile(file)) {
     throw new Error("INVALID_AVATAR_FILE");
   }
 

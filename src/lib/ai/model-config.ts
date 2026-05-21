@@ -16,6 +16,7 @@ import {
 } from "@/lib/ai/config-types";
 import { chooseDefaultModel } from "@/lib/ai/model-config-utils";
 import { normalizeProviderModels } from "@/lib/ai/provider-model-utils";
+import { updateAiObservation, withAiObservation } from "@/lib/observability/langfuse";
 import { prisma } from "@/lib/prisma";
 
 export type DefaultLlmRuntimeConfig = {
@@ -25,6 +26,13 @@ export type DefaultLlmRuntimeConfig = {
   modelId: string;
   temperature: number;
   source: "database" | "environment";
+};
+
+export type DefaultImageRuntimeConfig = {
+  providerName: string;
+  baseUrl: string;
+  apiKey: string;
+  modelId: string;
 };
 
 export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnapshot> {
@@ -179,20 +187,63 @@ export async function fetchProviderModels(userId: string, providerId: string): P
     throw new AiConfigError("The selected provider has no API key.", "missing-provider-secret");
   }
 
-  const response = await fetch(`${provider.baseUrl.replace(/\/+$/, "")}/models`, {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${decryptSecret(provider.encryptedApiKey)}`
+  const apiKey = decryptSecret(provider.encryptedApiKey);
+
+  return withAiObservation(
+    "provider.models.fetch",
+    {
+      feature: "provider.models.fetch",
+      input: {
+        baseUrl: provider.baseUrl,
+        providerId: provider.id
+      },
+      metadata: {
+        providerId: provider.id,
+        providerSlug: provider.slug
+      },
+      providerName: provider.name,
+      userId
     },
-    signal: AbortSignal.timeout(15000)
-  });
+    async (span) => {
+      const response = await fetch(`${provider.baseUrl.replace(/\/+$/, "")}/models`, {
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        signal: AbortSignal.timeout(15000)
+      });
 
-  if (!response.ok) {
-    throw new AiConfigError(`Failed to fetch provider models: ${response.status}`, "provider-model-fetch-failed");
-  }
+      if (!response.ok) {
+        updateAiObservation(span, {
+          level: "ERROR",
+          metadata: {
+            providerId: provider.id,
+            providerSlug: provider.slug,
+            status: response.status
+          },
+          statusMessage: `Failed to fetch provider models: ${response.status}`
+        });
+        throw new AiConfigError(`Failed to fetch provider models: ${response.status}`, "provider-model-fetch-failed");
+      }
 
-  return normalizeProviderModels(await response.json());
+      const models = normalizeProviderModels(await response.json());
+
+      updateAiObservation(span, {
+        metadata: {
+          modelCount: models.length,
+          providerId: provider.id,
+          providerSlug: provider.slug
+        },
+        output: {
+          count: models.length,
+          models: models.map((model) => ({ id: model.id, kind: model.kind, ownedBy: model.ownedBy }))
+        }
+      });
+
+      return models;
+    }
+  );
 }
 
 export async function saveLlmModel(userId: string, input: LlmModelInput) {
@@ -349,7 +400,6 @@ export async function deleteImageModel(userId: string, modelId: string) {
 }
 
 export async function getDefaultLlmRuntimeConfig(userId?: string | null): Promise<DefaultLlmRuntimeConfig> {
-  const { env } = await import("@/env");
   const defaultModel = userId
     ? await prisma.llmModel.findFirst({
         where: {
@@ -363,6 +413,12 @@ export async function getDefaultLlmRuntimeConfig(userId?: string | null): Promis
     : null;
 
   if (!defaultModel) {
+    if (userId) {
+      throw new AiConfigError("No default LLM model is configured for this user.", "missing-default-llm");
+    }
+
+    const { env } = await import("@/env");
+
     if (!env.OPENAI_BASE_URL || !env.OPENAI_API_KEY || !env.OPENAI_MODEL) {
       throw new AiConfigError("No default LLM model is configured.", "missing-default-llm");
     }
@@ -388,6 +444,25 @@ export async function getDefaultLlmRuntimeConfig(userId?: string | null): Promis
     modelId: defaultModel.modelId,
     temperature: defaultModel.temperature,
     source: "database"
+  };
+}
+
+export async function getDefaultImageRuntimeConfig(userId?: string | null): Promise<DefaultImageRuntimeConfig> {
+  const defaultModel = await getDefaultImageModel(userId);
+
+  if (!defaultModel) {
+    throw new AiConfigError("No default image model is configured for this user.", "missing-default-image");
+  }
+
+  if (!defaultModel.provider.encryptedApiKey) {
+    throw new AiConfigError("The default image model provider has no API key.", "missing-provider-secret");
+  }
+
+  return {
+    providerName: defaultModel.provider.name,
+    baseUrl: defaultModel.provider.baseUrl,
+    apiKey: decryptSecret(defaultModel.provider.encryptedApiKey),
+    modelId: defaultModel.modelId
   };
 }
 

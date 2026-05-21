@@ -25,7 +25,20 @@ import {
   saveLlmModel,
   saveVectorModel
 } from "@/lib/ai/model-config";
-import { createConversation, deleteConversation, sendConversationMessage } from "@/lib/home-workspace";
+import {
+  addMaterialToLibrary,
+  assistMaskDraft,
+  createConversation,
+  createMaskMaterial,
+  deleteSelfCreatedMaterial,
+  deleteConversation,
+  generateMaskBoard,
+  sendConversationMessage,
+  setMaterialCommunitySharing,
+  updateMaskMaterial,
+  type MaskMaterialBoardImageMode,
+  type MaskMaterialCreateInput
+} from "@/lib/home-workspace";
 import { uploadUserAvatar } from "@/lib/storage/avatar";
 
 export async function createHomeConversation(scriptId: string, locale: Locale) {
@@ -38,6 +51,56 @@ export async function sendHomeMessage(conversationId: string, content: string, l
 
 export async function deleteHomeConversation(conversationId: string, locale: Locale) {
   return deleteConversation(conversationId, locale);
+}
+
+export async function joinHomeMaterial(materialId: string, locale: Locale) {
+  return addMaterialToLibrary(materialId, locale);
+}
+
+export async function assistHomeMaskDraft(input: MaskMaterialCreateInput, instruction: string, locale: Locale) {
+  return assistMaskDraft(input, instruction, locale);
+}
+
+export async function generateHomeMaskBoard(input: MaskMaterialCreateInput, locale: Locale) {
+  return generateMaskBoard(input, locale);
+}
+
+export async function createHomeMaskMaterial(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("MASK_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as MaskMaterialCreateInput;
+  const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
+
+  return createMaskMaterial(draft, boardImageFile, locale);
+}
+
+export async function updateHomeMaskMaterial(materialId: string, formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+  const boardImageModeValue = formData.get("boardImageMode");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("MASK_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as MaskMaterialCreateInput;
+  const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
+  const boardImageMode = isMaskMaterialBoardImageMode(boardImageModeValue) ? boardImageModeValue : boardImageFile ? "replace" : "keep";
+
+  return updateMaskMaterial(materialId, draft, boardImageFile, boardImageMode, locale);
+}
+
+export async function deleteHomeMaterial(materialId: string, locale: Locale) {
+  return deleteSelfCreatedMaterial(materialId, locale);
+}
+
+export async function setHomeMaterialCommunitySharing(materialId: string, shared: boolean, locale: Locale) {
+  return setMaterialCommunitySharing(materialId, shared, locale);
 }
 
 export async function loginHomeAccount(input: AuthCredentialsInput) {
@@ -133,4 +196,8 @@ export async function saveHomeImageModel(input: ImageModelInput) {
 export async function deleteHomeImageModel(modelId: string) {
   const viewer = await requireAuth();
   return deleteImageModel(viewer.id, modelId);
+}
+
+function isMaskMaterialBoardImageMode(value: FormDataEntryValue | null): value is MaskMaterialBoardImageMode {
+  return value === "keep" || value === "replace" || value === "clear";
 }

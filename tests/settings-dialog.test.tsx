@@ -1,7 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import zhMessages from "../messages/zh-CN.json";
+import { uploadHomeAvatar } from "@/app/[locale]/actions";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { maxAvatarBytes } from "@/lib/storage/avatar-constraints";
 
 const emptyConfig = {
   imageModels: [],
@@ -41,6 +44,13 @@ vi.mock("@/components/theme-provider", () => ({
   })
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn()
+  }
+}));
+
 vi.mock("@/app/[locale]/actions", () => ({
   changeHomePassword: vi.fn(async () => ({ ok: true })),
   logoutHomeAccount: vi.fn(async () => ({ ok: true })),
@@ -66,6 +76,10 @@ vi.mock("@/app/[locale]/actions", () => ({
 }));
 
 describe("SettingsDialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("shows AI provider, LLM, vector, and image model management tabs", async () => {
     render(<SettingsDialog />);
 
@@ -95,6 +109,26 @@ describe("SettingsDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /关于/ }));
     expect(screen.getByText("点亮 Star")).toBeInTheDocument();
+  });
+
+  it("validates avatar files before submitting the upload action", () => {
+    const file = new File(["avatar"], "avatar.png", { type: "image/png" });
+    Object.defineProperty(file, "size", { value: maxAvatarBytes + 1 });
+
+    render(
+      <SettingsDialog
+        viewer={{ account: "reader", avatarUrl: null, displayName: "reader", id: "user-id", role: "USER", showAiThinking: false }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "体验设置" }));
+    fireEvent.click(screen.getByRole("button", { name: /账号/ }));
+    expect(screen.getByText("支持 gif/png/jpg/webp，最大 5MB。")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("上传头像"), { target: { files: [file] } });
+
+    expect(toast.error).toHaveBeenCalledWith("头像文件仅支持 gif/png/jpg/webp，且不能超过 5MB。");
+    expect(uploadHomeAvatar).not.toHaveBeenCalled();
   });
 });
 

@@ -9,7 +9,7 @@ export async function GET(
   const { key } = await params;
   const objectKey = decodeStorageKey(key);
 
-  if (!objectKey?.startsWith("avatars/")) {
+  if (!objectKey || (!objectKey.startsWith("avatars/") && !objectKey.startsWith("materials/"))) {
     return new Response(null, { status: 404 });
   }
 

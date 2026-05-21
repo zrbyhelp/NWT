@@ -34,6 +34,7 @@ import { useAppTheme } from "@/components/theme-provider";
 import { UserAvatar } from "@/components/user-avatar";
 import { routing, type Locale } from "@/i18n/routing";
 import { localePath, switchLocalePath } from "@/lib/locale-path";
+import { isValidAvatarFile } from "@/lib/storage/avatar-constraints";
 import { colorThemes, typographyPresets } from "@/lib/theme-options";
 import type { AuthViewer } from "@/lib/auth-types";
 import { cn } from "@/lib/utils";
@@ -167,6 +168,11 @@ export function SettingsDialog({
       return;
     }
 
+    if (!isValidAvatarFile(file)) {
+      toast.error(t("account.errors.invalidAvatarFile"));
+      return;
+    }
+
     const formData = new FormData();
     formData.append("avatar", file);
 
@@ -253,7 +259,7 @@ export function SettingsDialog({
       </button>
 
       {open ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm">
           <section
             className="flex h-[40rem] max-h-[88vh] w-full max-w-[37.333rem] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
             onClick={(event) => event.stopPropagation()}
@@ -393,6 +399,7 @@ export function SettingsDialog({
                                 />
                               </label>
                             </div>
+                            <p className="px-1 text-xs leading-5 text-foreground/50">{t("account.avatarHint")}</p>
                             <label className="flex min-h-10 items-center justify-between gap-3 px-1 py-1">
                               <span className="flex shrink-0 items-center gap-2 text-sm font-medium text-foreground/82">
                                 <Type className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -553,7 +560,7 @@ export function SettingsDialog({
       ) : null}
 
       {passwordDialogOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm" onClick={() => setPasswordDialogOpen(false)}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm">
           <section
             className="w-full max-w-sm rounded-2xl border border-border bg-background p-5 shadow-2xl"
             onClick={(event) => event.stopPropagation()}

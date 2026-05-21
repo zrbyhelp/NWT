@@ -25,7 +25,9 @@ LLM 模型用于首页聊天回复。字段包括：
 - 启用状态
 - 是否默认
 
-同一账号同一时间只保留一个启用且供应商可用的默认 LLM。若当前账号没有数据库默认 LLM，服务端会回退到 `.env.local` 中的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL`。
+同一账号同一时间只保留一个启用且供应商可用的默认 LLM。首页聊天必须使用当前登录账号自己的默认 LLM；如果当前账号没有可用默认 LLM，系统不会用 `.env.local` 代替，而会提示用户前往右上角“体验设置”配置 LLM 模型。
+
+若默认 LLM 所属供应商缺少 API Key，也会提示前往“AI 供应商”页补全配置。`.env.local` 中的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL` 只作为没有用户上下文的内部兜底配置。
 
 ## 向量模型
 
@@ -68,6 +70,8 @@ LLM 模型用于首页聊天回复。字段包括：
 - 图片模型：常见图片模型，如 `gpt-image`、`dall-e`、`flux`、`stable-diffusion`。
 
 如果供应商不支持 `/models` 或列表不完整，仍可手动输入模型 ID。
+
+拉取模型列表也属于外部 AI 供应商访问，服务端会写入 Langfuse span，记录供应商、Base URL、状态和模型数量。非测试环境必须先配置主应用的 `LANGFUSE_PUBLIC_KEY` 与 `LANGFUSE_SECRET_KEY`。
 
 ## 默认项规则
 

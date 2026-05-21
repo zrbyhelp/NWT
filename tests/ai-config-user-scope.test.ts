@@ -46,6 +46,9 @@ describe("user-scoped AI configuration", () => {
     mocks.prisma.llmModel.updateMany.mockResolvedValue({});
     mocks.prisma.imageModel.updateMany.mockResolvedValue({});
     mocks.prisma.vectorModel.updateMany.mockResolvedValue({});
+    delete process.env.OPENAI_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_MODEL;
   });
 
   it("reads only providers and models owned by the current user", async () => {
@@ -121,6 +124,19 @@ describe("user-scoped AI configuration", () => {
       apiKey: "decrypted-secret",
       modelId: "story-model",
       source: "database"
+    });
+  });
+
+  it("requires a user-scoped default LLM even when environment fallback exists", async () => {
+    process.env.OPENAI_BASE_URL = "https://api.example.com/v1";
+    process.env.OPENAI_API_KEY = "sk-env";
+    process.env.OPENAI_MODEL = "env-model";
+    mocks.prisma.llmModel.findFirst.mockResolvedValue(null);
+
+    const { getDefaultLlmRuntimeConfig } = await import("@/lib/ai/model-config");
+
+    await expect(getDefaultLlmRuntimeConfig("user-a")).rejects.toMatchObject({
+      code: "missing-default-llm"
     });
   });
 });

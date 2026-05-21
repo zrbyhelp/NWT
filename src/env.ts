@@ -23,6 +23,7 @@ export const env = createEnv({
     ADMIN_PASSWORD: z.string().min(6).optional(),
     LANGFUSE_PUBLIC_KEY: z.string().min(1).optional(),
     LANGFUSE_SECRET_KEY: z.string().min(1).optional(),
+    LANGFUSE_BASE_URL: z.string().url().optional(),
     LANGFUSE_BASEURL: z.string().url().optional()
   },
   client: {},
@@ -47,6 +48,7 @@ export const env = createEnv({
     ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
     LANGFUSE_PUBLIC_KEY: process.env.LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY: process.env.LANGFUSE_SECRET_KEY,
+    LANGFUSE_BASE_URL: process.env.LANGFUSE_BASE_URL,
     LANGFUSE_BASEURL: process.env.LANGFUSE_BASEURL
   }
 });

@@ -6,13 +6,13 @@
 
 - `DATABASE_URL`：MySQL 连接地址。
 - `REDIS_URL`：BullMQ 使用的 Redis 连接地址。
-- `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL`：OpenAI-compatible 兼容回退配置。当数据库中没有启用的默认 LLM 模型时使用。
+- `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL`：OpenAI-compatible 兼容回退配置，仅用于没有用户上下文的内部调用。首页登录用户聊天必须配置当前账号自己的默认 LLM。
 - `AI_CONFIG_ENCRYPTION_KEY`：AI 供应商 API Key 的加密密钥。保存或读取设置弹窗中的供应商密钥时必须配置，建议使用足够长的随机字符串。
 - `ADMIN_ACCOUNT`、`ADMIN_PASSWORD`：后台管理员账号和密码。配置后系统会自动确保该账号为管理员；未配置时普通注册和登录仍可使用，但没有可进入后台的管理员账号。
 - `QDRANT_URL`：Qdrant 地址。
 - `NEO4J_URI`、`NEO4J_USERNAME`、`NEO4J_PASSWORD`：Neo4j 配置。
 - `R2_ACCOUNT_ID`、`R2_ENDPOINT`、`R2_PUBLIC_BASE_URL`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET_NAME`：Cloudflare R2 配置。`R2_ENDPOINT` 可省略，省略时会由 `R2_ACCOUNT_ID` 自动拼接默认 R2 endpoint；`R2_PUBLIC_BASE_URL` 可选，用于头像上传后的公开访问地址。未配置时，应用会使用 `/api/storage/r2/[key]` 代理读取 R2 私有对象。
-- `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASEURL`：Langfuse 观测配置。
+- `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL`：Langfuse 观测配置。旧变量名 `LANGFUSE_BASEURL` 仍作为兼容别名保留。
 
 ## Langfuse 本地配置
 
@@ -23,7 +23,18 @@ Langfuse Docker 使用 `.env.langfuse.local`，模板为 `.env.langfuse.example`
 - `LANGFUSE_MINIO_ROOT_USER`、`LANGFUSE_MINIO_ROOT_PASSWORD`、`LANGFUSE_S3_BUCKET`：Langfuse 本地对象存储配置。
 - `LANGFUSE_INIT_*`：初始化组织、项目、用户和项目 API key。
 
-主应用本地 `.env.local` 中的 `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY` 应与 `.env.langfuse.local` 中的初始化项目 key 保持一致。
+主应用本地 `.env.local` 中的 `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY` 应与 `.env.langfuse.local` 中的 `LANGFUSE_INIT_PROJECT_PUBLIC_KEY`、`LANGFUSE_INIT_PROJECT_SECRET_KEY` 保持一致，并配置 `LANGFUSE_BASE_URL="http://localhost:3001"`。非测试环境中，聊天、假面 AI 辅助、图片生成和供应商 `/models` 拉取都会要求 Langfuse key 已配置，避免真实 AI 调用脱离观测。
+
+## Langfuse AI 观测
+
+服务端通过 `src/instrumentation.ts` 注册 Langfuse OpenTelemetry span processor。OpenAI-compatible 文本调用使用 `@langfuse/openai` 包装，LangChain/LangGraph 工作流使用 `@langfuse/langchain` callback，图片生成和供应商模型列表拉取使用统一业务 span 手动记录。
+
+当前记录范围：
+
+- 聊天流式与非流式回复：完整 prompts、回复文本、模型、供应商、token、用户和会话 ID。
+- 假面 AI 辅助：完整结构化输入与输出。
+- 图片生成：记录 prompt、模型、尺寸、状态和输出文件元数据，不记录 base64 图片正文。
+- 供应商 `/models` 拉取：记录供应商、Base URL、状态和返回模型数量。
 
 ## AI 模型配置
 
@@ -42,4 +53,4 @@ API Key 不会在前端明文展示，编辑供应商时只能重填或清空。
 
 ## 登录与权限
 
-首页、剧本浏览和社区剧本浏览不要求登录。创建会话、发送消息、删除会话、管理 AI 设置、上传头像、修改密码和访问“我的剧本”需要普通账号登录；访问 `/zh-CN/admin` 与 `/en-US/admin` 需要管理员角色。第一版开放账号密码注册，不做邮箱验证、验证码或邀请码。
+首页、剧本浏览、社区剧本浏览和社区素材浏览不要求登录。创建会话、发送消息、删除会话、加入社区素材、管理 AI 设置、上传头像、修改密码和访问“我的剧本”需要普通账号登录；访问 `/zh-CN/admin` 与 `/en-US/admin` 需要管理员角色。第一版开放账号密码注册，不做邮箱验证、验证码或邀请码。
