@@ -4,7 +4,13 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import type { StoryMaterialStyle as PrismaStoryMaterialStyle } from "@prisma/client";
 import type { Locale } from "@/i18n/routing";
-import { generateDefaultMaskBoardImage } from "@/lib/ai/image-runtime";
+import {
+  generateDefaultMaskBoardImage,
+  generateDefaultScenePanorama,
+  scenePanoramaFaces,
+  type ScenePanoramaFace,
+  type ScenePanoramaGenerationResult
+} from "@/lib/ai/image-runtime";
 import { generateDefaultLlmReply, streamDefaultLlmReply, type RuntimeChatMessage, type RuntimeTokenUsage } from "@/lib/ai/runtime";
 import { ensureConfiguredAdminUser, getCurrentViewer, requireAuth } from "@/lib/auth";
 import type { AuthViewer } from "@/lib/auth-types";
@@ -15,7 +21,7 @@ import {
   summarizeConversationTokenUsage
 } from "@/lib/home-workspace-utils";
 import { prisma } from "@/lib/prisma";
-import { uploadMaskBoardImage } from "@/lib/storage/material";
+import { deleteMaterialImagesByUrls, uploadMaskBoardImage, uploadScenePanoramaFaceImage } from "@/lib/storage/material";
 
 const baseScriptSlug = "base-ai-script";
 const defaultUserId = "default-local";
@@ -254,7 +260,7 @@ export type WorkspaceScript = {
 
 export type WorkspaceScriptLibrarySource = "SELF_CREATED" | "COMMUNITY_ADDED";
 
-export type WorkspaceMaterialCategory = "mask" | "map" | "item" | "creature";
+export type WorkspaceMaterialCategory = "mask" | "map" | "item" | "creature" | "scene";
 
 export type WorkspaceMaterialStyle =
   | "realistic"
@@ -284,6 +290,7 @@ export type WorkspaceMaterial = {
 export type MaskDraftPatch = {
   name?: string;
   intro?: string;
+  features?: string;
   style?: WorkspaceMaterialStyle;
   body?: Partial<Record<WorkspaceMaskBodyFieldId, string>>;
   colors?: Partial<Record<WorkspaceMaskColorFieldId, string>>;
@@ -305,6 +312,7 @@ export type MaskBoardGenerationResult = {
 export type MaskMaterialCreateInput = {
   name: string;
   intro: string;
+  features: string;
   style: WorkspaceMaterialStyle;
   body: Record<WorkspaceMaskBodyFieldId, string>;
   colors: Record<WorkspaceMaskColorFieldId, string>;
@@ -314,7 +322,60 @@ export type MaskMaterialCreateInput = {
   boardImageSource?: "uploaded" | "generated" | null;
 };
 
-type WorkspaceMaskBoardDrawingStyle = "realistic" | "anime" | "painterly" | "cel" | "guofeng" | "comic" | "concept";
+export type SceneMaterialCreateInput = {
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  panoramaDrawingStyle?: WorkspaceScenePanoramaDrawingStyle;
+  blocks: SceneMaterialBlockInput[];
+};
+
+export type SceneMaterialBlockInput = {
+  id: string;
+  name: string;
+  description: string;
+  panorama: SceneMaterialPanoramaInput | null;
+};
+
+export type SceneMaterialPanoramaInput = {
+  faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
+  faces: Record<ScenePanoramaFace, string>;
+};
+
+export type SceneDraftPatch = {
+  name?: string;
+  description?: string;
+  style?: WorkspaceMaterialStyle;
+  addBlocks?: Array<{
+    id?: string;
+    name: string;
+    description: string;
+  }>;
+  updateBlocks?: Array<{
+    id: string;
+    name?: string;
+    description?: string;
+  }>;
+  removeBlockIds?: string[];
+};
+
+export type SceneAiAssistResult = {
+  message: string;
+  patch: SceneDraftPatch;
+};
+
+export type ScenePanoramaGenerationState = ScenePanoramaGenerationResult;
+
+type WorkspaceMaskBoardDrawingStyle =
+  | "photo"
+  | "realistic"
+  | "anime"
+  | "painterly"
+  | "cel"
+  | "guofeng"
+  | "comic"
+  | "concept";
+type WorkspaceScenePanoramaDrawingStyle = WorkspaceMaskBoardDrawingStyle;
 
 type WorkspaceMaskBodyFieldId =
   | "hairStyle"
@@ -367,6 +428,7 @@ export type WorkspaceMaskMaterialMetadata = {
   version: 1;
   name: string;
   intro: string;
+  features: string;
   style: WorkspaceMaterialStyle;
   body: Record<WorkspaceMaskBodyFieldId, string>;
   colors: Record<WorkspaceMaskColorFieldId, string>;
@@ -379,7 +441,25 @@ export type WorkspaceMaskMaterialMetadata = {
   } | null;
 };
 
-export type WorkspaceMaterialMetadata = WorkspaceMaskMaterialMetadata | Record<string, unknown>;
+export type WorkspaceSceneMaterialMetadata = {
+  kind: "scene";
+  version: 1;
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  panoramaDrawingStyle: WorkspaceScenePanoramaDrawingStyle;
+  blocks: Array<{
+    id: string;
+    name: string;
+    description: string;
+    panorama: {
+      faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
+      faces: Record<ScenePanoramaFace, { url: string }>;
+    } | null;
+  }>;
+};
+
+export type WorkspaceMaterialMetadata = WorkspaceMaskMaterialMetadata | WorkspaceSceneMaterialMetadata | Record<string, unknown>;
 
 export type MaskMaterialBoardImageMode = "keep" | "replace" | "clear";
 
@@ -721,7 +801,7 @@ export async function createMaskMaterial(input: MaskMaterialCreateInput, boardIm
   const previewUrl = boardImageFile && boardImageFile.size > 0 ? await uploadMaskBoardImage(viewer.id, boardImageFile) : null;
   const material = await prisma.storyMaterial.create({
     data: {
-      slug: createUserMaterialSlug(name),
+      slug: createUserMaterialSlug("mask", name),
       category: "MASK",
       style: toStoryMaterialStyle(input.style),
       titleZh: name,
@@ -821,6 +901,192 @@ export async function updateMaskMaterial(
     inLibrary: true,
     librarySource: "SELF_CREATED"
   });
+}
+
+export async function createSceneMaterial(input: SceneMaterialCreateInput, uploadedFaceUrls: string[], locale: Locale) {
+  const viewer = await requireAuth();
+
+  try {
+    const name = input.name.trim();
+    const description = input.description.trim();
+
+    if (!name) {
+      throw new Error("SCENE_NAME_REQUIRED");
+    }
+
+    if (!description) {
+      throw new Error("SCENE_DESCRIPTION_REQUIRED");
+    }
+
+    validateSceneDraftBlocks(input.blocks);
+    await ensureHomeWorkspaceDefaults(viewer.id);
+
+    const material = await prisma.storyMaterial.create({
+      data: {
+        slug: createUserMaterialSlug("scene", name),
+        category: "SCENE",
+        style: toStoryMaterialStyle(input.style),
+        titleZh: name,
+        titleEn: name,
+        descriptionZh: description,
+        descriptionEn: description,
+        previewUrl: getScenePreviewUrl(input.blocks),
+        metadata: buildSceneMaterialMetadata(input),
+        communityVisible: false,
+        libraryEntries: {
+          create: {
+            userId: viewer.id,
+            source: "SELF_CREATED"
+          }
+        }
+      }
+    });
+
+    revalidatePath(`/${locale}`);
+
+    return mapMaterial(material, locale, {
+      inLibrary: true,
+      librarySource: "SELF_CREATED"
+    });
+  } catch (error) {
+    await deleteMaterialImagesByUrls(uploadedFaceUrls);
+    throw error;
+  }
+}
+
+export async function updateSceneMaterial(
+  materialId: string,
+  input: SceneMaterialCreateInput,
+  uploadedFaceUrls: string[],
+  locale: Locale
+) {
+  const viewer = await requireAuth();
+
+  try {
+    const name = input.name.trim();
+    const description = input.description.trim();
+
+    if (!name) {
+      throw new Error("SCENE_NAME_REQUIRED");
+    }
+
+    if (!description) {
+      throw new Error("SCENE_DESCRIPTION_REQUIRED");
+    }
+
+    validateSceneDraftBlocks(input.blocks);
+
+    const entry = await prisma.storyMaterialLibraryEntry.findFirst({
+      where: {
+        userId: viewer.id,
+        materialId,
+        source: "SELF_CREATED"
+      },
+      include: {
+        material: true
+      }
+    });
+
+    if (!entry || normalizeMaterialCategory(entry.material.category) !== "scene") {
+      throw new Error("MATERIAL_NOT_EDITABLE");
+    }
+
+    const material = await prisma.storyMaterial.update({
+      where: {
+        id: entry.material.id
+      },
+      data: {
+        category: "SCENE",
+        style: toStoryMaterialStyle(input.style),
+        titleZh: name,
+        titleEn: name,
+        descriptionZh: description,
+        descriptionEn: description,
+        previewUrl: getScenePreviewUrl(input.blocks),
+        metadata: buildSceneMaterialMetadata(input)
+      }
+    });
+
+    revalidatePath(`/${locale}`);
+
+    return mapMaterial(material, locale, {
+      inLibrary: true,
+      librarySource: "SELF_CREATED"
+    });
+  } catch (error) {
+    await deleteMaterialImagesByUrls(uploadedFaceUrls);
+    throw error;
+  }
+}
+
+export async function assistSceneDraft(input: SceneMaterialCreateInput, instruction: string, locale: Locale): Promise<SceneAiAssistResult> {
+  const viewer = await requireAuth();
+  const normalizedInstruction = instruction.trim();
+
+  if (!normalizedInstruction) {
+    throw new Error("SCENE_ASSIST_EMPTY_INSTRUCTION");
+  }
+
+  const reply = await generateDefaultLlmReply(
+    buildSceneAssistMessages(input, normalizedInstruction, locale),
+    viewer.id,
+    false,
+    locale,
+    {
+      feature: "scene.assist",
+      input: {
+        currentDraft: input,
+        instruction: normalizedInstruction
+      }
+    }
+  );
+  const parsed = parseJsonObject(reply.content);
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : reply.content.trim();
+
+  return {
+    message,
+    patch: sanitizeSceneDraftPatch(record.patch)
+  };
+}
+
+export async function generateSceneBlockPanorama(input: SceneMaterialCreateInput, blockId: string, locale: Locale): Promise<ScenePanoramaGenerationState> {
+  const viewer = await requireAuth();
+  const block = input.blocks.find((item) => item.id === blockId);
+
+  if (!input.name.trim() || !input.description.trim()) {
+    throw new Error("SCENE_DESCRIPTION_REQUIRED");
+  }
+
+  if (!block) {
+    throw new Error("SCENE_BLOCK_NOT_FOUND");
+  }
+
+  if (!block.name.trim() || !block.description.trim()) {
+    throw new Error("SCENE_BLOCK_DESCRIPTION_REQUIRED");
+  }
+
+  return generateDefaultScenePanorama(
+    {
+      sceneName: input.name.trim(),
+      sceneDescription: input.description.trim(),
+      blockName: block.name.trim(),
+      blockDescription: block.description.trim(),
+      panoramaDrawingStyle: normalizeScenePanoramaDrawingStyle(input.panoramaDrawingStyle),
+      style: input.style,
+      locale
+    },
+    viewer.id,
+    {
+      feature: "scene.block.panorama.generate",
+      input: {
+        currentDraft: input,
+        blockId,
+        locale
+      },
+      locale
+    }
+  );
 }
 
 export async function deleteSelfCreatedMaterial(materialId: string, locale: Locale) {
@@ -1119,12 +1385,14 @@ function buildMaskMaterialMetadata(
 ): WorkspaceMaskMaterialMetadata {
   const name = input.name.trim();
   const intro = input.intro.trim();
+  const features = (input.features ?? "").trim();
 
   return {
     kind: "mask",
     version: 1,
     name,
     intro,
+    features,
     style: input.style,
     body: input.body,
     colors: input.colors,
@@ -1138,6 +1406,82 @@ function buildMaskMaterialMetadata(
         }
       : null
   };
+}
+
+function buildSceneMaterialMetadata(input: SceneMaterialCreateInput): WorkspaceSceneMaterialMetadata {
+  return {
+    kind: "scene",
+    version: 1,
+    name: input.name.trim(),
+    description: input.description.trim(),
+    style: input.style,
+    panoramaDrawingStyle: normalizeScenePanoramaDrawingStyle(input.panoramaDrawingStyle),
+    blocks: input.blocks.map((block) => ({
+      id: normalizeSceneBlockId(block.id),
+      name: block.name.trim(),
+      description: block.description.trim(),
+      panorama: block.panorama
+        ? {
+            faceSource: block.panorama.faceSource,
+            faces: scenePanoramaFaces.reduce<Record<ScenePanoramaFace, { url: string }>>((faces, face) => {
+              const url = block.panorama?.faces[face]?.trim() ?? "";
+
+              if (!url) {
+                throw new Error(`SCENE_PANORAMA_FACE_REQUIRED_${face}`);
+              }
+
+              faces[face] = { url };
+
+              return faces;
+            }, {} as Record<ScenePanoramaFace, { url: string }>)
+          }
+        : null
+    }))
+  };
+}
+
+function validateSceneDraftBlocks(blocks: SceneMaterialBlockInput[]) {
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    throw new Error("SCENE_BLOCK_REQUIRED");
+  }
+
+  blocks.forEach((block) => {
+    if (!block.name.trim()) {
+      throw new Error("SCENE_BLOCK_NAME_REQUIRED");
+    }
+
+    if (!block.description.trim()) {
+      throw new Error("SCENE_BLOCK_DESCRIPTION_REQUIRED");
+    }
+
+    if (block.panorama) {
+      scenePanoramaFaces.forEach((face) => {
+        if (!block.panorama?.faces[face]?.trim()) {
+          throw new Error(`SCENE_PANORAMA_FACE_REQUIRED_${face}`);
+        }
+      });
+    }
+  });
+}
+
+function getScenePreviewUrl(blocks: SceneMaterialBlockInput[]) {
+  for (const block of blocks) {
+    const front = block.panorama?.faces.front?.trim();
+
+    if (front) {
+      return front;
+    }
+  }
+
+  return null;
+}
+
+export async function uploadScenePanoramaFace(userId: string, file: File) {
+  return uploadScenePanoramaFaceImage(userId, file);
+}
+
+export async function cleanupUploadedMaterialImages(urls: string[]) {
+  await deleteMaterialImagesByUrls(urls);
 }
 
 function getExistingMaskBoardImageSource(metadata: unknown): WorkspaceMaskBoardImageSource | null {
@@ -1156,14 +1500,24 @@ function getExistingMaskBoardImageSource(metadata: unknown): WorkspaceMaskBoardI
   return source === "generated" || source === "uploaded" ? source : null;
 }
 
-function createUserMaterialSlug(name: string) {
+function createUserMaterialSlug(category: WorkspaceMaterialCategory, name: string) {
   const normalized = name
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 36);
 
-  return `mask-${normalized || "custom"}-${randomUUID().slice(0, 8)}`;
+  return `${category}-${normalized || "custom"}-${randomUUID().slice(0, 8)}`;
+}
+
+function normalizeSceneBlockId(id: string) {
+  const normalized = id
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+
+  return normalized || `scene-block-${randomUUID().slice(0, 8)}`;
 }
 
 function toStoryMaterialStyle(style: WorkspaceMaterialStyle): PrismaStoryMaterialStyle {
@@ -1181,11 +1535,15 @@ function toStoryMaterialStyle(style: WorkspaceMaterialStyle): PrismaStoryMateria
 }
 
 function normalizeMaskBoardDrawingStyle(style?: string | null): WorkspaceMaskBoardDrawingStyle {
-  if (["anime", "painterly", "cel", "guofeng", "comic", "concept"].includes(style ?? "")) {
+  if (["photo", "anime", "painterly", "cel", "guofeng", "comic", "concept"].includes(style ?? "")) {
     return style as WorkspaceMaskBoardDrawingStyle;
   }
 
   return "realistic";
+}
+
+function normalizeScenePanoramaDrawingStyle(style?: string | null): WorkspaceScenePanoramaDrawingStyle {
+  return normalizeMaskBoardDrawingStyle(style);
 }
 
 function getMaskBoardDrawingStylePrompt(style: WorkspaceMaskBoardDrawingStyle, locale: Locale) {
@@ -1196,6 +1554,7 @@ function getMaskBoardDrawingStylePrompt(style: WorkspaceMaskBoardDrawingStyle, l
     concept: "概念设定稿，设计感强，适合角色设定板",
     guofeng: "国风插画，东方审美，服饰与气质细节克制精致",
     painterly: "厚涂插画，笔触丰富，光影和材质表现更强",
+    photo: "真人拍摄质感，真实摄影光线，自然镜头感与可信皮肤细节",
     realistic: "写实角色设计，比例自然，质感可信"
   };
   const en: Record<WorkspaceMaskBoardDrawingStyle, string> = {
@@ -1205,6 +1564,7 @@ function getMaskBoardDrawingStylePrompt(style: WorkspaceMaskBoardDrawingStyle, l
     concept: "concept art character sheet, design-forward and production-ready",
     guofeng: "Chinese-inspired illustration, refined eastern aesthetics and restrained costume details",
     painterly: "painterly illustration, rich brushwork, stronger lighting and material rendering",
+    photo: "live-action photographic look, natural camera lighting, realistic skin detail and lens feel",
     realistic: "realistic character design, natural proportions, believable texture"
   };
 
@@ -1223,9 +1583,40 @@ function buildMaskAssistMessages(input: MaskMaterialCreateInput, instruction: st
         "A facade only includes outward presentation: appearance, personality expression, speech style, voice traits, and habits.",
         "Never create backstory, life history, origin, family history, plot events, or world relationships.",
         "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
-        "Patch may only include: name, intro, style, body, colors, voice, personality.",
+        "Patch may only include: name, intro, features, style, body, colors, voice, personality.",
+        "features is a multiline outward-trait note, such as signature gestures, recurring expressions, speech habits, and visual motifs.",
         "style must be one of realistic, fantasy, sciFi, mystery, cyberpunk, classical, apocalyptic.",
         "voice and personality values must be numbers from 0 to 100, except speechSpeed from 80 to 220.",
+        languageRule
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        currentDraft: input,
+        instruction
+      })
+    }
+  ];
+}
+
+function buildSceneAssistMessages(input: SceneMaterialCreateInput, instruction: string, locale: Locale): RuntimeChatMessage[] {
+  const isEnglish = locale === "en-US";
+  const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are an assistant for editing a scene material in New World Novel.",
+        "A scene material describes an interactive fiction place and its sub-areas.",
+        "Scene description and every block description must be non-empty.",
+        "You may update scene name, scene description, style, block names, block descriptions, add blocks, or remove blocks.",
+        "Never modify panorama image data or URLs.",
+        "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
+        "Patch may include name, description, style, addBlocks, updateBlocks, removeBlockIds.",
+        "style must be one of realistic, fantasy, sciFi, mystery, cyberpunk, classical, apocalyptic.",
+        "addBlocks is an array of {name, description}. updateBlocks is an array of {id, name?, description?}. removeBlockIds is an array of existing block ids.",
         languageRule
       ].join("\n")
     },
@@ -1257,6 +1648,7 @@ function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
       "Do not depict backstory scenes, family history, plot events, or world relationships.",
       `Name: ${input.name || "Untitled facade"}.`,
       `Introduction: ${input.intro || "No introduction yet"}.`,
+      `Traits: ${input.features || "unspecified"}.`,
       `Drawing style: ${drawingStyle}.`,
       `Body details: ${body || "unspecified"}.`,
       `Colors: ${colors}.`,
@@ -1270,6 +1662,7 @@ function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
     "不要画人物背景故事、身世经历、剧情事件、家族关系或世界关系。",
     `名称：${input.name || "未命名假面"}。`,
     `介绍：${input.intro || "暂无介绍"}。`,
+    `特征：${input.features || "未指定"}。`,
     `绘制风格：${drawingStyle}。`,
     `身体信息：${body || "未指定"}。`,
     `颜色：${colors}。`,
@@ -1304,6 +1697,10 @@ function sanitizeMaskDraftPatch(value: unknown): MaskDraftPatch {
     patch.intro = record.intro.slice(0, 1200);
   }
 
+  if (typeof record.features === "string") {
+    patch.features = record.features.slice(0, 2000);
+  }
+
   if (typeof record.style === "string" && isWorkspaceMaterialStyle(record.style)) {
     patch.style = record.style;
   }
@@ -1312,6 +1709,60 @@ function sanitizeMaskDraftPatch(value: unknown): MaskDraftPatch {
   patch.colors = pickColorRecord(record.colors, maskColorFieldIds);
   patch.voice = pickNumberRecord(record.voice, maskVoiceFieldIds, { speechSpeed: [80, 220] });
   patch.personality = pickNumberRecord(record.personality, maskPersonalityFieldIds);
+
+  return patch;
+}
+
+function sanitizeSceneDraftPatch(value: unknown): SceneDraftPatch {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const patch: SceneDraftPatch = {};
+
+  if (typeof record.name === "string") {
+    patch.name = record.name.slice(0, 120);
+  }
+
+  if (typeof record.description === "string") {
+    patch.description = record.description.slice(0, 2000);
+  }
+
+  if (typeof record.style === "string" && isWorkspaceMaterialStyle(record.style)) {
+    patch.style = record.style;
+  }
+
+  if (Array.isArray(record.addBlocks)) {
+    patch.addBlocks = record.addBlocks
+      .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object")
+      .map((block) => ({
+        ...(typeof block.id === "string" ? { id: normalizeSceneBlockId(block.id) } : {}),
+        description: typeof block.description === "string" ? block.description.slice(0, 2000) : "",
+        name: typeof block.name === "string" ? block.name.slice(0, 120) : ""
+      }))
+      .filter((block) => block.name.trim() && block.description.trim())
+      .slice(0, 8);
+  }
+
+  if (Array.isArray(record.updateBlocks)) {
+    patch.updateBlocks = record.updateBlocks
+      .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object")
+      .map((block) => ({
+        id: typeof block.id === "string" ? normalizeSceneBlockId(block.id) : "",
+        ...(typeof block.name === "string" ? { name: block.name.slice(0, 120) } : {}),
+        ...(typeof block.description === "string" ? { description: block.description.slice(0, 2000) } : {})
+      }))
+      .filter((block) => block.id)
+      .slice(0, 16);
+  }
+
+  if (Array.isArray(record.removeBlockIds)) {
+    patch.removeBlockIds = record.removeBlockIds
+      .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+      .map(normalizeSceneBlockId)
+      .slice(0, 16);
+  }
 
   return patch;
 }
@@ -1491,6 +1942,10 @@ function normalizeMaterialCategory(category: string): WorkspaceMaterialCategory 
 
   if (category === "CREATURE") {
     return "creature";
+  }
+
+  if (category === "SCENE") {
+    return "scene";
   }
 
   return "item";

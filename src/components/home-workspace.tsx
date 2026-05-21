@@ -8,7 +8,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clapperboard,
   ClipboardList,
+  Download,
   Ghost,
   Globe2,
   FileText,
@@ -18,6 +20,7 @@ import {
   MessageSquarePlus,
   MessagesSquare,
   Maximize2,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PackageOpen,
@@ -28,6 +31,7 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Upload,
   VenetianMask,
   X
 } from "lucide-react";
@@ -37,14 +41,20 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   assistHomeMaskDraft,
+  assistHomeSceneDraft,
+  cleanupHomeUploadedMaterialImages,
   createHomeConversation,
   createHomeMaskMaterial,
+  createHomeSceneMaterial,
   deleteHomeMaterial,
   deleteHomeConversation,
   generateHomeMaskBoard,
+  generateHomeSceneBlockPanorama,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
-  updateHomeMaskMaterial
+  updateHomeMaskMaterial,
+  updateHomeSceneMaterial,
+  uploadHomeScenePanoramaFace
 } from "@/app/[locale]/actions";
 import { AuthDialog } from "@/components/auth-dialog";
 import { HeaderActions } from "@/components/header-actions";
@@ -58,6 +68,9 @@ import type {
   WorkspaceMaterial,
   WorkspaceMaterialCategory,
   WorkspaceMaterialMetadata,
+  SceneDraftPatch,
+  SceneMaterialCreateInput,
+  WorkspaceSceneMaterialMetadata,
   WorkspaceMaterialStyle,
   WorkspaceScript
 } from "@/lib/home-workspace";
@@ -78,12 +91,15 @@ type MessageStreamEvent =
   | { type: "error"; message: string };
 const scriptCategories = ["featured", "world", "roleplay", "writing", "analysis"] as const;
 const materialStyles = ["realistic", "fantasy", "sciFi", "mystery", "cyberpunk", "classical", "apocalyptic"] as const;
-const materialTypes = ["mask", "map", "item", "creature"] as const;
+const materialTypes = ["mask", "map", "item", "creature", "scene"] as const;
+const scenePanoramaFaces = ["front", "back", "left", "right", "top", "bottom"] as const;
+const scenePanoramaThreeFaceOrder = ["right", "left", "top", "bottom", "front", "back"] as const;
 const materialIcons = {
   mask: VenetianMask,
   map: MapPinned,
   item: PackageOpen,
-  creature: Ghost
+  creature: Ghost,
+  scene: Clapperboard
 } as const;
 const scriptPickerPageSize = 6;
 const maskBodyFields = [
@@ -122,15 +138,17 @@ const maskPersonalityGroups = [
   { id: "relationship", fields: ["proactiveCare", "boundaries", "loyalty"] },
   { id: "behavior", fields: ["action", "curiosity", "performative"] }
 ] as const;
-const maskBoardDrawingStyles = ["realistic", "anime", "painterly", "cel", "guofeng", "comic", "concept"] as const;
+const maskBoardDrawingStyles = ["photo", "realistic", "anime", "painterly", "cel", "guofeng", "comic", "concept"] as const;
 type MaskBodyFieldId = (typeof maskBodyFields)[number]["id"];
 type MaskColorFieldId = (typeof maskColorFields)[number]["id"];
 type MaskVoiceFieldId = (typeof maskVoiceFields)[number]["id"];
 type MaskPersonalityFieldId = (typeof maskPersonalityGroups)[number]["fields"][number];
 type MaskBoardDrawingStyle = (typeof maskBoardDrawingStyles)[number];
+type ScenePanoramaDrawingStyle = MaskBoardDrawingStyle;
 type MaskCreateDraft = {
   name: string;
   intro: string;
+  features: string;
   style: WorkspaceMaterialStyle;
   body: Record<MaskBodyFieldId, string>;
   colors: Record<MaskColorFieldId, string>;
@@ -151,14 +169,46 @@ type MaskAiMessage = {
 type MaskDraftPatch = {
   name?: string;
   intro?: string;
+  features?: string;
   style?: WorkspaceMaterialStyle;
   body?: Partial<Record<MaskBodyFieldId, string>>;
   colors?: Partial<Record<MaskColorFieldId, string>>;
   voice?: Partial<Record<MaskVoiceFieldId, number>>;
   personality?: Partial<Record<MaskPersonalityFieldId, number>>;
 };
+type ScenePanoramaFace = (typeof scenePanoramaFaces)[number];
+type ScenePanoramaFaceDraft = {
+  file: File | null;
+  previewUrl: string;
+  source: "uploaded" | "generated" | "existing" | "direct-cut" | "reference-repaint";
+  storedUrl: string | null;
+};
+type ScenePanoramaDraft = {
+  faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
+  faces: Partial<Record<ScenePanoramaFace, ScenePanoramaFaceDraft>>;
+};
+type SceneBlockDraft = {
+  id: string;
+  name: string;
+  description: string;
+  panorama: ScenePanoramaDraft | null;
+};
+type SceneCreateDraft = {
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  panoramaDrawingStyle: ScenePanoramaDrawingStyle;
+  blocks: SceneBlockDraft[];
+};
+type SceneAiMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
 const maskBoardAcceptedTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxMaskBoardImageBytes = 10 * 1024 * 1024;
+const scenePanoramaAcceptedTypes = maskBoardAcceptedTypes;
+const maxScenePanoramaFaceBytes = 10 * 1024 * 1024;
 
 export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const locale = useLocale() as Locale;
@@ -197,11 +247,22 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [maskAiPending, setMaskAiPending] = useState(false);
   const [maskBoardPending, setMaskBoardPending] = useState(false);
   const [maskSavePending, setMaskSavePending] = useState(false);
+  const [sceneCreateOpen, setSceneCreateOpen] = useState(false);
+  const [sceneEditingMaterialId, setSceneEditingMaterialId] = useState("");
+  const [sceneCreateDraft, setSceneCreateDraft] = useState<SceneCreateDraft>(() => createDefaultSceneDraft());
+  const [sceneActiveBlockId, setSceneActiveBlockId] = useState("");
+  const [sceneAiInput, setSceneAiInput] = useState("");
+  const [sceneAiMessages, setSceneAiMessages] = useState<SceneAiMessage[]>([]);
+  const [sceneAiPending, setSceneAiPending] = useState(false);
+  const [scenePanoramaPendingBlockId, setScenePanoramaPendingBlockId] = useState("");
+  const [sceneSavePending, setSceneSavePending] = useState(false);
+  const [materialTransferPending, setMaterialTransferPending] = useState(false);
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleMenuRef = useRef<HTMLDivElement>(null);
   const materialCreateMenuRef = useRef<HTMLDivElement>(null);
+  const materialImportInputRef = useRef<HTMLInputElement>(null);
   const scriptScrollRef = useRef<HTMLDivElement>(null);
   const scriptSectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const materialScrollRef = useRef<HTMLDivElement>(null);
@@ -280,7 +341,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const isCommunityScriptView = scriptManagerView === "community";
   const isCommunityMaterialView = materialManagerView === "community";
   const isMaskActionPending = maskAiPending || maskBoardPending || maskSavePending;
+  const isSceneActionPending = sceneAiPending || Boolean(scenePanoramaPendingBlockId) || sceneSavePending;
+  const isMaterialTransferDisabled = materialTransferPending;
   const isEditingMask = Boolean(maskEditingMaterialId);
+  const isEditingScene = Boolean(sceneEditingMaterialId);
 
   function requestAuth(afterLogin?: (viewer: AuthViewer) => void) {
     pendingAuthActionRef.current = afterLogin ?? null;
@@ -312,6 +376,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       setMaterialCreateMenuOpen(false);
       setMaskCreateOpen(false);
       resetMaskCreateDraft();
+      setSceneCreateOpen(false);
+      resetSceneCreateDraft();
     }
   }
 
@@ -396,6 +462,25 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [maskCreateOpen]);
+
+  useEffect(() => {
+    if (!sceneCreateOpen) {
+      return;
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSceneCreateOpen(false);
+        resetSceneCreateDraft();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [sceneCreateOpen]);
 
   useEffect(() => {
     function openAuthDialog() {
@@ -513,6 +598,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setMaterialCreateMenuOpen(false);
     setMaskCreateOpen(false);
     resetMaskCreateDraft();
+    setSceneCreateOpen(false);
+    resetSceneCreateDraft();
     setViewMode("materialManager");
   }
 
@@ -548,6 +635,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setMaterialCreateMenuOpen(false);
     setMaskCreateOpen(false);
     resetMaskCreateDraft();
+    setSceneCreateOpen(false);
+    resetSceneCreateDraft();
   }
 
   function showMyMaterials() {
@@ -560,6 +649,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         setMaterialCreateMenuOpen(false);
         setMaskCreateOpen(false);
         resetMaskCreateDraft();
+        setSceneCreateOpen(false);
+        resetSceneCreateDraft();
       });
       return;
     }
@@ -571,6 +662,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setMaterialCreateMenuOpen(false);
     setMaskCreateOpen(false);
     resetMaskCreateDraft();
+    setSceneCreateOpen(false);
+    resetSceneCreateDraft();
   }
 
   function selectConversation(conversationId: string) {
@@ -867,11 +960,119 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     if (category === "mask") {
       resetMaskCreateDraft();
+      setSceneCreateOpen(false);
       setMaskCreateOpen(true);
       return;
     }
 
+    if (category === "scene") {
+      resetSceneCreateDraft();
+      setMaskCreateOpen(false);
+      setSceneCreateOpen(true);
+      return;
+    }
+
     toast.info(materialT("createSoon"));
+  }
+
+  function triggerMaterialImport(authenticatedViewer = viewer) {
+    setMaterialCreateMenuOpen(false);
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        materialImportInputRef.current?.click();
+      });
+      return;
+    }
+
+    materialImportInputRef.current?.click();
+  }
+
+  async function importMaterialArchive(file: File | null, authenticatedViewer = viewer) {
+    if (!file) {
+      return;
+    }
+
+    if (!isZipArchiveFile(file)) {
+      toast.error(materialT("invalidImportFile"));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void importMaterialArchive(file, nextViewer);
+      });
+      return;
+    }
+
+    setMaterialTransferPending(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("archive", file);
+
+      const response = await fetch(`/api/materials/import?locale=${encodeURIComponent(locale)}`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (response.status === 401) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void importMaterialArchive(file, nextViewer);
+        });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(await readTransferErrorCode(response));
+      }
+
+      const result = await response.json() as { importedCount: number; materials: WorkspaceMaterial[] };
+
+      setMyMaterials((current) => result.materials.reduce((next, material) => upsertMaterialList(next, material), current));
+      if (result.materials[0]) {
+        setMaterialStyle(result.materials[0].style);
+      }
+      toast.success(materialT("importSuccess", { count: result.importedCount }));
+      router.refresh();
+    } catch (error) {
+      toast.error(resolveMaterialImportError(error, materialT));
+    } finally {
+      setMaterialTransferPending(false);
+      if (materialImportInputRef.current) {
+        materialImportInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function exportMaterialArchive(materialId?: string, authenticatedViewer = viewer) {
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void exportMaterialArchive(materialId, nextViewer);
+      });
+      return;
+    }
+
+    setMaterialCreateMenuOpen(false);
+    setMaterialTransferPending(true);
+
+    try {
+      const query = new URLSearchParams({ locale });
+      if (materialId) {
+        query.set("materialId", materialId);
+      }
+
+      await downloadMaterialArchive(`/api/materials/export?${query.toString()}`);
+      toast.success(materialT("exportSuccess"));
+    } catch (error) {
+      toast.error(resolveMaterialExportError(error, materialT));
+    } finally {
+      setMaterialTransferPending(false);
+    }
   }
 
   function closeMaskCreateDialog() {
@@ -911,6 +1112,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
   function updateMaskIntro(intro: string) {
     setMaskCreateDraft((current) => ({ ...current, intro }));
+  }
+
+  function updateMaskFeatures(features: string) {
+    setMaskCreateDraft((current) => ({ ...current, features }));
   }
 
   function updateMaskStyle(style: WorkspaceMaterialStyle) {
@@ -1160,6 +1365,369 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
   }
 
+  function closeSceneCreateDialog() {
+    setSceneCreateOpen(false);
+    resetSceneCreateDraft();
+  }
+
+  function resetSceneCreateDraft() {
+    const nextDraft = createDefaultSceneDraft();
+
+    setSceneCreateDraft((current) => {
+      revokeSceneDraftPreviews(current);
+
+      return nextDraft;
+    });
+    setSceneActiveBlockId(nextDraft.blocks[0]?.id ?? "");
+    setSceneAiInput("");
+    setSceneAiMessages([]);
+    setSceneEditingMaterialId("");
+  }
+
+  function openMaterialEditDialog(material: WorkspaceMaterial) {
+    if (material.category === "mask") {
+      openMaskEditDialog(material);
+      return;
+    }
+
+    if (material.category === "scene") {
+      openSceneEditDialog(material);
+    }
+  }
+
+  function openSceneEditDialog(material: WorkspaceMaterial) {
+    if (material.category !== "scene" || material.librarySource !== "SELF_CREATED") {
+      return;
+    }
+
+    const nextDraft = createSceneDraftFromMaterial(material);
+
+    setMaterialCreateMenuOpen(false);
+    setSceneCreateDraft((current) => {
+      revokeSceneDraftPreviews(current);
+
+      return nextDraft;
+    });
+    setSceneActiveBlockId(nextDraft.blocks[0]?.id ?? "");
+    setSceneAiInput("");
+    setSceneAiMessages([]);
+    setSceneEditingMaterialId(material.id);
+    setSceneCreateOpen(true);
+  }
+
+  function updateSceneName(name: string) {
+    setSceneCreateDraft((current) => ({ ...current, name }));
+  }
+
+  function updateSceneDescription(description: string) {
+    setSceneCreateDraft((current) => ({ ...current, description }));
+  }
+
+  function updateSceneStyle(style: WorkspaceMaterialStyle) {
+    setSceneCreateDraft((current) => ({ ...current, style }));
+  }
+
+  function updateScenePanoramaDrawingStyle(panoramaDrawingStyle: ScenePanoramaDrawingStyle) {
+    setSceneCreateDraft((current) => ({ ...current, panoramaDrawingStyle }));
+  }
+
+  function updateSceneBlock(blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description">>) {
+    setSceneCreateDraft((current) => ({
+      ...current,
+      blocks: current.blocks.map((block) => (block.id === blockId ? { ...block, ...patch } : block))
+    }));
+  }
+
+  function addSceneBlock() {
+    const block = createDefaultSceneBlock();
+
+    setSceneCreateDraft((current) => ({
+      ...current,
+      blocks: [...current.blocks, block]
+    }));
+    setSceneActiveBlockId(block.id);
+  }
+
+  function removeSceneBlock(blockId: string) {
+    setSceneCreateDraft((current) => {
+      const blockToRemove = current.blocks.find((block) => block.id === blockId);
+      const remaining = current.blocks.filter((block) => block.id !== blockId);
+      const nextBlocks = remaining.length > 0 ? remaining : [createDefaultSceneBlock()];
+
+      if (blockToRemove) {
+        revokeSceneBlockPreviews(blockToRemove);
+      }
+
+      if (!nextBlocks.some((block) => block.id === sceneActiveBlockId)) {
+        setSceneActiveBlockId(nextBlocks[0]?.id ?? "");
+      }
+
+      return {
+        ...current,
+        blocks: nextBlocks
+      };
+    });
+  }
+
+  function applySceneDraftPatch(patch: SceneDraftPatch) {
+    setSceneCreateDraft((current) => {
+      const removeIds = new Set(patch.removeBlockIds ?? []);
+
+      current.blocks.filter((block) => removeIds.has(block.id)).forEach(revokeSceneBlockPreviews);
+
+      return applyPatchToSceneDraft(current, patch);
+    });
+  }
+
+  function selectScenePanoramaFace(blockId: string, face: ScenePanoramaFace, file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    if (!isValidScenePanoramaFace(file)) {
+      toast.error(materialT("sceneForm.invalidPanoramaFace"));
+      return;
+    }
+
+    updateScenePanoramaFace(blockId, face, {
+      file,
+      previewUrl: createPreviewUrl(file),
+      source: "uploaded",
+      storedUrl: null
+    });
+  }
+
+  function updateScenePanoramaFace(blockId: string, face: ScenePanoramaFace, image: ScenePanoramaFaceDraft) {
+    setSceneCreateDraft((current) => ({
+      ...current,
+      blocks: current.blocks.map((block) => {
+        if (block.id !== blockId) {
+          return block;
+        }
+
+        const previousFace = block.panorama?.faces[face];
+
+        if (previousFace) {
+          revokeSceneFacePreview(previousFace);
+        }
+
+        return {
+          ...block,
+          panorama: {
+            faceSource: image.source === "existing" ? block.panorama?.faceSource ?? "uploaded" : normalizeSceneFaceSource(image.source),
+            faces: {
+              ...(block.panorama?.faces ?? {}),
+              [face]: image
+            }
+          }
+        };
+      })
+    }));
+  }
+
+  function clearSceneBlockPanorama(blockId: string) {
+    setSceneCreateDraft((current) => ({
+      ...current,
+      blocks: current.blocks.map((block) => {
+        if (block.id !== blockId) {
+          return block;
+        }
+
+        revokeSceneBlockPreviews(block);
+
+        return {
+          ...block,
+          panorama: null
+        };
+      })
+    }));
+  }
+
+  async function sendSceneAiMessage(authenticatedViewer = viewer) {
+    const instruction = sceneAiInput.trim();
+
+    if (!instruction || sceneAiPending) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void sendSceneAiMessage(nextViewer);
+      });
+      return;
+    }
+
+    setSceneAiInput("");
+    setSceneAiPending(true);
+    setSceneAiMessages((current) => [...current, { id: createClientId("scene-ai-user"), role: "user", content: instruction }]);
+
+    try {
+      const result = await assistHomeSceneDraft(serializeSceneTextDraft(sceneCreateDraft), instruction, locale);
+
+      applySceneDraftPatch(result.patch);
+      setSceneAiMessages((current) => [
+        ...current,
+        { id: createClientId("scene-ai-assistant"), role: "assistant", content: result.message }
+      ]);
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void sendSceneAiMessage(nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveSceneAiError(error, materialT));
+      setSceneAiInput(instruction);
+    } finally {
+      setSceneAiPending(false);
+    }
+  }
+
+  async function generateScenePanorama(blockId: string, authenticatedViewer = viewer) {
+    if (scenePanoramaPendingBlockId) {
+      return;
+    }
+
+    const validationError = validateSceneBlockGeneration(sceneCreateDraft, blockId);
+
+    if (validationError) {
+      toast.error(materialT(validationError));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void generateScenePanorama(blockId, nextViewer);
+      });
+      return;
+    }
+
+    setScenePanoramaPendingBlockId(blockId);
+
+    try {
+      const result = await generateHomeSceneBlockPanorama(serializeSceneTextDraft(sceneCreateDraft), blockId, locale);
+      const faces = await Promise.all(
+        scenePanoramaFaces.map(async (face) => {
+          const image = result.faces[face];
+          const file = await dataUrlToFile(image.dataUrl, image.fileName, image.contentType);
+
+          if (!isValidScenePanoramaFace(file)) {
+            throw new Error("INVALID_SCENE_PANORAMA_FACE_FILE");
+          }
+
+          return [
+            face,
+            {
+              file,
+              previewUrl: image.dataUrl,
+              source: result.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
+              storedUrl: null
+            } satisfies ScenePanoramaFaceDraft
+          ] as const;
+        })
+      );
+
+      setSceneCreateDraft((current) => ({
+        ...current,
+        blocks: current.blocks.map((block) => {
+          if (block.id !== blockId) {
+            return block;
+          }
+
+          revokeSceneBlockPreviews(block);
+
+          return {
+            ...block,
+            panorama: {
+              faceSource: result.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
+              faces: Object.fromEntries(faces)
+            }
+          };
+        })
+      }));
+      toast.success(materialT(result.mode === "direct-cut" ? "sceneForm.panoramaGeneratedFallback" : "sceneForm.panoramaGenerated"));
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void generateScenePanorama(blockId, nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveScenePanoramaError(error, materialT));
+    } finally {
+      setScenePanoramaPendingBlockId("");
+    }
+  }
+
+  async function submitSceneCreateDraft(authenticatedViewer = viewer) {
+    const validationError = validateSceneDraftForSave(sceneCreateDraft);
+
+    if (validationError) {
+      toast.error(materialT(validationError));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void submitSceneCreateDraft(nextViewer);
+      });
+      return;
+    }
+
+    if (!persistenceAvailable) {
+      toast.error(t("errors.persistence"));
+      return;
+    }
+
+    setSceneSavePending(true);
+    const uploadedFaceUrls: string[] = [];
+
+    try {
+      const isEditing = Boolean(sceneEditingMaterialId);
+      const draft = await uploadSceneDraftPanoramaFaces(sceneCreateDraft, uploadedFaceUrls);
+      const formData = new FormData();
+
+      formData.append("draft", JSON.stringify(draft));
+      formData.append("uploadedFaceUrls", JSON.stringify(uploadedFaceUrls));
+
+      const material = isEditing
+        ? await updateHomeSceneMaterial(sceneEditingMaterialId, formData, locale)
+        : await createHomeSceneMaterial(formData, locale);
+
+      setMyMaterials((current) => upsertMaterialList(current, material));
+      setCommunityMaterials((current) =>
+        isEditing && current.some((item) => item.id === material.id) ? upsertMaterialList(current, material) : current
+      );
+      setMaterialStyle(material.style);
+      toast.success(materialT(isEditing ? "sceneForm.updateSuccess" : "sceneForm.saveSuccess"));
+      closeSceneCreateDialog();
+      router.refresh();
+    } catch (error) {
+      if (uploadedFaceUrls.length > 0) {
+        await cleanupHomeUploadedMaterialImages(uploadedFaceUrls);
+      }
+
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void submitSceneCreateDraft(nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveSceneSaveError(error, materialT, Boolean(sceneEditingMaterialId)));
+    } finally {
+      setSceneSavePending(false);
+    }
+  }
+
   function showPreviousScriptPage() {
     setScriptPickerPage((page) => (page === 0 ? scriptPickerPageCount - 1 : page - 1));
   }
@@ -1189,16 +1757,50 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                   onClick={() => setMaterialCreateMenuOpen((open) => !open)}
                   aria-expanded={materialCreateMenuOpen}
                   aria-haspopup="menu"
+                  disabled={isMaterialTransferDisabled}
                   className="inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3 text-sm font-medium text-background transition hover:bg-foreground/88"
                 >
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  {materialT("create")}
+                  {materialTransferPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {materialT("actions")}
                 </button>
+                <input
+                  ref={materialImportInputRef}
+                  type="file"
+                  accept=".zip,application/zip,application/x-zip-compressed"
+                  className="sr-only"
+                  aria-label={materialT("importZipFile")}
+                  onChange={(event) => void importMaterialArchive(event.target.files?.[0] ?? null)}
+                />
                 {materialCreateMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 top-10 z-50 w-48 overflow-hidden rounded-xl border border-border bg-background p-1.5 text-sm shadow-xl shadow-foreground/12"
+                    className="absolute right-0 top-10 z-50 w-max min-w-36 overflow-hidden rounded-xl border border-border bg-background p-1.5 text-sm shadow-xl shadow-foreground/12"
                   >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => triggerMaterialImport()}
+                      disabled={isMaterialTransferDisabled}
+                      className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-foreground/78 transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Upload className="h-4 w-4 text-primary" aria-hidden="true" />
+                      <span>{materialT("importZip")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void exportMaterialArchive()}
+                      disabled={isMaterialTransferDisabled}
+                      className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-foreground/78 transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Download className="h-4 w-4 text-primary" aria-hidden="true" />
+                      <span>{materialT("exportAll")}</span>
+                    </button>
+                    <div className="my-1 border-t border-border" />
                     <p className="px-2.5 pb-1 pt-1 text-xs text-foreground/45">{materialT("chooseType")}</p>
                     {materialTypes.map((type) => {
                       const Icon = materialIcons[type];
@@ -1209,6 +1811,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                           role="menuitem"
                           key={type}
                           onClick={() => selectMaterialCreateType(type)}
+                          disabled={isMaterialTransferDisabled}
                           className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-foreground/78 transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none"
                         >
                           <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -1332,16 +1935,21 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         {detailMaterial ? (
           <MaterialDetailModal
             canDelete={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED"}
-            canEdit={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED" && detailMaterial.category === "mask"}
+            canEdit={
+              !isCommunityMaterialView &&
+              detailMaterial.librarySource === "SELF_CREATED" &&
+              (detailMaterial.category === "mask" || detailMaterial.category === "scene")
+            }
+            canExport={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED"}
             canShare={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED"}
             closeLabel={materialT("close")}
             deleteLabel={materialT("delete")}
             editLabel={materialT("edit")}
+            exportLabel={materialT("export")}
             isCommunityView={isCommunityMaterialView}
-            isPending={isPending}
+            isPending={isPending || materialTransferPending}
             joinedLabel={materialT("joined")}
             joinLabel={materialT("join")}
-            libraryStatusLabel={materialT("libraryStatus")}
             material={detailMaterial}
             previewAlt={materialT("previewAlt")}
             previewCloseLabel={materialT("previewClose")}
@@ -1357,9 +1965,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                 : undefined
             }
             typeLabel={materialT(`types.${detailMaterial.category}`)}
+            t={materialT}
             onClose={() => setDetailMaterialId("")}
             onDelete={handleDeleteMaterial}
-            onEdit={openMaskEditDialog}
+            onEdit={openMaterialEditDialog}
+            onExport={(material) => void exportMaterialArchive(material.id)}
             onJoin={handleJoinMaterial}
             onToggleShare={handleToggleMaterialCommunitySharing}
           />
@@ -1376,6 +1986,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onChangeBodyField={updateMaskBodyField}
             onChangeColorField={updateMaskColorField}
             onChangeAiInput={setMaskAiInput}
+            onChangeFeatures={updateMaskFeatures}
             onChangeIntro={updateMaskIntro}
             onChangeName={updateMaskName}
             onChangePersonalityField={updateMaskPersonalityField}
@@ -1390,6 +2001,36 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             saveLabel={materialT(isEditingMask ? "maskForm.saveEdit" : "saveMask")}
             t={materialT}
             title={materialT(isEditingMask ? "maskForm.editTitle" : "maskForm.title")}
+          />
+        ) : null}
+        {sceneCreateOpen ? (
+          <SceneCreateDialog
+            activeBlockId={sceneActiveBlockId || (sceneCreateDraft.blocks[0]?.id ?? "")}
+            aiInput={sceneAiInput}
+            aiMessages={sceneAiMessages}
+            aiPending={sceneAiPending}
+            draft={sceneCreateDraft}
+            isPending={isPending || isSceneActionPending}
+            panoramaPendingBlockId={scenePanoramaPendingBlockId}
+            saveLabel={materialT(isEditingScene ? "sceneForm.saveEdit" : "saveScene")}
+            title={materialT(isEditingScene ? "sceneForm.editTitle" : "sceneForm.title")}
+            description={materialT(isEditingScene ? "sceneForm.editDescription" : "sceneForm.description")}
+            onAddBlock={addSceneBlock}
+            onCancel={closeSceneCreateDialog}
+            onChangeActiveBlock={setSceneActiveBlockId}
+            onChangeAiInput={setSceneAiInput}
+            onChangeBlock={updateSceneBlock}
+            onChangeDescription={updateSceneDescription}
+            onChangeName={updateSceneName}
+            onChangePanoramaDrawingStyle={updateScenePanoramaDrawingStyle}
+            onChangeStyle={updateSceneStyle}
+            onClearBlockPanorama={clearSceneBlockPanorama}
+            onGeneratePanorama={(blockId) => void generateScenePanorama(blockId)}
+            onRemoveBlock={removeSceneBlock}
+            onSelectFace={selectScenePanoramaFace}
+            onSendAiMessage={() => void sendSceneAiMessage()}
+            onSubmit={submitSceneCreateDraft}
+            t={materialT}
           />
         ) : null}
       </div>
@@ -2261,18 +2902,20 @@ function MaterialDetailModal({
   closeLabel,
   canDelete,
   canEdit,
+  canExport,
   canShare,
   deleteLabel,
   editLabel,
+  exportLabel,
   isCommunityView,
   isPending,
   joinedLabel,
   joinLabel,
-  libraryStatusLabel,
   material,
   onClose,
   onDelete,
   onEdit,
+  onExport,
   onJoin,
   onToggleShare,
   previewAlt,
@@ -2284,23 +2927,26 @@ function MaterialDetailModal({
   shareLabel,
   sourceLabel,
   styleLabel,
+  t,
   typeLabel
 }: {
   closeLabel: string;
   canDelete: boolean;
   canEdit: boolean;
+  canExport: boolean;
   canShare: boolean;
   deleteLabel: string;
   editLabel: string;
+  exportLabel: string;
   isCommunityView: boolean;
   isPending: boolean;
   joinedLabel: string;
   joinLabel: string;
-  libraryStatusLabel: string;
   material: WorkspaceMaterial;
   onClose: () => void;
   onDelete: (material: WorkspaceMaterial) => void;
   onEdit: (material: WorkspaceMaterial) => void;
+  onExport: (material: WorkspaceMaterial) => void;
   onJoin: (materialId: string) => void;
   onToggleShare: (material: WorkspaceMaterial, shared: boolean) => void;
   previewAlt: string;
@@ -2312,6 +2958,7 @@ function MaterialDetailModal({
   shareLabel: string;
   sourceLabel?: string;
   styleLabel: string;
+  t: (key: string, values?: Record<string, string | number>) => string;
   typeLabel: string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -2384,15 +3031,17 @@ function MaterialDetailModal({
             <p className="mt-5 text-sm leading-7 text-foreground/72">{material.description}</p>
             <p className="mt-4 text-xs text-foreground/42">{material.slug}</p>
           </div>
+          {material.category === "mask" ? <MaskMaterialDetail metadata={material.metadata} t={t} /> : null}
+          {material.category === "scene" ? <SceneMaterialDetail key={material.id} metadata={material.metadata} t={t} /> : null}
         </div>
 
-        <div className="shrink-0 border-t border-border bg-background p-4">
+        <div className="shrink-0 border-t border-border bg-background px-4 py-3">
           {isCommunityView ? (
             <button
               type="button"
               onClick={() => onJoin(material.id)}
               disabled={isPending || material.inLibrary}
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-sm font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
+              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-sm font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
             >
               {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -2404,16 +3053,12 @@ function MaterialDetailModal({
               {material.inLibrary ? joinedLabel : joinLabel}
             </button>
           ) : (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3 text-sm text-foreground/62">
-                <span>{libraryStatusLabel}</span>
-                <span className="shrink-0 font-medium text-foreground/72">{sourceLabel ?? joinedLabel}</span>
-              </div>
+            <div className="space-y-2">
               {canShare ? (
-                <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border bg-background px-4 py-3 text-left transition hover:bg-muted/40">
+                <label className="flex cursor-pointer items-center justify-between gap-3 px-1 py-1.5 text-left">
                   <span className="min-w-0">
                     <span className="block text-sm font-medium text-foreground/76">{shareLabel}</span>
-                    <span className="mt-1 block text-xs leading-5 text-foreground/48">{shareHint}</span>
+                    <span className="mt-0.5 block text-xs leading-5 text-foreground/48">{shareHint}</span>
                   </span>
                   <span className="inline-flex shrink-0 items-center gap-2">
                     <span className="text-xs text-foreground/52">
@@ -2435,14 +3080,25 @@ function MaterialDetailModal({
                   </span>
                 </label>
               ) : null}
-              {canEdit || canDelete ? (
+              {canEdit || canDelete || canExport ? (
                 <div className="flex flex-wrap gap-2">
+                  {canExport ? (
+                    <button
+                      type="button"
+                      onClick={() => onExport(material)}
+                      disabled={isPending}
+                      className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-full border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+                    >
+                      <Download className="h-4 w-4" aria-hidden="true" />
+                      {exportLabel}
+                    </button>
+                  ) : null}
                   {canEdit ? (
                     <button
                       type="button"
                       onClick={() => onEdit(material)}
                       disabled={isPending}
-                      className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full border border-border bg-background px-4 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+                      className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-full border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
                     >
                       <Pencil className="h-4 w-4" aria-hidden="true" />
                       {editLabel}
@@ -2453,7 +3109,7 @@ function MaterialDetailModal({
                       type="button"
                       onClick={() => onDelete(material)}
                       disabled={isPending}
-                      className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+                      className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
                     >
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
                       {deleteLabel}
@@ -2487,6 +3143,303 @@ function MaterialDetailModal({
         ) : null}
       </section>
     </div>
+  );
+}
+
+function MaskMaterialDetail({
+  metadata,
+  t
+}: {
+  metadata: WorkspaceMaterialMetadata | undefined | null;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const record = getMaskMaterialMetadata(metadata);
+
+  if (!record || record.kind !== "mask") {
+    return null;
+  }
+
+  const body = getNestedRecord(record.body);
+  const colors = getNestedRecord(record.colors);
+  const voice = getNestedRecord(record.voice);
+  const personality = getNestedRecord(record.personality);
+
+  return (
+    <div className="mx-auto mt-8 max-w-md space-y-6 text-left">
+      <MaskDetailTextBlock title={t("maskForm.intro")} value={record.intro} />
+      <MaskDetailTextBlock title={t("maskForm.features")} value={record.features} preserveLines />
+      <MaskDetailKeyValues
+        title={t("maskForm.bodyTitle")}
+        entries={maskBodyFields.map((field) => ({
+          label: t(`maskForm.bodyFields.${field.id}.label`),
+          value: getRecordString(body, field.id)
+        }))}
+      />
+      <MaskDetailColors
+        title={t("maskForm.colorTitle")}
+        entries={maskColorFields.map((field) => ({
+          label: t(`maskForm.colorFields.${field.id}.label`),
+          value: getRecordString(colors, field.id)
+        }))}
+      />
+      <MaskDetailKeyValues
+        title={t("maskForm.voiceTitle")}
+        entries={maskVoiceFields.map((field) => ({
+          label: t(`maskForm.voiceFields.${field.id}.label`),
+          value: getRecordNumber(voice, field.id) === null ? "" : getMaskVoiceDetailLabel(field.id, getRecordNumber(voice, field.id) ?? 0, t)
+        }))}
+      />
+      <MaskDetailKeyValues
+        title={t("maskForm.personalityTitle")}
+        entries={maskPersonalityGroups.flatMap((group) =>
+          group.fields.map((fieldId) => ({
+            label: t(`maskForm.personalityFields.${fieldId}.label`),
+            value:
+              getRecordNumber(personality, fieldId) === null
+                ? ""
+                : getMaskPersonalityDetailLabel(fieldId, getRecordNumber(personality, fieldId) ?? 0, t)
+          }))
+        )}
+      />
+    </div>
+  );
+}
+
+function SceneMaterialDetail({
+  metadata,
+  t
+}: {
+  metadata: WorkspaceMaterialMetadata | undefined | null;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const record = getSceneMaterialMetadata(metadata);
+  const [activeBlockId, setActiveBlockId] = useState(record?.blocks[0]?.id ?? "");
+
+  if (!record || record.kind !== "scene") {
+    return null;
+  }
+
+  const activeBlock = record.blocks.find((block) => block.id === activeBlockId) ?? record.blocks[0];
+  const faces = activeBlock?.panorama
+    ? scenePanoramaFaces.reduce<Record<ScenePanoramaFace, string>>((result, face) => {
+        result[face] = activeBlock.panorama?.faces[face]?.url ?? "";
+
+        return result;
+      }, {} as Record<ScenePanoramaFace, string>)
+    : null;
+
+  return (
+    <div className="mx-auto mt-8 max-w-md space-y-6 text-left">
+      <MaskDetailTextBlock title={t("sceneForm.sceneDescription")} value={record.description} preserveLines />
+      <section>
+        <div className="mb-3 flex flex-wrap gap-2">
+          {record.blocks.map((block) => (
+            <button
+              key={block.id}
+              type="button"
+              onClick={() => setActiveBlockId(block.id)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs font-medium transition",
+                block.id === activeBlock?.id
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-background text-foreground/58 hover:bg-muted"
+              )}
+            >
+              {block.name}
+            </button>
+          ))}
+        </div>
+        {activeBlock ? (
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground/72">{activeBlock.name}</h3>
+              <p className="mt-2 whitespace-pre-line text-sm leading-7 text-foreground/68">{activeBlock.description}</p>
+            </div>
+            <ScenePanoramaViewer faces={faces && isCompleteScenePanoramaFaceUrls(faces) ? faces : null} emptyLabel={t("sceneForm.panoramaEmpty")} />
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function MaskDetailTextBlock({
+  preserveLines,
+  title,
+  value
+}: {
+  preserveLines?: boolean;
+  title: string;
+  value: unknown;
+}) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3 className="text-sm font-semibold text-foreground/72">{title}</h3>
+      <p className={cn("mt-2 text-sm leading-7 text-foreground/68", preserveLines ? "whitespace-pre-line" : "")}>
+        {value.trim()}
+      </p>
+    </section>
+  );
+}
+
+function getRecordString(record: Record<string, unknown> | null, key: string) {
+  const value = record?.[key];
+
+  return typeof value === "string" ? value : "";
+}
+
+function getRecordNumber(record: Record<string, unknown> | null, key: string) {
+  const value = record?.[key];
+
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getMaskVoiceDetailLabel(
+  fieldId: MaskVoiceFieldId,
+  value: number,
+  t: (key: string, values?: Record<string, string | number>) => string
+) {
+  return t(`maskForm.voiceFields.${fieldId}.ticks.${getTraitTickKey(value, getMaskVoiceRange(fieldId))}`);
+}
+
+function getMaskPersonalityDetailLabel(
+  fieldId: MaskPersonalityFieldId,
+  value: number,
+  t: (key: string, values?: Record<string, string | number>) => string
+) {
+  const level = getTraitLevel(value);
+
+  if (level === "balanced") {
+    return t("maskForm.detailTraitLevels.balanced");
+  }
+
+  const direction = level === "veryLow" || level === "low" ? "low" : "high";
+
+  return t(`maskForm.detailTraitLevels.${level}`, {
+    description: t(`maskForm.personalityFields.${fieldId}.${direction}`)
+  });
+}
+
+function getMaskVoiceRange(fieldId: MaskVoiceFieldId) {
+  return maskVoiceFields.find((field) => field.id === fieldId) ?? { min: 0, max: 100 };
+}
+
+function getTraitTickKey(value: number, range: { min: number; max: number }) {
+  const normalizedValue = getNormalizedTraitValue(value, range);
+
+  if (normalizedValue <= 20) {
+    return "first";
+  }
+
+  if (normalizedValue <= 40) {
+    return "second";
+  }
+
+  if (normalizedValue <= 60) {
+    return "third";
+  }
+
+  if (normalizedValue <= 80) {
+    return "fourth";
+  }
+
+  return "fifth";
+}
+
+function getTraitLevel(value: number) {
+  const normalizedValue = getNormalizedTraitValue(value, { min: 0, max: 100 });
+
+  if (normalizedValue <= 15) {
+    return "veryLow";
+  }
+
+  if (normalizedValue <= 35) {
+    return "low";
+  }
+
+  if (normalizedValue < 65) {
+    return "balanced";
+  }
+
+  if (normalizedValue < 85) {
+    return "high";
+  }
+
+  return "veryHigh";
+}
+
+function getNormalizedTraitValue(value: number, range: { min: number; max: number }) {
+  if (range.max <= range.min) {
+    return 50;
+  }
+
+  return Math.min(100, Math.max(0, ((value - range.min) / (range.max - range.min)) * 100));
+}
+
+function MaskDetailKeyValues({
+  entries,
+  title
+}: {
+  entries: Array<{ label: string; value: string | number }>;
+  title: string;
+}) {
+  const visibleEntries = entries.filter((entry) => String(entry.value).trim());
+
+  if (visibleEntries.length === 0) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3 className="text-sm font-semibold text-foreground/72">{title}</h3>
+      <dl className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+        {visibleEntries.map((entry) => (
+          <div key={entry.label} className="min-w-0">
+            <dt className="text-xs text-foreground/42">{entry.label}</dt>
+            <dd className="mt-0.5 break-words text-sm text-foreground/72">{entry.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function MaskDetailColors({
+  entries,
+  title
+}: {
+  entries: Array<{ label: string; value: string }>;
+  title: string;
+}) {
+  const visibleEntries = entries.filter((entry) => /^#[0-9a-f]{6}$/i.test(entry.value));
+
+  if (visibleEntries.length === 0) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3 className="text-sm font-semibold text-foreground/72">{title}</h3>
+      <dl className="mt-3 grid gap-x-4 gap-y-3 sm:grid-cols-2">
+        {visibleEntries.map((entry) => (
+          <div key={entry.label} className="flex min-w-0 items-center gap-2">
+            <span
+              className="h-5 w-5 shrink-0 rounded-full border border-border shadow-sm"
+              style={{ backgroundColor: entry.value }}
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <dt className="text-xs text-foreground/42">{entry.label}</dt>
+              <dd className="text-sm font-medium text-foreground/72">{entry.value.toUpperCase()}</dd>
+            </div>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -2569,6 +3522,7 @@ function MaskCreateDialog({
   onChangeBodyField,
   onChangeColorField,
   onChangeAiInput,
+  onChangeFeatures,
   onChangeIntro,
   onChangeName,
   onChangePersonalityField,
@@ -2594,6 +3548,7 @@ function MaskCreateDialog({
   onChangeBodyField: (fieldId: MaskBodyFieldId, value: string) => void;
   onChangeColorField: (fieldId: MaskColorFieldId, value: string) => void;
   onChangeAiInput: (value: string) => void;
+  onChangeFeatures: (features: string) => void;
   onChangeIntro: (intro: string) => void;
   onChangeName: (value: string) => void;
   onChangePersonalityField: (fieldId: MaskPersonalityFieldId, value: number) => void;
@@ -2677,6 +3632,20 @@ function MaskCreateDialog({
                     className="min-h-24 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 outline-none transition placeholder:text-foreground/38 focus:border-primary"
                   />
                   <span className="block text-xs text-foreground/42">{t("maskForm.introHint")}</span>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <label htmlFor="mask-features" className="block text-foreground/64">
+                    {t("maskForm.features")}
+                  </label>
+                  <textarea
+                    id="mask-features"
+                    value={draft.features}
+                    onChange={(event) => onChangeFeatures(event.target.value)}
+                    placeholder={t("maskForm.featuresPlaceholder")}
+                    rows={5}
+                    className="min-h-28 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 outline-none transition placeholder:text-foreground/38 focus:border-primary"
+                  />
+                  <span className="block text-xs text-foreground/42">{t("maskForm.featuresHint")}</span>
                 </div>
               </section>
 
@@ -3041,6 +4010,627 @@ function MaskBoardPanel({
   );
 }
 
+function SceneCreateDialog({
+  activeBlockId,
+  aiInput,
+  aiMessages,
+  aiPending,
+  draft,
+  description,
+  isPending,
+  panoramaPendingBlockId,
+  saveLabel,
+  title,
+  onAddBlock,
+  onCancel,
+  onChangeActiveBlock,
+  onChangeAiInput,
+  onChangeBlock,
+  onChangeDescription,
+  onChangeName,
+  onChangePanoramaDrawingStyle,
+  onChangeStyle,
+  onClearBlockPanorama,
+  onGeneratePanorama,
+  onRemoveBlock,
+  onSelectFace,
+  onSendAiMessage,
+  onSubmit,
+  t
+}: {
+  activeBlockId: string;
+  aiInput: string;
+  aiMessages: SceneAiMessage[];
+  aiPending: boolean;
+  draft: SceneCreateDraft;
+  description: string;
+  isPending: boolean;
+  panoramaPendingBlockId: string;
+  saveLabel: string;
+  title: string;
+  onAddBlock: () => void;
+  onCancel: () => void;
+  onChangeActiveBlock: (blockId: string) => void;
+  onChangeAiInput: (value: string) => void;
+  onChangeBlock: (blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description">>) => void;
+  onChangeDescription: (value: string) => void;
+  onChangeName: (value: string) => void;
+  onChangePanoramaDrawingStyle: (style: ScenePanoramaDrawingStyle) => void;
+  onChangeStyle: (style: WorkspaceMaterialStyle) => void;
+  onClearBlockPanorama: (blockId: string) => void;
+  onGeneratePanorama: (blockId: string) => void;
+  onRemoveBlock: (blockId: string) => void;
+  onSelectFace: (blockId: string, face: ScenePanoramaFace, file: File | null) => void;
+  onSendAiMessage: () => void;
+  onSubmit: () => void;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const activeBlock = draft.blocks.find((block) => block.id === activeBlockId) ?? draft.blocks[0];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm">
+      <section className="flex h-[48rem] max-h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-3">
+          <div>
+            <h2 className="text-xl font-semibold tracking-normal">{title}</h2>
+            <p className="mt-0.5 text-sm text-foreground/55">{description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground/58 transition hover:bg-muted hover:text-foreground"
+            aria-label={t("close")}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(22rem,1fr)]">
+          <form
+            className="scrollbar-autohide min-h-0 overflow-y-auto px-5 py-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSubmit();
+            }}
+          >
+            <div className="space-y-4">
+              <section className="space-y-2.5">
+                <h3 className="text-sm font-semibold text-foreground/70">{t("sceneForm.basicTitle")}</h3>
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_11rem_11rem]">
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-foreground/64">{t("sceneForm.name")}</span>
+                    <input
+                      value={draft.name}
+                      onChange={(event) => onChangeName(event.target.value)}
+                      placeholder={t("sceneForm.namePlaceholder")}
+                      className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition placeholder:text-foreground/38 focus:border-primary"
+                    />
+                  </label>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-foreground/64">{t("sceneForm.style")}</span>
+                    <select
+                      value={draft.style}
+                      onChange={(event) => onChangeStyle(event.target.value as WorkspaceMaterialStyle)}
+                      className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition focus:border-primary"
+                    >
+                      {materialStyles.map((style) => (
+                        <option key={style} value={style}>
+                          {t(`styles.${style}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-foreground/64">{t("sceneForm.panoramaDrawingStyle")}</span>
+                    <select
+                      value={draft.panoramaDrawingStyle}
+                      onChange={(event) => onChangePanoramaDrawingStyle(event.target.value as ScenePanoramaDrawingStyle)}
+                      className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition focus:border-primary"
+                    >
+                      {maskBoardDrawingStyles.map((style) => (
+                        <option key={style} value={style}>
+                          {t(`sceneForm.panoramaDrawingStyles.${style}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="block space-y-1.5 text-sm">
+                  <span className="text-foreground/64">{t("sceneForm.sceneDescription")}</span>
+                  <textarea
+                    value={draft.description}
+                    onChange={(event) => onChangeDescription(event.target.value)}
+                    placeholder={t("sceneForm.sceneDescriptionPlaceholder")}
+                    rows={3}
+                    className="min-h-20 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 outline-none transition placeholder:text-foreground/38 focus:border-primary"
+                  />
+                </label>
+              </section>
+
+              <section className="space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground/70">{t("sceneForm.blocksTitle")}</h3>
+                    <p className="text-xs text-foreground/48">{t("sceneForm.blocksDescription")}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onAddBlock}
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-sm font-medium transition hover:bg-muted"
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    {t("sceneForm.addBlock")}
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {draft.blocks.map((block, index) => {
+                    const isActive = block.id === activeBlock?.id;
+                    const blockFaces = getCompleteScenePanoramaFaceUrls(block.panorama);
+
+                    return (
+                      <section
+                        key={block.id}
+                        className={cn(
+                          "rounded-xl border p-3 transition",
+                          isActive ? "border-primary/55 bg-primary/5" : "border-border bg-background"
+                        )}
+                      >
+                        <div className="mb-2.5 flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => onChangeActiveBlock(block.id)}
+                            className="inline-flex min-w-0 items-center gap-2 text-left text-sm font-semibold text-foreground/76"
+                          >
+                            <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs">
+                              {index + 1}
+                            </span>
+                            <span className="truncate">{block.name || t("sceneForm.untitledBlock")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveBlock(block.id)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground/48 transition hover:bg-muted hover:text-foreground"
+                            aria-label={t("sceneForm.removeBlock")}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-[13rem_minmax(0,1fr)]">
+                          <label className="block space-y-1.5 text-sm">
+                            <span className="text-foreground/64">{t("sceneForm.blockName")}</span>
+                            <input
+                              value={block.name}
+                              onFocus={() => onChangeActiveBlock(block.id)}
+                              onChange={(event) => onChangeBlock(block.id, { name: event.target.value })}
+                              placeholder={t("sceneForm.blockNamePlaceholder")}
+                              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition placeholder:text-foreground/38 focus:border-primary"
+                            />
+                          </label>
+                          <label className="block space-y-1.5 text-sm">
+                            <span className="text-foreground/64">{t("sceneForm.blockDescription")}</span>
+                            <textarea
+                              value={block.description}
+                              onFocus={() => onChangeActiveBlock(block.id)}
+                              onChange={(event) => onChangeBlock(block.id, { description: event.target.value })}
+                              placeholder={t("sceneForm.blockDescriptionPlaceholder")}
+                              rows={2}
+                              className="min-h-16 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 outline-none transition placeholder:text-foreground/38 focus:border-primary"
+                            />
+                          </label>
+                        </div>
+
+                        <SceneBlockPanoramaPanel
+                          block={block}
+                          faces={blockFaces}
+                          isPending={panoramaPendingBlockId === block.id}
+                          isBlocked={Boolean(panoramaPendingBlockId)}
+                          onClear={() => onClearBlockPanorama(block.id)}
+                          onGenerate={() => {
+                            onChangeActiveBlock(block.id);
+                            onGeneratePanorama(block.id);
+                          }}
+                          onSelectFace={(face, file) => {
+                            onChangeActiveBlock(block.id);
+                            onSelectFace(block.id, face, file);
+                          }}
+                          t={t}
+                        />
+                      </section>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+          </form>
+
+          <aside className="flex min-h-0 flex-col border-t border-border bg-muted/14 p-4 lg:border-l lg:border-t-0">
+            <SceneAssistantPanel
+              input={aiInput}
+              isPending={aiPending}
+              messages={aiMessages}
+              onChangeInput={onChangeAiInput}
+              onSend={onSendAiMessage}
+              t={t}
+            />
+          </aside>
+        </div>
+
+        <footer className="shrink-0 border-t border-border bg-background px-5 py-3">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="inline-flex h-10 items-center justify-center rounded-full border border-border bg-background px-4 text-sm font-medium text-foreground transition hover:bg-muted"
+            >
+              {t("cancel")}
+            </button>
+            <button
+              type="submit"
+              onClick={onSubmit}
+              disabled={isPending}
+              className="inline-flex h-10 items-center justify-center rounded-full bg-foreground px-4 text-sm font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
+            >
+              {saveLabel}
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function SceneBlockPanoramaPanel({
+  block,
+  faces,
+  isBlocked,
+  isPending,
+  onClear,
+  onGenerate,
+  onSelectFace,
+  t
+}: {
+  block: SceneBlockDraft;
+  faces: Record<ScenePanoramaFace, string> | null;
+  isBlocked: boolean;
+  isPending: boolean;
+  onClear: () => void;
+  onGenerate: () => void;
+  onSelectFace: (face: ScenePanoramaFace, file: File | null) => void;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  return (
+    <section className="mt-3 space-y-2.5 border-t border-border/70 pt-3" aria-label={t("sceneForm.panoramaTitle")}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold text-foreground/70">{t("sceneForm.panoramaTitle")}</h4>
+          <p className="text-xs text-foreground/48">{t("sceneForm.panoramaDescription")}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {block.panorama ? (
+            <button
+              type="button"
+              onClick={onClear}
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-border px-2.5 text-xs font-medium text-foreground/68 transition hover:bg-muted hover:text-foreground"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("sceneForm.clearPanorama")}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={isBlocked}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-foreground px-3 text-xs font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
+          >
+            {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
+            {t("sceneForm.generatePanorama")}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(16rem,1fr)]">
+        <ScenePanoramaViewer faces={faces} emptyLabel={t("sceneForm.panoramaEmpty")} />
+
+        <div className="grid grid-cols-3 gap-2">
+          {scenePanoramaFaces.map((face) => {
+            const image = block.panorama?.faces[face];
+
+            return (
+              <label
+                key={face}
+                className="group flex min-h-20 cursor-pointer flex-col justify-between overflow-hidden rounded-lg border border-border bg-background/70 text-xs transition hover:border-primary/40"
+              >
+                <span className="flex items-center justify-between gap-2 px-2 py-1.5 text-foreground/52">
+                  <span>{t(`sceneForm.faces.${face}`)}</span>
+                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+                {image?.previewUrl ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={image.previewUrl} alt="" className="h-14 w-full object-cover" />
+                ) : (
+                  <span className="flex h-14 items-center justify-center px-2 text-center text-foreground/38">
+                    {t("sceneForm.faceEmpty")}
+                  </span>
+                )}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  aria-label={t("sceneForm.faceUpload", { face: t(`sceneForm.faces.${face}`) })}
+                  onChange={(event) => {
+                    onSelectFace(face, event.target.files?.[0] ?? null);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SceneAssistantPanel({
+  input,
+  isPending,
+  messages,
+  onChangeInput,
+  onSend,
+  t
+}: {
+  input: string;
+  isPending: boolean;
+  messages: SceneAiMessage[];
+  onChangeInput: (value: string) => void;
+  onSend: () => void;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  return (
+    <section className="flex min-h-0 flex-1 flex-col" aria-label={t("sceneForm.aiTitle")}>
+      <h3 className="mb-3 text-sm font-semibold text-foreground/70">{t("sceneForm.aiTitle")}</h3>
+      <div className="scrollbar-autohide min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg bg-background/72 p-2">
+        {messages.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border/80 bg-background/55 p-3 text-xs leading-5 text-foreground/48">
+            {t("sceneForm.aiEmpty")}
+          </p>
+        ) : (
+          messages.map((message) => (
+            <div
+              key={message.id}
+              className={cn(
+                "rounded-lg px-3 py-2 text-xs leading-5",
+                message.role === "user" ? "ml-8 bg-foreground text-background" : "mr-8 bg-background text-foreground/70"
+              )}
+            >
+              {message.content}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="mt-3 flex gap-2">
+        <textarea
+          value={input}
+          onChange={(event) => onChangeInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSend();
+            }
+          }}
+          placeholder={t("sceneForm.aiPlaceholder")}
+          rows={2}
+          className="min-h-11 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm leading-5 outline-none transition placeholder:text-foreground/38 focus:border-primary"
+        />
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={!input.trim() || isPending}
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-foreground text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
+          aria-label={t("sceneForm.aiSend")}
+        >
+          {isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <SendHorizontal className="h-4 w-4" aria-hidden="true" />}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ScenePanoramaViewer({
+  emptyLabel,
+  faces
+}: {
+  emptyLabel: string;
+  faces: Record<ScenePanoramaFace, string> | null;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [webglReady, setWebglReady] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container || !faces) {
+      setWebglReady(false);
+      return;
+    }
+
+    const currentFaces = faces;
+    let disposed = false;
+    let cleanup = () => {};
+
+    async function init() {
+      try {
+        const canvas = document.createElement("canvas");
+        const hasWebgl = Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
+
+        if (!hasWebgl || !containerRef.current) {
+          setWebglReady(false);
+          return;
+        }
+
+        const THREE = await import("three");
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+        const loader = new THREE.TextureLoader();
+        let lon = 0;
+        let lat = 0;
+        let pointerDown = false;
+        let startX = 0;
+        let startY = 0;
+        let startLon = 0;
+        let startLat = 0;
+
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
+        containerRef.current.appendChild(renderer.domElement);
+
+        const textures = await Promise.all(
+          scenePanoramaThreeFaceOrder.map(
+            (face) =>
+              new Promise<import("three").Texture>((resolve, reject) => {
+                loader.load(currentFaces[face], resolve, undefined, reject);
+              })
+          )
+        );
+
+        if (disposed) {
+          textures.forEach((texture) => texture.dispose());
+          renderer.dispose();
+          return;
+        }
+
+        const cube = new THREE.Mesh(
+          new THREE.BoxGeometry(10, 10, 10),
+          textures.map((texture) => new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide }))
+        );
+
+        scene.add(cube);
+
+        function updateCamera() {
+          lat = Math.max(-85, Math.min(85, lat));
+          const phi = THREE.MathUtils.degToRad(90 - lat);
+          const theta = THREE.MathUtils.degToRad(lon);
+
+          camera.lookAt(
+            new THREE.Vector3(
+              Math.sin(phi) * Math.cos(theta),
+              Math.cos(phi),
+              Math.sin(phi) * Math.sin(theta)
+            )
+          );
+        }
+
+        function render() {
+          updateCamera();
+          renderer.render(scene, camera);
+        }
+
+        function resize() {
+          if (!containerRef.current) {
+            return;
+          }
+
+          const width = Math.max(1, containerRef.current.clientWidth);
+          const height = Math.max(1, containerRef.current.clientHeight);
+
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height);
+          render();
+        }
+
+        function onPointerDown(event: PointerEvent) {
+          pointerDown = true;
+          startX = event.clientX;
+          startY = event.clientY;
+          startLon = lon;
+          startLat = lat;
+          renderer.domElement.setPointerCapture(event.pointerId);
+        }
+
+        function onPointerMove(event: PointerEvent) {
+          if (!pointerDown) {
+            return;
+          }
+
+          lon = startLon - (event.clientX - startX) * 0.12;
+          lat = startLat + (event.clientY - startY) * 0.12;
+          render();
+        }
+
+        function onPointerUp(event: PointerEvent) {
+          pointerDown = false;
+          renderer.domElement.releasePointerCapture(event.pointerId);
+        }
+
+        function onWheel(event: WheelEvent) {
+          event.preventDefault();
+          camera.fov = Math.max(35, Math.min(95, camera.fov + Math.sign(event.deltaY) * 5));
+          camera.updateProjectionMatrix();
+          render();
+        }
+
+        const observer = new ResizeObserver(resize);
+
+        renderer.domElement.className = "h-full w-full cursor-grab rounded-xl";
+        renderer.domElement.addEventListener("pointerdown", onPointerDown);
+        renderer.domElement.addEventListener("pointermove", onPointerMove);
+        renderer.domElement.addEventListener("pointerup", onPointerUp);
+        renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+        observer.observe(containerRef.current);
+        resize();
+        setWebglReady(true);
+
+        cleanup = () => {
+          observer.disconnect();
+          renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+          renderer.domElement.removeEventListener("pointermove", onPointerMove);
+          renderer.domElement.removeEventListener("pointerup", onPointerUp);
+          renderer.domElement.removeEventListener("wheel", onWheel);
+          textures.forEach((texture) => texture.dispose());
+          cube.geometry.dispose();
+          (cube.material as import("three").Material[]).forEach((material) => material.dispose());
+          renderer.domElement.remove();
+          renderer.dispose();
+        };
+      } catch {
+        setWebglReady(false);
+      }
+    }
+
+    void init();
+
+    return () => {
+      disposed = true;
+      cleanup();
+    };
+  }, [faces]);
+
+  if (!faces) {
+    return (
+      <div className="flex aspect-video w-full items-center justify-center rounded-xl border border-dashed border-border bg-background/70 px-4 text-center text-sm text-foreground/48">
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-border bg-background/70">
+      <div ref={containerRef} className="absolute inset-0" />
+      {!webglReady ? (
+        <div className="grid h-full grid-cols-3 gap-1 p-1">
+          {scenePanoramaFaces.map((face) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={face} src={faces[face]} alt="" className="h-full w-full rounded-md object-cover" />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function BodyTextField({
   fieldId,
   inputMode,
@@ -3310,6 +4900,7 @@ function createDefaultMaskDraft(): MaskCreateDraft {
   return {
     name: "",
     intro: "",
+    features: "",
     style: "realistic",
     body: {
       hairStyle: "",
@@ -3370,6 +4961,27 @@ function createDefaultMaskDraft(): MaskCreateDraft {
   };
 }
 
+function createDefaultSceneDraft(): SceneCreateDraft {
+  const firstBlock = createDefaultSceneBlock();
+
+  return {
+    name: "",
+    description: "",
+    style: "realistic",
+    panoramaDrawingStyle: "realistic",
+    blocks: [firstBlock]
+  };
+}
+
+function createDefaultSceneBlock(): SceneBlockDraft {
+  return {
+    id: createClientId("scene-block"),
+    name: "",
+    description: "",
+    panorama: null
+  };
+}
+
 function createMaskDraftFromMaterial(material: WorkspaceMaterial): MaskCreateDraft {
   const draft = createDefaultMaskDraft();
   const metadata = getMaskMaterialMetadata(material.metadata);
@@ -3393,6 +5005,7 @@ function createMaskDraftFromMaterial(material: WorkspaceMaterial): MaskCreateDra
     ...draft,
     name: typeof metadata?.name === "string" && metadata.name.trim() ? metadata.name : material.title,
     intro: typeof metadata?.intro === "string" ? metadata.intro : material.description,
+    features: typeof metadata?.features === "string" ? metadata.features : "",
     style: typeof metadata?.style === "string" && isWorkspaceMaterialStyle(metadata.style) ? metadata.style : material.style,
     body: body ? { ...draft.body, ...body } : draft.body,
     colors: colors ? { ...draft.colors, ...colors } : draft.colors,
@@ -3414,10 +5027,60 @@ function createMaskDraftFromMaterial(material: WorkspaceMaterial): MaskCreateDra
   };
 }
 
+function createSceneDraftFromMaterial(material: WorkspaceMaterial): SceneCreateDraft {
+  const metadata = getSceneMaterialMetadata(material.metadata);
+
+  if (!metadata || metadata.kind !== "scene") {
+    return {
+      ...createDefaultSceneDraft(),
+      name: material.title,
+      description: material.description,
+      style: material.style
+    };
+  }
+
+  const blocks = metadata.blocks.length > 0 ? metadata.blocks.map((block) => ({
+    id: block.id,
+    name: block.name,
+    description: block.description,
+    panorama: block.panorama
+      ? {
+          faceSource: block.panorama.faceSource,
+          faces: scenePanoramaFaces.reduce<Partial<Record<ScenePanoramaFace, ScenePanoramaFaceDraft>>>((faces, face) => {
+            const url = block.panorama?.faces[face]?.url ?? "";
+
+            if (url) {
+              faces[face] = {
+                file: null,
+                previewUrl: url,
+                source: "existing",
+                storedUrl: url
+              };
+            }
+
+            return faces;
+          }, {})
+        }
+      : null
+  })) : [createDefaultSceneBlock()];
+
+  return {
+    name: metadata.name || material.title,
+    description: metadata.description || material.description,
+    style: typeof metadata.style === "string" && isWorkspaceMaterialStyle(metadata.style) ? metadata.style : material.style,
+    panoramaDrawingStyle:
+      typeof metadata.panoramaDrawingStyle === "string" && isScenePanoramaDrawingStyle(metadata.panoramaDrawingStyle)
+        ? metadata.panoramaDrawingStyle
+        : "realistic",
+    blocks
+  };
+}
+
 function serializeMaskDraft(draft: MaskCreateDraft) {
   return {
     name: draft.name,
     intro: draft.intro,
+    features: draft.features,
     style: draft.style,
     body: draft.body,
     colors: draft.colors,
@@ -3425,6 +5088,21 @@ function serializeMaskDraft(draft: MaskCreateDraft) {
     personality: draft.personality,
     boardDrawingStyle: draft.boardDrawingStyle,
     boardImageSource: draft.boardImageSource
+  };
+}
+
+function serializeSceneTextDraft(draft: SceneCreateDraft): SceneMaterialCreateInput {
+  return {
+    name: draft.name,
+    description: draft.description,
+    style: draft.style,
+    panoramaDrawingStyle: draft.panoramaDrawingStyle,
+    blocks: draft.blocks.map((block) => ({
+      id: block.id,
+      name: block.name,
+      description: block.description,
+      panorama: null
+    }))
   };
 }
 
@@ -3440,11 +5118,44 @@ function getMaskBoardImageMode(draft: MaskCreateDraft): "keep" | "replace" | "cl
   return "clear";
 }
 
+function applyPatchToSceneDraft(draft: SceneCreateDraft, patch: SceneDraftPatch): SceneCreateDraft {
+  const removeIds = new Set(patch.removeBlockIds ?? []);
+  const updatedBlocks = draft.blocks
+    .filter((block) => !removeIds.has(block.id))
+    .map((block) => {
+      const update = patch.updateBlocks?.find((item) => item.id === block.id);
+
+      return update
+        ? {
+            ...block,
+            ...(typeof update.name === "string" ? { name: update.name } : {}),
+            ...(typeof update.description === "string" ? { description: update.description } : {})
+          }
+        : block;
+    });
+  const addedBlocks = (patch.addBlocks ?? []).map((block) => ({
+    id: block.id || createClientId("scene-block"),
+    name: block.name,
+    description: block.description,
+    panorama: null
+  }));
+  const blocks = [...updatedBlocks, ...addedBlocks];
+
+  return {
+    ...draft,
+    ...(typeof patch.name === "string" ? { name: patch.name } : {}),
+    ...(typeof patch.description === "string" ? { description: patch.description } : {}),
+    ...(patch.style ? { style: patch.style } : {}),
+    blocks: blocks.length > 0 ? blocks : [createDefaultSceneBlock()]
+  };
+}
+
 function applyPatchToMaskDraft(draft: MaskCreateDraft, patch: MaskDraftPatch): MaskCreateDraft {
   return {
     ...draft,
     ...(typeof patch.name === "string" ? { name: patch.name } : {}),
     ...(typeof patch.intro === "string" ? { intro: patch.intro } : {}),
+    ...(typeof patch.features === "string" ? { features: patch.features } : {}),
     ...(patch.style ? { style: patch.style } : {}),
     body: patch.body ? { ...draft.body, ...pickKnownStringPatch(patch.body, maskBodyFields.map((field) => field.id)) } : draft.body,
     colors: patch.colors ? { ...draft.colors, ...pickKnownColorPatch(patch.colors, maskColorFields.map((field) => field.id)) } : draft.colors,
@@ -3500,6 +5211,16 @@ function getMaskMaterialMetadata(metadata: WorkspaceMaterialMetadata | undefined
   return metadata as Record<string, unknown>;
 }
 
+function getSceneMaterialMetadata(metadata: WorkspaceMaterialMetadata | undefined | null): WorkspaceSceneMaterialMetadata | null {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const record = metadata as Partial<WorkspaceSceneMaterialMetadata>;
+
+  return record.kind === "scene" && Array.isArray(record.blocks) ? record as WorkspaceSceneMaterialMetadata : null;
+}
+
 function getNestedRecord(value: unknown) {
   if (!value || typeof value !== "object") {
     return null;
@@ -3516,8 +5237,185 @@ function isMaskBoardDrawingStyle(style: string): style is MaskBoardDrawingStyle 
   return maskBoardDrawingStyles.includes(style as MaskBoardDrawingStyle);
 }
 
+function isScenePanoramaDrawingStyle(style: string): style is ScenePanoramaDrawingStyle {
+  return maskBoardDrawingStyles.includes(style as ScenePanoramaDrawingStyle);
+}
+
 function isValidMaskBoardImage(file: File) {
   return maskBoardAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxMaskBoardImageBytes;
+}
+
+function isValidScenePanoramaFace(file: File) {
+  return scenePanoramaAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxScenePanoramaFaceBytes;
+}
+
+function normalizeSceneFaceSource(source: ScenePanoramaFaceDraft["source"]): ScenePanoramaDraft["faceSource"] {
+  if (source === "existing") {
+    return "uploaded";
+  }
+
+  return source;
+}
+
+function isCompleteScenePanoramaFaceUrls(faces: Record<ScenePanoramaFace, string>) {
+  return scenePanoramaFaces.every((face) => Boolean(faces[face]));
+}
+
+function getCompleteScenePanoramaFaceUrls(panorama: ScenePanoramaDraft | null) {
+  if (!panorama) {
+    return null;
+  }
+
+  const faces = scenePanoramaFaces.reduce<Record<ScenePanoramaFace, string>>((result, face) => {
+    const image = panorama.faces[face];
+
+    result[face] = image?.previewUrl ?? image?.storedUrl ?? "";
+
+    return result;
+  }, {} as Record<ScenePanoramaFace, string>);
+
+  return isCompleteScenePanoramaFaceUrls(faces) ? faces : null;
+}
+
+function validateSceneBlockGeneration(draft: SceneCreateDraft, blockId: string) {
+  const block = draft.blocks.find((item) => item.id === blockId);
+
+  if (!draft.name.trim()) {
+    return "sceneForm.errors.nameRequired";
+  }
+
+  if (!draft.description.trim()) {
+    return "sceneForm.errors.descriptionRequired";
+  }
+
+  if (!block?.name.trim()) {
+    return "sceneForm.errors.blockNameRequired";
+  }
+
+  if (!block.description.trim()) {
+    return "sceneForm.errors.blockDescriptionRequired";
+  }
+
+  return "";
+}
+
+function validateSceneDraftForSave(draft: SceneCreateDraft) {
+  if (!draft.name.trim()) {
+    return "sceneForm.errors.nameRequired";
+  }
+
+  if (!draft.description.trim()) {
+    return "sceneForm.errors.descriptionRequired";
+  }
+
+  if (draft.blocks.length === 0) {
+    return "sceneForm.errors.blockRequired";
+  }
+
+  for (const block of draft.blocks) {
+    if (!block.name.trim()) {
+      return "sceneForm.errors.blockNameRequired";
+    }
+
+    if (!block.description.trim()) {
+      return "sceneForm.errors.blockDescriptionRequired";
+    }
+
+    if (block.panorama) {
+      const completeFaces = getCompleteScenePanoramaFaceUrls(block.panorama);
+
+      if (!completeFaces) {
+        return "sceneForm.errors.panoramaIncomplete";
+      }
+    }
+  }
+
+  return "";
+}
+
+async function uploadSceneDraftPanoramaFaces(draft: SceneCreateDraft, uploadedFaceUrls: string[]): Promise<SceneMaterialCreateInput> {
+  const blocks: SceneMaterialCreateInput["blocks"] = [];
+
+  for (const block of draft.blocks) {
+    if (!block.panorama) {
+      blocks.push({
+        id: block.id,
+        name: block.name,
+        description: block.description,
+        panorama: null
+      });
+      continue;
+    }
+
+    const settled = await Promise.allSettled(
+      scenePanoramaFaces.map(async (face) => {
+        const image = block.panorama?.faces[face];
+
+        if (!image) {
+          throw new Error("SCENE_PANORAMA_INCOMPLETE");
+        }
+
+        if (image.storedUrl && !image.file) {
+          return [face, image.storedUrl] as const;
+        }
+
+        if (!image.file) {
+          throw new Error("SCENE_PANORAMA_INCOMPLETE");
+        }
+
+        const formData = new FormData();
+
+        formData.append("face", face);
+        formData.append("file", image.file);
+
+        const result = await uploadHomeScenePanoramaFace(formData);
+
+        uploadedFaceUrls.push(result.url);
+
+        return [face, result.url] as const;
+      })
+    );
+    const failed = settled.find((result) => result.status === "rejected");
+
+    if (failed) {
+      throw failed.reason;
+    }
+
+    const faces = settled.reduce<Record<ScenePanoramaFace, string>>((result, item) => {
+      if (item.status === "fulfilled") {
+        const [face, url] = item.value;
+
+        result[face] = url;
+      }
+
+      return result;
+    }, {} as Record<ScenePanoramaFace, string>);
+
+    blocks.push({
+      id: block.id,
+      name: block.name,
+      description: block.description,
+      panorama: {
+        faceSource: block.panorama.faceSource,
+        faces
+      }
+    });
+  }
+
+  return {
+    name: draft.name,
+    description: draft.description,
+    style: draft.style,
+    panoramaDrawingStyle: draft.panoramaDrawingStyle,
+    blocks
+  };
+}
+
+function isZipArchiveFile(file: File) {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+
+  return name.endsWith(".zip") || type === "application/zip" || type === "application/x-zip-compressed";
 }
 
 function createPreviewUrl(file: File) {
@@ -3528,9 +5426,63 @@ function createPreviewUrl(file: File) {
   return "";
 }
 
+async function downloadMaterialArchive(url: string) {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(await readTransferErrorCode(response));
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = objectUrl;
+  link.download = getArchiveFileName(response.headers.get("content-disposition"));
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function readTransferErrorCode(response: Response) {
+  try {
+    const payload = await response.json() as { error?: string };
+
+    return payload.error ?? "MATERIAL_TRANSFER_FAILED";
+  } catch {
+    return "MATERIAL_TRANSFER_FAILED";
+  }
+}
+
+function getArchiveFileName(contentDisposition: string | null) {
+  const encodedFileName = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plainFileName = contentDisposition?.match(/filename="([^"]+)"/i)?.[1];
+
+  if (encodedFileName) {
+    return decodeURIComponent(encodedFileName);
+  }
+
+  return plainFileName ?? "nwt-materials.zip";
+}
+
 function revokeMaskBoardPreview(url: string) {
   if (url.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
     URL.revokeObjectURL(url);
+  }
+}
+
+function revokeSceneDraftPreviews(draft: SceneCreateDraft) {
+  draft.blocks.forEach(revokeSceneBlockPreviews);
+}
+
+function revokeSceneBlockPreviews(block: SceneBlockDraft) {
+  Object.values(block.panorama?.faces ?? {}).forEach(revokeSceneFacePreview);
+}
+
+function revokeSceneFacePreview(face: ScenePanoramaFaceDraft) {
+  if (face.previewUrl.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(face.previewUrl);
   }
 }
 
@@ -3581,6 +5533,76 @@ function resolveMaskSaveError(error: unknown, t: (key: string) => string, isEdit
   }
 
   return t(isEditing ? "maskForm.updateFailed" : "maskForm.saveFailed");
+}
+
+function resolveSceneAiError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("missing-default-llm")) {
+    return t("sceneForm.aiMissingDefaultLlm");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("sceneForm.missingProviderSecret");
+  }
+
+  return t("sceneForm.aiFailed");
+}
+
+function resolveScenePanoramaError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("missing-default-image")) {
+    return t("sceneForm.panoramaMissingDefaultImage");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("sceneForm.missingProviderSecret");
+  }
+
+  if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE")) {
+    return t("sceneForm.invalidPanoramaFace");
+  }
+
+  return t("sceneForm.panoramaGenerateFailed");
+}
+
+function resolveSceneSaveError(error: unknown, t: (key: string) => string, isEditing = false) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE")) {
+    return t("sceneForm.invalidPanoramaFace");
+  }
+
+  if (message.includes("SCENE_DESCRIPTION_REQUIRED")) {
+    return t("sceneForm.errors.descriptionRequired");
+  }
+
+  if (message.includes("SCENE_BLOCK_DESCRIPTION_REQUIRED")) {
+    return t("sceneForm.errors.blockDescriptionRequired");
+  }
+
+  return t(isEditing ? "sceneForm.updateFailed" : "sceneForm.saveFailed");
+}
+
+function resolveMaterialImportError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("INVALID_MATERIAL_ZIP")) {
+    return t("invalidImportFile");
+  }
+
+  return t("importFailed");
+}
+
+function resolveMaterialExportError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("NO_SELF_CREATED_MATERIALS")) {
+    return t("exportEmpty");
+  }
+
+  return t("exportFailed");
 }
 
 function getMaskBodyOptionLabel(

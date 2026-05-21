@@ -47,6 +47,7 @@
     "cmdk": "latest",
     "date-fns": "latest",
     "ioredis": "latest",
+    "jszip": "^3.10.1",
     "langchain": "latest",
     "lucide-react": "latest",
     "mariadb": "^3.5.2",
@@ -58,10 +59,12 @@
     "react": "latest",
     "react-dom": "latest",
     "react-hook-form": "latest",
+    "sharp": "^0.34.5",
     "sigma": "latest",
     "sonner": "latest",
     "tailwind-merge": "latest",
     "tailwindcss-animate": "latest",
+    "three": "^0.184.0",
     "zod": "latest"
   },
   "devDependencies": {
@@ -73,6 +76,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "latest",
     "autoprefixer": "latest",
     "eslint": "^9.39.1",

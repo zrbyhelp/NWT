@@ -28,16 +28,23 @@ import {
 import {
   addMaterialToLibrary,
   assistMaskDraft,
+  assistSceneDraft,
   createConversation,
   createMaskMaterial,
+  createSceneMaterial,
   deleteSelfCreatedMaterial,
   deleteConversation,
+  cleanupUploadedMaterialImages,
   generateMaskBoard,
+  generateSceneBlockPanorama,
   sendConversationMessage,
   setMaterialCommunitySharing,
   updateMaskMaterial,
+  updateSceneMaterial,
+  uploadScenePanoramaFace,
   type MaskMaterialBoardImageMode,
-  type MaskMaterialCreateInput
+  type MaskMaterialCreateInput,
+  type SceneMaterialCreateInput
 } from "@/lib/home-workspace";
 import { uploadUserAvatar } from "@/lib/storage/avatar";
 
@@ -65,6 +72,29 @@ export async function generateHomeMaskBoard(input: MaskMaterialCreateInput, loca
   return generateMaskBoard(input, locale);
 }
 
+export async function assistHomeSceneDraft(input: SceneMaterialCreateInput, instruction: string, locale: Locale) {
+  return assistSceneDraft(input, instruction, locale);
+}
+
+export async function generateHomeSceneBlockPanorama(input: SceneMaterialCreateInput, blockId: string, locale: Locale) {
+  return generateSceneBlockPanorama(input, blockId, locale);
+}
+
+export async function uploadHomeScenePanoramaFace(formData: FormData) {
+  const face = formData.get("face");
+  const file = formData.get("file");
+  const viewer = await requireAuth();
+
+  if (typeof face !== "string" || !file || !(file instanceof File)) {
+    throw new Error("INVALID_SCENE_PANORAMA_FACE_FILE");
+  }
+
+  return {
+    face,
+    url: await uploadScenePanoramaFace(viewer.id, file)
+  };
+}
+
 export async function createHomeMaskMaterial(formData: FormData, locale: Locale) {
   const draftValue = formData.get("draft");
   const boardImageValue = formData.get("boardImage");
@@ -77,6 +107,20 @@ export async function createHomeMaskMaterial(formData: FormData, locale: Locale)
   const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
 
   return createMaskMaterial(draft, boardImageFile, locale);
+}
+
+export async function createHomeSceneMaterial(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const uploadedFaceUrlsValue = formData.get("uploadedFaceUrls");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("SCENE_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as SceneMaterialCreateInput;
+  const uploadedFaceUrls = typeof uploadedFaceUrlsValue === "string" ? JSON.parse(uploadedFaceUrlsValue) as string[] : [];
+
+  return createSceneMaterial(draft, uploadedFaceUrls, locale);
 }
 
 export async function updateHomeMaskMaterial(materialId: string, formData: FormData, locale: Locale) {
@@ -93,6 +137,24 @@ export async function updateHomeMaskMaterial(materialId: string, formData: FormD
   const boardImageMode = isMaskMaterialBoardImageMode(boardImageModeValue) ? boardImageModeValue : boardImageFile ? "replace" : "keep";
 
   return updateMaskMaterial(materialId, draft, boardImageFile, boardImageMode, locale);
+}
+
+export async function updateHomeSceneMaterial(materialId: string, formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const uploadedFaceUrlsValue = formData.get("uploadedFaceUrls");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("SCENE_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as SceneMaterialCreateInput;
+  const uploadedFaceUrls = typeof uploadedFaceUrlsValue === "string" ? JSON.parse(uploadedFaceUrlsValue) as string[] : [];
+
+  return updateSceneMaterial(materialId, draft, uploadedFaceUrls, locale);
+}
+
+export async function cleanupHomeUploadedMaterialImages(urls: string[]) {
+  return cleanupUploadedMaterialImages(urls);
 }
 
 export async function deleteHomeMaterial(materialId: string, locale: Locale) {

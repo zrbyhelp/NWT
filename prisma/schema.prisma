@@ -16,6 +16,7 @@ enum StoryMaterialCategory {
   MAP
   ITEM
   CREATURE
+  SCENE
 }
 
 enum StoryMaterialStyle {

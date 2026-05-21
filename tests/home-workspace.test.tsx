@@ -5,11 +5,14 @@ import zhMessages from "../messages/zh-CN.json";
 import {
   assistHomeMaskDraft,
   createHomeMaskMaterial,
+  createHomeSceneMaterial,
   deleteHomeMaterial,
   generateHomeMaskBoard,
+  generateHomeSceneBlockPanorama,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
-  updateHomeMaskMaterial
+  updateHomeMaskMaterial,
+  uploadHomeScenePanoramaFace
 } from "@/app/[locale]/actions";
 import { HomeWorkspace } from "@/components/home-workspace";
 import type { WorkspaceConversation, WorkspaceData, WorkspaceMaterial, WorkspaceScript } from "@/lib/home-workspace";
@@ -41,17 +44,23 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/app/[locale]/actions", () => ({
   assistHomeMaskDraft: vi.fn(),
+  assistHomeSceneDraft: vi.fn(),
+  cleanupHomeUploadedMaterialImages: vi.fn(),
   createHomeConversation: vi.fn(),
   createHomeMaskMaterial: vi.fn(),
+  createHomeSceneMaterial: vi.fn(),
   deleteHomeConversation: vi.fn(),
   deleteHomeMaterial: vi.fn(),
   generateHomeMaskBoard: vi.fn(),
+  generateHomeSceneBlockPanorama: vi.fn(),
   joinHomeMaterial: vi.fn(),
   loginHomeAccount: vi.fn(),
   logoutHomeAccount: vi.fn(),
   registerHomeAccount: vi.fn(),
   setHomeMaterialCommunitySharing: vi.fn(),
-  updateHomeMaskMaterial: vi.fn()
+  updateHomeMaskMaterial: vi.fn(),
+  updateHomeSceneMaterial: vi.fn(),
+  uploadHomeScenePanoramaFace: vi.fn()
 }));
 
 vi.mock("@/components/header-actions", () => ({
@@ -92,6 +101,7 @@ describe("HomeWorkspace script manager", () => {
     Element.prototype.scrollIntoView = vi.fn();
     URL.createObjectURL = vi.fn(() => "blob:mask-board");
     URL.revokeObjectURL = vi.fn();
+    HTMLAnchorElement.prototype.click = vi.fn();
   });
 
   it("opens my scripts by default and can switch to community scripts", () => {
@@ -123,6 +133,7 @@ describe("HomeWorkspace script manager", () => {
       message: "已自动调整假面。",
       patch: {
         intro: "银发旅人看起来疏离冷静，说话简短，动作习惯轻慢。",
+        features: "标志动作：抬手整理银发\n口头禅：别靠太近",
         style: "mystery",
         voice: { pitch: 82 }
       }
@@ -135,6 +146,9 @@ describe("HomeWorkspace script manager", () => {
     vi.mocked(createHomeMaskMaterial).mockResolvedValue(createdSilverMaskMaterial);
     vi.mocked(updateHomeMaskMaterial).mockImplementation(async (_materialId, formData) => {
       expect(formData.get("boardImageMode")).toBe("keep");
+      expect(JSON.parse(String(formData.get("draft")))).toMatchObject({
+        features: "改后特征：回答前会先短暂停顿。"
+      });
       return updatedSilverMaskMaterial;
     });
     vi.mocked(setHomeMaterialCommunitySharing).mockImplementation(async (_materialId, shared) => ({
@@ -142,6 +156,38 @@ describe("HomeWorkspace script manager", () => {
       communityVisible: shared
     }));
     vi.mocked(deleteHomeMaterial).mockResolvedValue({ id: "silver-mask" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith("data:")) {
+          return new Response("board", {
+            headers: {
+              "Content-Type": "image/png"
+            }
+          });
+        }
+
+        if (url.startsWith("/api/materials/import")) {
+          return Response.json({
+            importedCount: 1,
+            materials: [importedSilverMaskMaterial]
+          });
+        }
+
+        if (url.startsWith("/api/materials/export")) {
+          return new Response("zip", {
+            headers: {
+              "Content-Type": "application/zip",
+              "Content-Disposition": "attachment; filename=\"nwt-materials.zip\""
+            }
+          });
+        }
+
+        return new Response(null, { status: 404 });
+      })
+    );
 
     render(<HomeWorkspace data={workspaceData} />);
 
@@ -152,14 +198,38 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.getAllByText("写实").length).toBeGreaterThan(0);
     expect(screen.getByText("假面")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
 
     expect(toast.info).not.toHaveBeenCalled();
+    expect(screen.getByRole("menuitem", { name: "导入 ZIP" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "导出全部" })).toBeInTheDocument();
     expect(screen.getByText("选择类型")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "假面" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "地图" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "物品" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "生物" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "场景" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "导出全部" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/materials/export?locale=zh-CN");
+      expect(toast.success).toHaveBeenCalledWith("素材 ZIP 已开始下载。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "导入 ZIP" }));
+    fireEvent.change(screen.getByLabelText("导入 ZIP 文件"), {
+      target: { files: [new File(["zip"], "materials.zip", { type: "application/zip" })] }
+    });
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/materials/import?locale=zh-CN", expect.objectContaining({ method: "POST" }));
+      expect(toast.success).toHaveBeenCalledWith("已导入 1 个素材。");
+    });
+    expect(screen.getByText("导入旅人")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
 
     fireEvent.click(screen.getByRole("menuitem", { name: "假面" }));
 
@@ -182,6 +252,7 @@ describe("HomeWorkspace script manager", () => {
     await waitFor(() => {
       expect(assistHomeMaskDraft).toHaveBeenCalled();
       expect(screen.getByLabelText("假面介绍")).toHaveValue("银发旅人看起来疏离冷静，说话简短，动作习惯轻慢。");
+      expect(screen.getByLabelText("特征")).toHaveValue("标志动作：抬手整理银发\n口头禅：别靠太近");
     });
     expect(screen.getByText("已自动调整假面。")).toBeInTheDocument();
     expect(screen.getByLabelText("内容风格")).toHaveValue("mystery");
@@ -190,8 +261,12 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByLabelText("体重"), { target: { value: "52" } });
     fireEvent.change(screen.getByLabelText("发型"), { target: { value: "银色长发" } });
     fireEvent.change(screen.getByLabelText("体型"), { target: { value: "轻盈但有力量感" } });
+    fireEvent.change(screen.getByLabelText("特征"), {
+      target: { value: "标志动作：抬手整理银发\n说话习惯：句子短，停顿长" }
+    });
 
     expect(screen.getByLabelText("假面介绍")).toHaveValue("银发旅人看起来疏离冷静，说话简短，动作习惯轻慢。");
+    expect(screen.getByText("只写可被看见、听见或互动感知到的特征，不写背景经历。")).toBeInTheDocument();
     expect(screen.getByText("不要填写人物背景故事、身世经历或世界关系。")).toBeInTheDocument();
     expect(screen.getByLabelText("身高")).toHaveValue("168");
     expect(screen.getByLabelText("体重")).toHaveValue("52");
@@ -213,8 +288,9 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.getByText("点击上传横版设定板")).toBeInTheDocument();
 
     expect(screen.getByLabelText("绘制风格")).toHaveValue("realistic");
-    fireEvent.change(screen.getByLabelText("绘制风格"), { target: { value: "guofeng" } });
-    expect(screen.getByLabelText("绘制风格")).toHaveValue("guofeng");
+    expect(screen.getByRole("option", { name: "真人拍摄" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("绘制风格"), { target: { value: "photo" } });
+    expect(screen.getByLabelText("绘制风格")).toHaveValue("photo");
 
     fireEvent.click(screen.getByRole("button", { name: "生成" }));
 
@@ -222,7 +298,7 @@ describe("HomeWorkspace script manager", () => {
       expect(generateHomeMaskBoard).toHaveBeenCalled();
       expect(toast.success).toHaveBeenCalledWith("角色设定板已生成。");
     });
-    expect(generateHomeMaskBoard).toHaveBeenCalledWith(expect.objectContaining({ boardDrawingStyle: "guofeng" }), "zh-CN");
+    expect(generateHomeMaskBoard).toHaveBeenCalledWith(expect.objectContaining({ boardDrawingStyle: "photo" }), "zh-CN");
     expect(screen.getByText("mask-board.png")).toBeInTheDocument();
     expect(screen.getByText("AI 生成")).toBeInTheDocument();
 
@@ -271,6 +347,9 @@ describe("HomeWorkspace script manager", () => {
       expect(createHomeMaskMaterial).toHaveBeenCalled();
       expect(toast.success).toHaveBeenCalledWith("假面已创建并加入我的素材。");
     });
+    expect(JSON.parse(String(vi.mocked(createHomeMaskMaterial).mock.calls[0][0].get("draft")))).toMatchObject({
+      features: "标志动作：抬手整理银发\n说话习惯：句子短，停顿长"
+    });
     expect(screen.queryByRole("heading", { name: "新建假面" })).not.toBeInTheDocument();
     expect(screen.getByText("银发旅人")).toBeInTheDocument();
 
@@ -282,13 +361,32 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭素材图片预览" }));
     expect(screen.queryByAltText("素材图片预览")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导出" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
+    expect(screen.queryByText("我的素材库")).not.toBeInTheDocument();
+    expect(screen.getByText("身体信息收集")).toBeInTheDocument();
+    expect(screen.getByText("身体颜色配置")).toBeInTheDocument();
+    expect(screen.getByText("语音特征")).toBeInTheDocument();
+    expect(screen.getByText("性格特征")).toBeInTheDocument();
+    expect(screen.getByText("#F2F0E8")).toBeInTheDocument();
+    expect(screen.getByText("正常")).toBeInTheDocument();
+    expect(screen.getByText("偏高，分析型、冷静、结构化")).toBeInTheDocument();
+    expect(screen.queryByText("80/100")).not.toBeInTheDocument();
+    expect(screen.queryByText("150 字/分钟")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/materials/export?locale=zh-CN&materialId=silver-mask");
+      expect(toast.success).toHaveBeenCalledWith("素材 ZIP 已开始下载。");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
 
     expect(screen.getByRole("heading", { name: "编辑假面" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入假面名称")).toHaveValue("银发旅人");
     expect(screen.getByLabelText("假面介绍")).toHaveValue("疏离冷静，说话简短。");
+    expect(screen.getByLabelText("特征")).toHaveValue("标志动作：抬手整理银发\n说话习惯：句子短，停顿长");
     expect(screen.getByLabelText("内容风格")).toHaveValue("mystery");
     expect(screen.getByLabelText("身高")).toHaveValue("168");
     expect(screen.getByLabelText("绘制风格")).toHaveValue("guofeng");
@@ -296,6 +394,7 @@ describe("HomeWorkspace script manager", () => {
 
     fireEvent.change(screen.getByPlaceholderText("输入假面名称"), { target: { value: "银发旅人·改" } });
     fireEvent.change(screen.getByLabelText("假面介绍"), { target: { value: "更冷淡，语气更克制。" } });
+    fireEvent.change(screen.getByLabelText("特征"), { target: { value: "改后特征：回答前会先短暂停顿。" } });
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
     await waitFor(() => {
@@ -330,7 +429,7 @@ describe("HomeWorkspace script manager", () => {
     });
     expect(screen.queryByText("银发旅人·改")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "地图" }));
 
     expect(toast.info).toHaveBeenCalledWith("素材创建功能将在后续版本开放。");
@@ -351,6 +450,7 @@ describe("HomeWorkspace script manager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /夜墨瓶/ }));
     expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "导出" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "删除" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "加入我的素材" }));
 
@@ -360,6 +460,103 @@ describe("HomeWorkspace script manager", () => {
     });
     expect(screen.getByRole("button", { name: "已加入" })).toBeDisabled();
   }, 20000);
+
+  it("keeps scene panorama generation type in the form and uploads faces on save", async () => {
+    vi.mocked(generateHomeSceneBlockPanorama).mockResolvedValue({
+      mode: "enhanced",
+      repaired: true,
+      faces: {
+        front: { contentType: "image/png", dataUrl: "data:image/png;base64,Zm9udA==", face: "front", fileName: "front.png" },
+        back: { contentType: "image/png", dataUrl: "data:image/png;base64,YmFjaw==", face: "back", fileName: "back.png" },
+        left: { contentType: "image/png", dataUrl: "data:image/png;base64,bGVmdA==", face: "left", fileName: "left.png" },
+        right: { contentType: "image/png", dataUrl: "data:image/png;base64,cmlnaHQ=", face: "right", fileName: "right.png" },
+        top: { contentType: "image/png", dataUrl: "data:image/png;base64,dG9w", face: "top", fileName: "top.png" },
+        bottom: { contentType: "image/png", dataUrl: "data:image/png;base64,Ym90dG9t", face: "bottom", fileName: "bottom.png" }
+      }
+    });
+    vi.mocked(uploadHomeScenePanoramaFace).mockImplementation(async (formData) => {
+      return {
+        face: String(formData.get("face")),
+        url: `https://cdn.example.com/materials/${String(formData.get("face"))}.png`
+      };
+    });
+    vi.mocked(createHomeSceneMaterial).mockImplementation(async (_formData) => createdSceneMaterial);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith("data:")) {
+          return new Response("face", {
+            headers: {
+              "Content-Type": "image/png"
+            }
+          });
+        }
+
+        return new Response(null, { status: 404 });
+      })
+    );
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "场景" }));
+
+    expect(screen.getByRole("heading", { name: "新建场景" })).toBeInTheDocument();
+    expect(screen.getByLabelText("全景类型")).toHaveValue("realistic");
+    fireEvent.change(screen.getByLabelText("全景类型"), { target: { value: "photo" } });
+    expect(screen.getByLabelText("全景类型")).toHaveValue("photo");
+
+    fireEvent.change(screen.getByLabelText("场景名称"), { target: { value: "废弃研究所" } });
+    fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
+    fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
+    fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
+
+    await waitFor(() => {
+      expect(generateHomeSceneBlockPanorama).toHaveBeenCalledWith(
+        expect.objectContaining({
+          panoramaDrawingStyle: "photo"
+        }),
+        expect.any(String),
+        "zh-CN"
+      );
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("区块全景已生成。");
+      expect(screen.getByText("AI 辅助")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "保存场景" }));
+
+    await waitFor(() => {
+      expect(uploadHomeScenePanoramaFace).toHaveBeenCalledTimes(6);
+      expect(createHomeSceneMaterial).toHaveBeenCalledWith(
+        expect.any(FormData),
+        "zh-CN"
+      );
+      expect(toast.success).toHaveBeenCalledWith("场景已创建并加入我的素材。");
+    });
+
+    const draft = JSON.parse(String(vi.mocked(createHomeSceneMaterial).mock.calls[0][0].get("draft")));
+    expect(draft).toMatchObject({
+      panoramaDrawingStyle: "photo",
+      blocks: [
+        expect.objectContaining({
+          panorama: {
+            faceSource: "reference-repaint",
+            faces: expect.objectContaining({
+              front: "https://cdn.example.com/materials/front.png"
+            })
+          }
+        })
+      ]
+    });
+  });
 
   it("opens the login dialog when an anonymous user starts a protected action", () => {
     render(<HomeWorkspace data={{ ...workspaceData, conversations: [], viewer: null }} />);
@@ -455,6 +652,7 @@ const createdSilverMaskMaterial: WorkspaceMaterial = {
     version: 1,
     name: "银发旅人",
     intro: "疏离冷静，说话简短。",
+    features: "标志动作：抬手整理银发\n说话习惯：句子短，停顿长",
     style: "mystery",
     body: {
       ageStage: "青年",
@@ -524,8 +722,58 @@ const updatedSilverMaskMaterial: WorkspaceMaterial = {
   metadata: {
     ...(createdSilverMaskMaterial.metadata as Record<string, unknown>),
     name: "银发旅人·改",
-    intro: "更冷淡，语气更克制。"
+    intro: "更冷淡，语气更克制。",
+    features: "改后特征：回答前会先短暂停顿。"
   }
+};
+
+const importedSilverMaskMaterial: WorkspaceMaterial = {
+  ...createdSilverMaskMaterial,
+  id: "imported-mask",
+  slug: "mask-imported",
+  title: "导入旅人",
+  description: "从 ZIP 导入的假面素材。",
+  librarySource: "SELF_CREATED",
+  previewUrl: "https://cdn.example.com/imported-mask-board.png"
+};
+
+const createdSceneMaterial: WorkspaceMaterial = {
+  id: "scene-lab",
+  slug: "scene-lab",
+  category: "scene",
+  style: "mystery",
+  title: "废弃研究所",
+  description: "一座被雨水和藤蔓侵蚀的旧研究所。",
+  previewUrl: "https://cdn.example.com/scene/main-front.png",
+  communityVisible: false,
+  metadata: {
+    kind: "scene",
+    version: 1,
+    name: "废弃研究所",
+    description: "一座被雨水和藤蔓侵蚀的旧研究所。",
+    style: "mystery",
+    panoramaDrawingStyle: "realistic",
+    blocks: [
+      {
+        id: "block-main",
+        name: "主厅",
+        description: "坍塌的接待区，玻璃幕墙漏入冷光。",
+        panorama: {
+          faceSource: "reference-repaint",
+          faces: {
+            front: { url: "https://cdn.example.com/scene/main-front.png" },
+            back: { url: "https://cdn.example.com/scene/main-back.png" },
+            left: { url: "https://cdn.example.com/scene/main-left.png" },
+            right: { url: "https://cdn.example.com/scene/main-right.png" },
+            top: { url: "https://cdn.example.com/scene/main-top.png" },
+            bottom: { url: "https://cdn.example.com/scene/main-bottom.png" }
+          }
+        }
+      }
+    ]
+  },
+  inLibrary: true,
+  librarySource: "SELF_CREATED"
 };
 
 const workspaceData: WorkspaceData = {
@@ -540,7 +788,7 @@ const workspaceData: WorkspaceData = {
   myScripts: [baseScript],
   communityScripts: [baseScript, worldScript],
   myMaterials: [echoMaskMaterial],
-  communityMaterials: [echoMaskMaterial, nightInkMaterial],
+  communityMaterials: [echoMaskMaterial, nightInkMaterial, createdSceneMaterial],
   conversations: [],
   persistenceAvailable: true
 };
