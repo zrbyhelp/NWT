@@ -7,7 +7,6 @@
     "description": "围绕 AI 对话、剧情推进、知识图谱和长期记忆，构建新的小说体验形态。",
     "metric": "当前上下文预算 {count} tokens",
     "actions": {
-      "admin": "后台",
       "language": "语言切换"
     },
     "auth": {
@@ -56,6 +55,7 @@
       "tabs": {
         "general": "通用",
         "account": "账号",
+        "admin": "管理员",
         "appearance": "外观",
         "providers": "AI 供应商",
         "llm": "LLM 模型",
@@ -65,6 +65,9 @@
       },
       "mainSite": "前往总站",
       "mainSiteAction": "前往",
+      "docs": "打开文档",
+      "docsDescription": "在新页面打开本地 VitePress 文档站点。",
+      "docsAction": "打开",
       "showThinking": "显示思考内容",
       "showThinkingDescription": "开启后会显示模型供应商返回的思考内容。",
       "logoutAction": "退出",
@@ -149,6 +152,28 @@
           "invalidAvatarFile": "头像文件仅支持 gif/png/jpg/webp，且不能超过 5MB。",
           "invalidDisplayName": "显示名称需为 1-40 个字符。",
           "generic": "账号设置保存失败，请稍后再试。"
+        }
+      },
+      "admin": {
+        "title": "管理员",
+        "description": "仅 ADMIN_ACCOUNT 对应账号可见，用于配置全局服务端能力。",
+        "outboundProxyTitle": "全局出站代理",
+        "outboundProxyDescription": "开启后，AI、图片生成、供应商模型拉取、素材图片下载和 R2 读写会通过这里配置的代理访问外部服务。",
+        "enabled": "启用代理",
+        "httpProxy": "HTTP 代理",
+        "httpProxyPlaceholder": "例如 http://127.0.0.1:7890",
+        "httpsProxy": "HTTPS 代理",
+        "httpsProxyPlaceholder": "例如 http://127.0.0.1:7890",
+        "noProxy": "NO_PROXY",
+        "noProxyPlaceholder": "127.0.0.1,localhost",
+        "save": "保存代理设置",
+        "saved": "代理设置已保存",
+        "loading": "正在读取管理员设置",
+        "errors": {
+          "forbidden": "当前账号不是管理员，无法保存管理员设置。",
+          "urlRequired": "启用代理时至少填写一个 HTTP 或 HTTPS 代理地址。",
+          "invalidUrl": "代理地址只支持 http:// 或 https://。",
+          "generic": "管理员设置保存失败，请稍后再试。"
         }
       },
       "ai": {
@@ -754,22 +779,45 @@
         "removeBlock": "删除区块",
         "blockName": "区块名称",
         "blockNamePlaceholder": "例如：主厅、东侧走廊、屋顶花园",
+        "blockScale": "区块规模",
+        "blockScaleDetail": "规模：{scale}",
+        "blockScalePresets": {
+          "closeUp": "特写 / {meters}米",
+          "near": "近景 / {meters}米",
+          "mid": "中景 / {meters}米",
+          "wide": "远景 / {meters}米",
+          "aerial": "航拍 / {meters}米"
+        },
         "blockDescription": "区块说明",
         "blockDescriptionPlaceholder": "描述这个子区域的空间结构、光照、材质、可互动物和氛围",
         "aiTitle": "AI 辅助",
         "aiEmpty": "可以让 AI 帮你补全场景说明、细化区块，也可以直接新增或删除区块。",
         "aiPlaceholder": "例如：把它扩展成废弃研究所，新增一个档案室和温室区",
         "aiSend": "发送场景 AI 辅助消息",
+        "aiReferenceImages": "AI 读图参考",
+        "aiReferenceEmpty": "可上传最多 3 张参考图，让 AI 根据画面同步完善场景草稿。",
+        "aiReferenceOnlyMessage": "根据参考图片同步完善场景草稿",
+        "aiReferenceUnsupported": "当前默认 LLM 不支持图片输入，请在体验设置中切换支持读图的模型。",
         "aiMissingDefaultLlm": "还没有可用的默认 LLM 模型，请先在体验设置中配置。",
         "aiFailed": "场景 AI 辅助失败，请稍后再试。",
         "missingProviderSecret": "默认模型的供应商缺少 API Key，请先在体验设置中补全配置。",
         "panoramaTitle": "区块全景",
-        "panoramaDescription": "先生成本地预览，保存场景时才上传六面图。",
-        "generatePanorama": "生成区块全景",
+        "panoramaDescription": "先单独生成母图，再基于母图生成六面图；保存场景时才上传。",
+        "panoramaReferenceImages": "母图参考图",
+        "panoramaReferenceEmpty": "可上传最多 3 张参考图，仅用于本次母图生成。",
+        "referenceImageAdd": "上传参考",
+        "referenceImageRemove": "移除参考图",
+        "referenceImageLimit": "每处最多上传 3 张参考图。",
+        "invalidReferenceImage": "参考图仅支持 PNG/JPG/WebP，不能超过 10MB。",
+        "generatePanoramaMother": "生成母图",
+        "generatePanorama": "生成六面图",
         "panoramaIterationRounds": "最多迭代轮次",
         "panoramaEmpty": "暂无完整六面体全景",
         "panoramaFaceIterating": "图片迭代中",
         "panoramaMotherPreview": "全景母图",
+        "panoramaMotherEmpty": "暂无全景母图",
+        "panoramaMotherPreviewTitle": "全景母图预览",
+        "panoramaMotherPreviewOpen": "放大全景母图预览",
         "panoramaPreviewOnly": "仅本次预览",
         "panoramaPreviewTitle": "全景预览",
         "panoramaPreviewOpen": "放大全景预览",
@@ -786,14 +834,17 @@
           "bottom": "下"
         },
         "panoramaGenerated": "区块全景已生成。",
+        "panoramaMotherGenerated": "全景母图已生成。",
         "panoramaGeneratedBestEffort": "区块全景已生成最佳结果；接缝质检仍有风险，请放大预览后确认。",
+        "panoramaGeneratedColorRejected": "区块全景已生成；色彩和接缝后处理未应用，请放大预览后确认。",
+        "panoramaGeneratedColorSkipped": "区块全景已生成；色彩和接缝后处理未完成，请放大预览后确认。",
         "panoramaGeneratedFallback": "区块全景已生成，当前模型未进行参考重绘。",
         "panoramaGenerateFailed": "区块全景生成失败，请稍后再试。",
         "panoramaProgressDone": "区块全景已完成",
         "panoramaProgressFaces": "正在生成六面图",
         "panoramaProgressFailed": "区块全景生成失败",
         "panoramaProgressIterating": "接缝未通过，正在迭代问题图片",
-        "panoramaProgressColor": "正在统一色彩",
+        "panoramaProgressColor": "正在统一色彩和接缝",
         "panoramaProgressMother": "正在生成全景母图",
         "panoramaProgressMotherReady": "全景母图已生成",
         "panoramaProgressQuality": "正在检测接缝质量",
@@ -802,6 +853,9 @@
         "panoramaQualityFailed": "区块全景接缝质检未通过，请重新生成。",
         "panoramaReferenceEditUnsupported": "当前默认图片模型不支持参考图重绘，无法生成生产级六面全景；请在体验设置中切换支持图片编辑的模型。",
         "invalidPanoramaFace": "全景单面仅支持 PNG/JPG/WebP，不能超过 10MB，且保存时必须为正方形。",
+        "invalidPanoramaMother": "全景母图仅支持 PNG/JPG/WebP，不能超过 10MB，且保存时必须接近 2:1。",
+        "panoramaMotherRequired": "请先生成全景母图，再生成六面图。",
+        "panoramaFinalFaceTooLarge": "区块全景生成完成，但最终单面图片仍超过 10MB，请降低复杂度或重新生成。",
         "panoramaUploadFailed": "六面图上传失败，请检查 R2 存储配置后重试。",
         "panoramaUploadTooLarge": "六面图上传失败，单面图片过大，请重新生成或压缩后再保存。",
         "migrationRequired": "场景分类迁移尚未执行，请先运行 Prisma 迁移后再保存场景。",
@@ -873,60 +927,6 @@
       "openSettings": "打开体验设置",
       "newThread": "新建交互线程",
       "worldGraph": "查看世界图谱"
-    }
-  },
-  "admin": {
-    "shell": {
-      "brand": "新世界后台",
-      "description": "运营核心",
-      "backHome": "返回首页",
-      "noAccessKicker": "权限不足",
-      "noAccessTitle": "需要管理员账号",
-      "noAccessDescription": "当前账号不是管理员。请使用环境变量 ADMIN_ACCOUNT 和 ADMIN_PASSWORD 配置的管理员账号登录后再进入后台。",
-      "nav": {
-        "dashboard": "仪表盘",
-        "threads": "交互线程",
-        "graph": "世界图谱",
-        "jobs": "任务队列",
-        "settings": "系统设置"
-      }
-    },
-    "dashboard": {
-      "kicker": "后台基础框架",
-      "title": "AI 交互式小说运营台",
-      "description": "第一版后台暂不做鉴权，先承载交互线程、世界图谱、后台任务和系统设置的基础入口。",
-      "stats": {
-        "threads": {
-          "label": "交互线程",
-          "value": "占位"
-        },
-        "jobs": {
-          "label": "任务队列",
-          "value": "待接入"
-        },
-        "graph": {
-          "label": "图谱状态",
-          "value": "Neo4j"
-        },
-        "models": {
-          "label": "模型配置",
-          "value": "OpenAI"
-        }
-      },
-      "sections": {
-        "dialogue": {
-          "title": "交互线程管理",
-          "body": "后续管理用户与 AI 的剧情交互、上下文、分支和流式对话状态。"
-        },
-        "memory": {
-          "title": "记忆与图谱维护",
-          "body": "承载 Qdrant 向量检索、Neo4j 世界关系和 LangChain 切分任务的入口。"
-        },
-        "operations": {
-          "title": "系统运行设置",
-          "body": "后续集中管理模型提供商、R2 存储、Langfuse 观测和后台任务配置。"
-        }
-      }
     }
   }
 }

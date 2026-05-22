@@ -3,6 +3,7 @@
 import type { Locale } from "@/i18n/routing";
 import type { AuthCredentialsInput, AuthPasswordInput, AuthPreferencesInput, AuthProfileInput } from "@/lib/auth-types";
 import type { AiProviderInput, ImageModelInput, LlmModelInput, VectorModelInput } from "@/lib/ai/config-types";
+import type { OutboundProxySettings } from "@/lib/system-settings-types";
 import {
   changeCurrentViewerPassword,
   getCurrentViewer,
@@ -37,15 +38,18 @@ import {
   cleanupUploadedMaterialImages,
   generateMaskBoard,
   generateSceneBlockPanorama,
+  prepareSceneAssistReferenceImages,
   sendConversationMessage,
   setMaterialCommunitySharing,
   updateMaskMaterial,
   updateSceneMaterial,
   uploadScenePanoramaFace,
+  uploadScenePanoramaMother,
   type MaskMaterialBoardImageMode,
   type MaskMaterialCreateInput,
   type SceneMaterialCreateInput
 } from "@/lib/home-workspace";
+import { getAdminSystemSettings, saveAdminOutboundProxySettings } from "@/lib/system-settings";
 import { uploadUserAvatar } from "@/lib/storage/avatar";
 
 export async function createHomeConversation(scriptId: string, locale: Locale) {
@@ -76,6 +80,24 @@ export async function assistHomeSceneDraft(input: SceneMaterialCreateInput, inst
   return assistSceneDraft(input, instruction, locale);
 }
 
+export async function assistHomeSceneDraftWithImages(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const instructionValue = formData.get("instruction");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("SCENE_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as SceneMaterialCreateInput;
+  const instruction = typeof instructionValue === "string" ? instructionValue : "";
+  const referenceFiles = formData
+    .getAll("referenceImages")
+    .filter((value): value is File => value instanceof File && value.size > 0);
+  const referenceImages = await prepareSceneAssistReferenceImages(referenceFiles);
+
+  return assistSceneDraft(draft, instruction, locale, referenceImages);
+}
+
 export async function generateHomeSceneBlockPanorama(input: SceneMaterialCreateInput, blockId: string, locale: Locale) {
   return generateSceneBlockPanorama(input, blockId, locale);
 }
@@ -99,8 +121,29 @@ export async function uploadHomeScenePanoramaFace(formData: FormData) {
   }
 }
 
+export async function uploadHomeScenePanoramaMother(formData: FormData) {
+  const file = formData.get("file");
+  const viewer = await requireAuth();
+
+  if (!file || !(file instanceof File)) {
+    throw new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+  }
+
+  try {
+    return {
+      url: await uploadScenePanoramaMother(viewer.id, file)
+    };
+  } catch (error) {
+    throw normalizeScenePanoramaUploadError(error);
+  }
+}
+
 function normalizeScenePanoramaUploadError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+
+  if (message.includes("INVALID_SCENE_PANORAMA_MOTHER_FILE")) {
+    return new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+  }
 
   if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE") || message.includes("INVALID_MATERIAL_IMAGE_FILE")) {
     return new Error("INVALID_SCENE_PANORAMA_FACE_FILE");
@@ -222,6 +265,14 @@ export async function changeHomePassword(input: AuthPasswordInput) {
 
 export async function updateHomePreferences(input: AuthPreferencesInput) {
   return updateCurrentViewerPreferences(input);
+}
+
+export async function getHomeAdminSystemSettings() {
+  return getAdminSystemSettings();
+}
+
+export async function saveHomeAdminOutboundProxySettings(input: OutboundProxySettings) {
+  return saveAdminOutboundProxySettings(input);
 }
 
 export async function getHomeAiConfig() {

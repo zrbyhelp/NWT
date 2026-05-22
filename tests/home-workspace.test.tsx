@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zhMessages from "../messages/zh-CN.json";
 import {
   assistHomeMaskDraft,
+  assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
@@ -12,7 +13,8 @@ import {
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
   updateHomeMaskMaterial,
-  uploadHomeScenePanoramaFace
+  uploadHomeScenePanoramaFace,
+  uploadHomeScenePanoramaMother
 } from "@/app/[locale]/actions";
 import { HomeWorkspace } from "@/components/home-workspace";
 import type { WorkspaceConversation, WorkspaceData, WorkspaceMaterial, WorkspaceScript } from "@/lib/home-workspace";
@@ -45,6 +47,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/app/[locale]/actions", () => ({
   assistHomeMaskDraft: vi.fn(),
   assistHomeSceneDraft: vi.fn(),
+  assistHomeSceneDraftWithImages: vi.fn(),
   cleanupHomeUploadedMaterialImages: vi.fn(),
   createHomeConversation: vi.fn(),
   createHomeMaskMaterial: vi.fn(),
@@ -60,7 +63,8 @@ vi.mock("@/app/[locale]/actions", () => ({
   setHomeMaterialCommunitySharing: vi.fn(),
   updateHomeMaskMaterial: vi.fn(),
   updateHomeSceneMaterial: vi.fn(),
-  uploadHomeScenePanoramaFace: vi.fn()
+  uploadHomeScenePanoramaFace: vi.fn(),
+  uploadHomeScenePanoramaMother: vi.fn()
 }));
 
 vi.mock("@/components/header-actions", () => ({
@@ -470,6 +474,7 @@ describe("HomeWorkspace script manager", () => {
         url: `https://cdn.example.com/materials/${String(formData.get("face"))}.png`
       };
     });
+    vi.mocked(uploadHomeScenePanoramaMother).mockResolvedValue({ url: "https://cdn.example.com/materials/mother.png" });
     vi.mocked(createHomeSceneMaterial).mockImplementation(async (_formData) => createdSceneMaterial);
 
     render(<HomeWorkspace data={workspaceData} />);
@@ -480,29 +485,55 @@ describe("HomeWorkspace script manager", () => {
 
     expect(screen.getByRole("heading", { name: "新建场景" })).toBeInTheDocument();
     expect(screen.getByLabelText("全景类型")).toHaveValue("realistic");
+    expect(screen.getByLabelText("区块规模")).toHaveValue("mid");
     fireEvent.change(screen.getByLabelText("全景类型"), { target: { value: "photo" } });
     expect(screen.getByLabelText("全景类型")).toHaveValue("photo");
+    fireEvent.change(screen.getByLabelText("区块规模"), { target: { value: "wide" } });
+    expect(screen.getByLabelText("区块规模")).toHaveValue("wide");
 
     fireEvent.change(screen.getByLabelText("场景名称"), { target: { value: "废弃研究所" } });
     fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
     fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
     fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
     fireEvent.change(screen.getByLabelText("最多迭代轮次"), { target: { value: "4" } });
+    const blockReferenceInput = screen.getAllByText("上传参考")[0].closest("label")?.querySelector("input");
+    const referenceFile = new File(["reference"], "reference.png", { type: "image/png" });
 
-    fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
+    expect(blockReferenceInput).toBeTruthy();
+    fireEvent.change(blockReferenceInput as HTMLInputElement, { target: { files: [referenceFile] } });
+    expect(screen.getByText("reference.png")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "生成母图" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/materials/scene-panorama/mother/stream", expect.any(Object));
+    });
+    const motherBody = fetchMock.mock.calls.find((call) => String(call[0]) === "/api/materials/scene-panorama/mother/stream")?.[1]?.body;
+    expect(motherBody).toBeInstanceOf(FormData);
+    expect((motherBody as FormData).getAll("referenceImages")).toHaveLength(1);
+
+    await waitFor(() => {
+      expect(screen.getByText("全景母图")).toBeInTheDocument();
+      expect(toast.success).toHaveBeenCalledWith("全景母图已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成六面图" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/materials/scene-panorama/stream", expect.any(Object));
     });
-    const streamBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(streamBody).toMatchObject({
-      input: expect.objectContaining({ panoramaDrawingStyle: "photo" }),
-      locale: "zh-CN",
-      maxRedrawAttempts: 4
+    const streamBody = fetchMock.mock.calls.find((call) => String(call[0]) === "/api/materials/scene-panorama/stream")?.[1]?.body;
+    expect(streamBody).toBeInstanceOf(FormData);
+    expect((streamBody as FormData).get("locale")).toBe("zh-CN");
+    expect((streamBody as FormData).get("maxRedrawAttempts")).toBe("4");
+    expect((streamBody as FormData).get("motherImage")).toBeInstanceOf(File);
+    expect((streamBody as FormData).getAll("referenceImages")).toHaveLength(0);
+    expect(JSON.parse(String((streamBody as FormData).get("draft")))).toMatchObject({
+      panoramaDrawingStyle: "photo",
+      blocks: [expect.objectContaining({ scalePreset: "wide" })]
     });
 
     await waitFor(() => {
-      expect(screen.getByText("全景母图")).toBeInTheDocument();
       expect(toast.success).toHaveBeenCalledWith("区块全景已生成。");
       expect(screen.getByText("AI 辅助")).toBeInTheDocument();
     });
@@ -514,6 +545,7 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存场景" }));
 
     await waitFor(() => {
+      expect(uploadHomeScenePanoramaMother).toHaveBeenCalledTimes(1);
       expect(uploadHomeScenePanoramaFace).toHaveBeenCalledTimes(6);
       expect(createHomeSceneMaterial).toHaveBeenCalledWith(
         expect.any(FormData),
@@ -527,11 +559,16 @@ describe("HomeWorkspace script manager", () => {
       panoramaDrawingStyle: "photo",
       blocks: [
         expect.objectContaining({
+          scalePreset: "wide",
           panorama: {
             faceSource: "reference-repaint",
             faces: expect.objectContaining({
               front: "https://cdn.example.com/materials/front.png"
-            })
+            }),
+            mother: {
+              source: "generated",
+              url: "https://cdn.example.com/materials/mother.png"
+            }
           }
         })
       ]
@@ -544,6 +581,7 @@ describe("HomeWorkspace script manager", () => {
       face: String(formData.get("face")),
       url: `https://cdn.example.com/materials/${String(formData.get("face"))}.png`
     }));
+    vi.mocked(uploadHomeScenePanoramaMother).mockResolvedValue({ url: "https://cdn.example.com/materials/mother.png" });
     vi.mocked(createHomeSceneMaterial).mockRejectedValue(new Error("SCENE_MATERIAL_DATABASE_FAILED"));
 
     render(<HomeWorkspace data={workspaceData} />);
@@ -556,7 +594,13 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
     fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成母图" }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("全景母图已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成六面图" }));
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith("区块全景已生成。");
@@ -565,8 +609,10 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存场景" }));
 
     await waitFor(() => {
+      expect(uploadHomeScenePanoramaMother).toHaveBeenCalledTimes(1);
       expect(uploadHomeScenePanoramaFace).toHaveBeenCalledTimes(6);
       expect(cleanupHomeUploadedMaterialImages).toHaveBeenCalledWith([
+        "https://cdn.example.com/materials/mother.png",
         "https://cdn.example.com/materials/front.png",
         "https://cdn.example.com/materials/back.png",
         "https://cdn.example.com/materials/left.png",
@@ -593,11 +639,78 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
     fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成母图" }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("全景母图已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成六面图" }));
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith("区块全景接缝质检未通过，请重新生成。");
     });
+  });
+
+  it("treats skipped panorama color harmonization as a completed generation", async () => {
+    const faces = createSceneStreamFaces();
+    const events = createScenePanoramaStreamEvents(faces).map((event) =>
+      event.type === "done" ? { ...event, colorStatus: "skipped" } : event
+    );
+
+    mockScenePanoramaFetch(faces, events);
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "场景" }));
+    fireEvent.change(screen.getByLabelText("场景名称"), { target: { value: "废弃研究所" } });
+    fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
+    fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
+    fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成母图" }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("全景母图已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成六面图" }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("区块全景已生成；色彩和接缝后处理未完成，请放大预览后确认。");
+    });
+    expect(toast.error).not.toHaveBeenCalledWith("区块全景生成失败，请稍后再试。");
+  });
+
+  it("sends scene AI assist with an image-only reference", async () => {
+    vi.mocked(assistHomeSceneDraftWithImages).mockResolvedValue({
+      message: "已根据参考图同步场景。",
+      patch: {}
+    });
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "场景" }));
+    const aiReferenceInput = screen.getAllByText("上传参考")[1].closest("label")?.querySelector("input");
+
+    expect(aiReferenceInput).toBeTruthy();
+    fireEvent.change(aiReferenceInput as HTMLInputElement, {
+      target: { files: [new File(["ai-reference"], "ai-reference.png", { type: "image/png" })] }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送场景 AI 辅助消息" }));
+
+    await waitFor(() => {
+      expect(assistHomeSceneDraftWithImages).toHaveBeenCalledWith(expect.any(FormData), "zh-CN");
+    });
+    const formData = vi.mocked(assistHomeSceneDraftWithImages).mock.calls[0][0] as FormData;
+
+    expect(formData.get("instruction")).toBe("");
+    expect(formData.getAll("referenceImages")).toHaveLength(1);
+    expect(screen.getByText("根据参考图片同步完善场景草稿")).toBeInTheDocument();
   });
 
   it("opens the login dialog when an anonymous user starts a protected action", () => {
@@ -881,20 +994,21 @@ function mockScenePanoramaFetch(
   faces: Record<TestScenePanoramaFace, TestScenePanoramaFaceImage>,
   events: Array<Record<string, unknown>> = createScenePanoramaStreamEvents(faces)
 ) {
+  const motherEvents = createScenePanoramaMotherStreamEvents();
   const encoder = new TextEncoder();
-  const body = new ReadableStream({
-    start(controller) {
-      events.forEach((event) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      });
-      controller.close();
-    }
-  });
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
 
+    if (url === "/api/materials/scene-panorama/mother/stream") {
+      return new Response(createEventStreamBody(motherEvents, encoder), {
+        headers: {
+          "Content-Type": "text/event-stream"
+        }
+      });
+    }
+
     if (url === "/api/materials/scene-panorama/stream") {
-      return new Response(body, {
+      return new Response(createEventStreamBody(events, encoder), {
         headers: {
           "Content-Type": "text/event-stream"
         }
@@ -917,12 +1031,33 @@ function mockScenePanoramaFetch(
   return fetchMock;
 }
 
+function createEventStreamBody(events: Array<Record<string, unknown>>, encoder: TextEncoder) {
+  return new ReadableStream({
+    start(controller) {
+      events.forEach((event) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      });
+      controller.close();
+    }
+  });
+}
+
+function createScenePanoramaMotherStreamEvents() {
+  const image = { contentType: "image/png", dataUrl: "data:image/png;base64,bW90aGVy", fileName: "mother.png" };
+
+  return [
+    { type: "progress", progress: 8, stage: "mother-generating", messageKey: "sceneForm.panoramaProgressMother" },
+    { type: "mother", image },
+    { type: "motherDone", image, sizeProfile: "4k" },
+    { type: "progress", progress: 100, stage: "mother-ready", messageKey: "sceneForm.panoramaProgressMotherReady" }
+  ];
+}
+
 function createScenePanoramaStreamEvents(faces: Record<TestScenePanoramaFace, TestScenePanoramaFaceImage>) {
   const faceList = Object.values(faces);
 
   return [
-    { type: "progress", progress: 8, stage: "mother-generating", messageKey: "sceneForm.panoramaProgressMother" },
-    { type: "mother", image: { contentType: "image/png", dataUrl: "data:image/png;base64,bW90aGVy", fileName: "mother.png" } },
+    { type: "progress", progress: 24, stage: "faces-generating", messageKey: "sceneForm.panoramaProgressFaces" },
     ...faceList.map((image) => ({ type: "face", attempt: 1, face: image.face, image, phase: "preview" })),
     { type: "quality", attempt: 1, failedFaces: [], passed: true, quality: {} },
     ...faceList.map((image) => ({ type: "face", attempt: 1, face: image.face, image, phase: "final" })),

@@ -17,8 +17,8 @@ describe("locale paths", () => {
     expect(switchLocalePath("/zh-CN", "en-US")).toBe("/en-US");
   });
 
-  it("switches locale for admin routes", () => {
-    expect(switchLocalePath("/zh-CN/admin", "en-US")).toBe("/en-US/admin");
-    expect(switchLocalePath("/en-US/admin", "zh-CN")).toBe("/zh-CN/admin");
+  it("switches locale for nested routes", () => {
+    expect(switchLocalePath("/zh-CN/login", "en-US")).toBe("/en-US/login");
+    expect(switchLocalePath("/en-US/login", "zh-CN")).toBe("/zh-CN/login");
   });
 });

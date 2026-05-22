@@ -11,6 +11,7 @@ import type { Locale } from "@/i18n/routing";
 import type { DefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 import { getDefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
 import { estimateTokenCount } from "@/lib/home-workspace-utils";
+import { configureServerOutboundProxy } from "@/lib/network/proxy";
 import {
   createObservedOpenAIClient,
   type AiObservationContext,
@@ -18,9 +19,13 @@ import {
   withAiObservation
 } from "@/lib/observability/langfuse";
 
+export type RuntimeChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export type RuntimeChatMessage = {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | RuntimeChatContentPart[];
 };
 
 export type RuntimeTokenUsage = {
@@ -34,6 +39,7 @@ const defaultLocale: Locale = "zh-CN";
 
 export async function createDefaultOpenAIClient(userId?: string | null, observationContext?: AiObservationContext) {
   const config = await getDefaultLlmRuntimeConfig(userId);
+  await configureServerOutboundProxy();
   const context = withRuntimeModelContext(
     {
       feature: "llm.default",
@@ -68,7 +74,7 @@ export async function generateDefaultLlmReply(
 ) {
   const baseContext = buildLlmObservationContext({
     feature: "llm.generate",
-    input: messages,
+    input: sanitizeRuntimeMessagesForObservation(messages),
     locale,
     observationContext,
     userId
@@ -79,7 +85,7 @@ export async function generateDefaultLlmReply(
     const enrichedContext = withRuntimeModelContext(baseContext, config);
 
     updateAiObservation(span, {
-      input: messages,
+      input: sanitizeRuntimeMessagesForObservation(messages),
       metadata: {
         ...enrichedContext.metadata,
         modelId: config.modelId,
@@ -136,7 +142,7 @@ export async function streamDefaultLlmReply(
 ) {
   const baseContext = buildLlmObservationContext({
     feature: "llm.stream",
-    input: messages,
+    input: sanitizeRuntimeMessagesForObservation(messages),
     locale,
     observationContext,
     userId
@@ -147,7 +153,7 @@ export async function streamDefaultLlmReply(
     const enrichedContext = withRuntimeModelContext(baseContext, config);
 
     updateAiObservation(span, {
-      input: messages,
+      input: sanitizeRuntimeMessagesForObservation(messages),
       metadata: {
         ...enrichedContext.metadata,
         modelId: config.modelId,
@@ -263,6 +269,36 @@ function buildBaseChatParams(config: DefaultLlmRuntimeConfig, messages: RuntimeC
     messages: messages as ChatCompletionMessageParam[],
     temperature: config.temperature
   };
+}
+
+function sanitizeRuntimeMessagesForObservation(messages: RuntimeChatMessage[]) {
+  return messages.map((message) => ({
+    ...message,
+    content: Array.isArray(message.content)
+      ? message.content.map<RuntimeChatContentPart>((part) => {
+          if (part.type === "image_url") {
+            return {
+              type: "image_url",
+              image_url: {
+                url: summarizeImageUrl(part.image_url.url)
+              }
+            };
+          }
+
+          return part;
+        })
+      : message.content
+  }));
+}
+
+function summarizeImageUrl(url: string) {
+  if (!url.startsWith("data:")) {
+    return url.slice(0, 200);
+  }
+
+  const contentType = url.match(/^data:([^;,]+)/)?.[1] ?? "image/*";
+
+  return `[${contentType} data url omitted]`;
 }
 
 function withDefaultThinking<T extends Record<string, unknown>>(params: T): T {
@@ -430,8 +466,18 @@ function resolveCompletionUsage({
   const hasCompletionTokens = typeof completionTokens === "number";
 
   return {
-    promptTokens: hasPromptTokens ? promptTokens : estimateTokenCount(messages.map((message) => `${message.role}: ${message.content}`).join("\n")),
+    promptTokens: hasPromptTokens ? promptTokens : estimateTokenCount(messages.map((message) => `${message.role}: ${runtimeMessageContentToText(message.content)}`).join("\n")),
     completionTokens: hasCompletionTokens ? completionTokens : estimateTokenCount(content),
     estimated: !hasPromptTokens || !hasCompletionTokens
   };
+}
+
+function runtimeMessageContentToText(content: RuntimeChatMessage["content"]) {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((part) => part.type === "text" ? part.text : "[image]")
+    .join("\n");
 }

@@ -4,16 +4,15 @@ import { routing } from "@/i18n/routing";
 import { AiConfigError } from "@/lib/ai/config-types";
 import { authRequiredCode, isAuthRequiredError } from "@/lib/auth-types";
 import {
-  prepareScenePanoramaMotherImage,
   prepareScenePanoramaReferenceImages,
-  streamSceneBlockPanorama,
+  streamSceneBlockPanoramaMother,
   type SceneMaterialCreateInput
 } from "@/lib/home-workspace";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
-  const body = await readPanoramaRequestBody(request);
+  const body = await readPanoramaMotherRequestBody(request);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -27,14 +26,12 @@ export async function POST(request: NextRequest) {
           throw new Error("SCENE_BLOCK_REQUIRED");
         }
 
-        await streamSceneBlockPanorama(
+        await streamSceneBlockPanoramaMother(
           body.input as SceneMaterialCreateInput,
           body.blockId,
           resolveLocale(body.locale),
           (event) => send(event),
           {
-            maxRedrawAttempts: normalizeMaxRedrawAttempts(body.maxRedrawAttempts),
-            motherImage: body.motherImage,
             referenceImages: body.referenceImages
           }
         );
@@ -55,44 +52,23 @@ export async function POST(request: NextRequest) {
   });
 }
 
-async function readPanoramaRequestBody(request: NextRequest): Promise<{
+async function readPanoramaMotherRequestBody(request: NextRequest): Promise<{
   blockId?: unknown;
   input?: unknown;
   locale?: unknown;
-  maxRedrawAttempts?: unknown;
-  motherImage?: Awaited<ReturnType<typeof prepareScenePanoramaMotherImage>>;
   referenceImages?: Awaited<ReturnType<typeof prepareScenePanoramaReferenceImages>>;
 }> {
-  const contentType = request.headers.get("content-type") ?? "";
-
-  if (!contentType.toLowerCase().includes("multipart/form-data")) {
-    const body = (await request.json()) as {
-      blockId?: unknown;
-      input?: unknown;
-      locale?: unknown;
-      maxRedrawAttempts?: unknown;
-    };
-
-    return body;
-  }
-
   const formData = await request.formData();
   const draftValue = formData.get("draft") ?? formData.get("input");
   const input = typeof draftValue === "string" ? JSON.parse(draftValue) as SceneMaterialCreateInput : undefined;
   const referenceFiles = formData
     .getAll("referenceImages")
     .filter((value): value is File => value instanceof File && value.size > 0);
-  const motherValue = formData.get("motherImage");
-  const motherFile = motherValue instanceof File && motherValue.size > 0 ? motherValue : null;
-  const motherUrlValue = formData.get("motherUrl");
-  const motherUrl = typeof motherUrlValue === "string" && motherUrlValue.trim() ? motherUrlValue.trim() : null;
 
   return {
     blockId: formData.get("blockId"),
     input,
     locale: formData.get("locale"),
-    maxRedrawAttempts: formData.get("maxRedrawAttempts"),
-    motherImage: await prepareScenePanoramaMotherImage(motherFile, motherUrl, request.nextUrl.origin),
     referenceImages: await prepareScenePanoramaReferenceImages(referenceFiles)
   };
 }
@@ -107,18 +83,6 @@ function resolvePanoramaStreamErrorCode(error: unknown) {
   }
 
   return error instanceof Error ? error.message : String(error);
-}
-
-function normalizeMaxRedrawAttempts(value: unknown) {
-  if (typeof value === "number") {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    return Number.parseInt(value, 10);
-  }
-
-  return undefined;
 }
 
 function resolveLocale(locale: unknown): Locale {

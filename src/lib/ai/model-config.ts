@@ -16,6 +16,7 @@ import {
 } from "@/lib/ai/config-types";
 import { chooseDefaultModel } from "@/lib/ai/model-config-utils";
 import { normalizeProviderModels } from "@/lib/ai/provider-model-utils";
+import { configureServerOutboundProxy } from "@/lib/network/proxy";
 import { updateAiObservation, withAiObservation } from "@/lib/observability/langfuse";
 import { prisma } from "@/lib/prisma";
 
@@ -181,6 +182,8 @@ export async function deleteAiProvider(userId: string, providerId: string) {
 }
 
 export async function fetchProviderModels(userId: string, providerId: string): Promise<ProviderModelOption[]> {
+  await configureServerOutboundProxy();
+
   const provider = await findUserProviderOrThrow(userId, providerId);
 
   if (!provider.encryptedApiKey) {

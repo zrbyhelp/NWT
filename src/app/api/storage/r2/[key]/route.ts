@@ -1,6 +1,6 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
-import { r2, r2BucketName } from "@/lib/storage/r2";
+import { getR2Client, r2BucketName } from "@/lib/storage/r2";
 
 export async function GET(
   _request: Request,
@@ -13,6 +13,7 @@ export async function GET(
     return new Response(null, { status: 404 });
   }
 
+  const r2 = await getR2Client();
   const object = await r2.send(
     new GetObjectCommand({
       Bucket: r2BucketName,

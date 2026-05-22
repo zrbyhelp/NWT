@@ -3,7 +3,7 @@ import "server-only";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { getR2PublicObjectUrl, r2, r2BucketName } from "@/lib/storage/r2";
+import { getR2Client, getR2PublicObjectUrl, r2BucketName } from "@/lib/storage/r2";
 import { env } from "@/env";
 
 export const maxMaterialImageBytes = 10 * 1024 * 1024;
@@ -65,6 +65,23 @@ export async function uploadScenePanoramaFaceImage(userId: string, file: File) {
   return uploadMaterialImageBytes(userId, bytes, contentType, "scene-panoramas");
 }
 
+export async function uploadScenePanoramaMotherImage(userId: string, file: File) {
+  const contentType = file.type.toLowerCase();
+
+  if (!isValidMaterialImageFile(file)) {
+    throw new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+  }
+
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const metadata = await sharp(bytes).metadata();
+
+  if (!metadata.width || !metadata.height || Math.abs(metadata.width / metadata.height - 2) > 0.03) {
+    throw new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+  }
+
+  return uploadMaterialImageBytes(userId, bytes, contentType, "scene-panoramas");
+}
+
 export async function uploadMaterialImageBytes(userId: string, bytes: Uint8Array, contentType: string, folder = "imports") {
   const normalizedContentType = normalizeMaterialImageContentType(contentType);
   const extension = normalizedContentType ? materialImageContentTypeExtensions[normalizedContentType] : null;
@@ -74,6 +91,7 @@ export async function uploadMaterialImageBytes(userId: string, bytes: Uint8Array
   }
 
   const key = `materials/${encodePathSegment(userId)}/${encodePathSegment(folder)}/${Date.now()}-${randomUUID()}.${extension}`;
+  const r2 = await getR2Client();
 
   await r2.send(
     new PutObjectCommand({
@@ -94,14 +112,16 @@ export async function deleteMaterialImagesByUrls(urls: string[]) {
     .filter((key): key is string => typeof key === "string" && key.startsWith("materials/"));
 
   await Promise.allSettled(
-    keys.map((key) =>
-      r2.send(
+    keys.map(async (key) => {
+      const r2 = await getR2Client();
+
+      return r2.send(
         new DeleteObjectCommand({
           Bucket: r2BucketName,
           Key: key
         })
-      )
-    )
+      );
+    })
   );
 }
 

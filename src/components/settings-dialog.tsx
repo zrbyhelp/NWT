@@ -2,6 +2,7 @@
 
 import {
   Bot,
+  BookOpen,
   Brain,
   DatabaseZap,
   ExternalLink,
@@ -14,6 +15,7 @@ import {
   LogOut,
   Moon,
   Monitor,
+  Network,
   Palette,
   Settings,
   ShieldCheck,
@@ -28,7 +30,15 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { FormEvent } from "react";
 import { toast } from "sonner";
-import { changeHomePassword, logoutHomeAccount, updateHomePreferences, updateHomeProfile, uploadHomeAvatar } from "@/app/[locale]/actions";
+import {
+  changeHomePassword,
+  getHomeAdminSystemSettings,
+  logoutHomeAccount,
+  saveHomeAdminOutboundProxySettings,
+  updateHomePreferences,
+  updateHomeProfile,
+  uploadHomeAvatar
+} from "@/app/[locale]/actions";
 import { AiConfigManager } from "@/components/ai-config-manager";
 import { useAppTheme } from "@/components/theme-provider";
 import { UserAvatar } from "@/components/user-avatar";
@@ -37,6 +47,7 @@ import { localePath, switchLocalePath } from "@/lib/locale-path";
 import { isValidAvatarFile } from "@/lib/storage/avatar-constraints";
 import { colorThemes, typographyPresets } from "@/lib/theme-options";
 import type { AuthViewer } from "@/lib/auth-types";
+import type { OutboundProxySettings } from "@/lib/system-settings-types";
 import { cn } from "@/lib/utils";
 
 const languageNames: Record<Locale, string> = {
@@ -47,9 +58,16 @@ const languageNames: Record<Locale, string> = {
 const paletteStorageKey = "nwt-palette";
 const typographyStorageKey = "nwt-typography";
 const mainSiteUrl = "https://zrg.zrbyhelp.com/";
+const docsSiteUrl = "http://localhost:5173";
+const defaultOutboundProxyForm = {
+  enabled: false,
+  httpProxy: "",
+  httpsProxy: "",
+  noProxy: "127.0.0.1,localhost"
+} satisfies OutboundProxySettings;
 type PaletteId = (typeof colorThemes)[number]["id"];
 type TypographyId = (typeof typographyPresets)[number]["id"];
-type SettingsTab = "general" | "account" | "appearance" | "about";
+type SettingsTab = "general" | "account" | "admin" | "appearance" | "about";
 type AiSettingsTab = "providers" | "llm" | "vectors" | "images";
 type AnySettingsTab = SettingsTab | AiSettingsTab;
 
@@ -69,6 +87,7 @@ export function SettingsDialog({
   const actionsT = useTranslations("home.actions");
   const authT = useTranslations("home.auth");
   const { setTheme, theme, resolvedTheme } = useAppTheme();
+  const isAdmin = viewer?.role === "ADMIN";
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<AnySettingsTab>("general");
   const [palette, setPalette] = useState<PaletteId>(colorThemes[0].id);
@@ -76,19 +95,24 @@ export function SettingsDialog({
   const [profileForm, setProfileForm] = useState({ avatarUrl: "", displayName: "" });
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [adminProxyForm, setAdminProxyForm] = useState<OutboundProxySettings>({ ...defaultOutboundProxyForm });
+  const [adminSettingsLoaded, setAdminSettingsLoaded] = useState(false);
+  const [adminSettingsLoading, setAdminSettingsLoading] = useState(false);
+  const [isAdminSettingsPending, startAdminSettingsTransition] = useTransition();
   const [preferencePending, startPreferenceTransition] = useTransition();
   const [isAccountPending, startAccountTransition] = useTransition();
   const lastSavedDisplayNameRef = useRef("");
-  const tabs = [
+  const tabs: Array<{ id: AnySettingsTab; icon: React.ElementType }> = [
     { id: "general", icon: Languages },
     { id: "account", icon: UserRound },
+    ...(isAdmin ? [{ id: "admin" as const, icon: ShieldCheck }] : []),
     { id: "appearance", icon: Palette },
     { id: "providers", icon: KeyRound },
     { id: "llm", icon: Bot },
     { id: "vectors", icon: DatabaseZap },
     { id: "images", icon: ImageIcon },
     { id: "about", icon: Info }
-  ] as const;
+  ];
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -106,6 +130,45 @@ export function SettingsDialog({
 
     return () => window.cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "admin" && !isAdmin) {
+      setActiveTab("general");
+    }
+  }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    if (!open || activeTab !== "admin" || !isAdmin || adminSettingsLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setAdminSettingsLoading(true);
+    getHomeAdminSystemSettings()
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+
+        setAdminProxyForm(result.outboundProxy);
+        setAdminSettingsLoaded(true);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          toast.error(resolveAdminSettingsError(error, t));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAdminSettingsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, adminSettingsLoaded, isAdmin, open, t]);
 
   useEffect(() => {
     document.documentElement.dataset.palette = palette;
@@ -160,6 +223,7 @@ export function SettingsDialog({
     });
     lastSavedDisplayNameRef.current = viewer?.displayName ?? viewer?.account ?? "";
     setPasswordForm({ currentPassword: "", newPassword: "" });
+    setAdminSettingsLoaded(false);
     setOpen(true);
   }
 
@@ -242,6 +306,22 @@ export function SettingsDialog({
         router.refresh();
       } catch (error) {
         toast.error(resolveAccountError(error, t));
+      }
+    });
+  }
+
+  function handleAdminProxySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    startAdminSettingsTransition(async () => {
+      try {
+        const result = await saveHomeAdminOutboundProxySettings(adminProxyForm);
+
+        setAdminProxyForm(result.outboundProxy);
+        setAdminSettingsLoaded(true);
+        toast.success(t("admin.saved"));
+      } catch (error) {
+        toast.error(resolveAdminSettingsError(error, t));
       }
     });
   }
@@ -334,6 +414,23 @@ export function SettingsDialog({
 
                     <SettingInlineRow
                       action={
+                        <a
+                          href={docsSiteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground/72 transition hover:bg-muted hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t("docsAction")}
+                        </a>
+                      }
+                      description={t("docsDescription")}
+                      icon={BookOpen}
+                      title={t("docs")}
+                    />
+
+                    <SettingInlineRow
+                      action={
                         <ToggleSwitch
                           ariaLabel={t("showThinking")}
                           checked={viewer?.showAiThinking ?? false}
@@ -364,6 +461,17 @@ export function SettingsDialog({
                       />
                     ) : null}
                   </div>
+                ) : null}
+
+                {activeTab === "admin" && isAdmin ? (
+                  <AdminProxySettingsPanel
+                    form={adminProxyForm}
+                    loading={adminSettingsLoading}
+                    saving={isAdminSettingsPending}
+                    onChange={setAdminProxyForm}
+                    onSubmit={handleAdminProxySubmit}
+                    t={t}
+                  />
                 ) : null}
 
                 {activeTab === "account" ? (
@@ -603,6 +711,82 @@ export function SettingsDialog({
   );
 }
 
+function AdminProxySettingsPanel({
+  form,
+  loading,
+  onChange,
+  onSubmit,
+  saving,
+  t
+}: {
+  form: OutboundProxySettings;
+  loading: boolean;
+  onChange: (form: OutboundProxySettings) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  saving: boolean;
+  t: (key: string) => string;
+}) {
+  const disabled = loading || saving;
+
+  return (
+    <form className="space-y-5" onSubmit={onSubmit}>
+      <SettingSection icon={ShieldCheck} title={t("admin.title")} description={t("admin.description")} />
+
+      <SettingSection icon={Network} title={t("admin.outboundProxyTitle")} description={t("admin.outboundProxyDescription")}>
+        {loading ? (
+          <div className="flex h-24 items-center justify-center gap-2 text-sm text-foreground/55">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            {t("admin.loading")}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <SettingInlineRow
+              action={
+                <ToggleSwitch
+                  ariaLabel={t("admin.enabled")}
+                  checked={form.enabled}
+                  disabled={disabled}
+                  onChange={(enabled) => onChange({ ...form, enabled })}
+                />
+              }
+              icon={Network}
+              title={t("admin.enabled")}
+            />
+
+            <FormTextField
+              label={t("admin.httpProxy")}
+              value={form.httpProxy}
+              onChange={(httpProxy) => onChange({ ...form, httpProxy })}
+              placeholder={t("admin.httpProxyPlaceholder")}
+              disabled={disabled}
+            />
+            <FormTextField
+              label={t("admin.httpsProxy")}
+              value={form.httpsProxy}
+              onChange={(httpsProxy) => onChange({ ...form, httpsProxy })}
+              placeholder={t("admin.httpsProxyPlaceholder")}
+              disabled={disabled}
+            />
+            <label className="space-y-1.5 text-sm">
+              <span className="text-foreground/64">{t("admin.noProxy")}</span>
+              <textarea
+                value={form.noProxy}
+                onChange={(event) => onChange({ ...form, noProxy: event.target.value })}
+                placeholder={t("admin.noProxyPlaceholder")}
+                disabled={disabled}
+                rows={3}
+                className="min-h-20 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition placeholder:text-foreground/34 focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </label>
+
+            <FormActionButton loading={disabled} label={t("admin.save")} icon={ShieldCheck} />
+          </div>
+        )}
+      </SettingSection>
+    </form>
+  );
+}
+
 function SettingSection({
   children,
   description,
@@ -693,6 +877,7 @@ function ToggleSwitch({
 }
 
 function FormTextField({
+  disabled,
   label,
   maxLength,
   onChange,
@@ -701,6 +886,7 @@ function FormTextField({
   type = "text",
   value
 }: {
+  disabled?: boolean;
   label: string;
   maxLength?: number;
   onChange: (value: string) => void;
@@ -720,7 +906,8 @@ function FormTextField({
         required={required}
         maxLength={maxLength}
         minLength={required ? 1 : undefined}
-        className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition placeholder:text-foreground/34 focus:border-primary"
+        disabled={disabled}
+        className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition placeholder:text-foreground/34 focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
       />
     </label>
   );
@@ -793,4 +980,22 @@ function resolveAccountError(error: unknown, t: (key: string) => string) {
   }
 
   return t("account.errors.generic");
+}
+
+function resolveAdminSettingsError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.includes("FORBIDDEN")) {
+    return t("admin.errors.forbidden");
+  }
+
+  if (message.includes("OUTBOUND_PROXY_URL_REQUIRED")) {
+    return t("admin.errors.urlRequired");
+  }
+
+  if (message.includes("OUTBOUND_PROXY_URL_INVALID")) {
+    return t("admin.errors.invalidUrl");
+  }
+
+  return t("admin.errors.generic");
 }

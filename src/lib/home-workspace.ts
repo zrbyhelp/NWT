@@ -7,17 +7,28 @@ import type { Locale } from "@/i18n/routing";
 import {
   generateDefaultMaskBoardImage,
   generateDefaultScenePanorama,
+  generateDefaultScenePanoramaMother,
   normalizeScenePanoramaMaxRedrawAttempts,
   scenePanoramaFaces,
   streamDefaultScenePanorama,
+  streamDefaultScenePanoramaMother,
   type ScenePanoramaFace,
   type ScenePanoramaGenerationOptions,
   type ScenePanoramaGenerationResult,
+  type ScenePanoramaMotherGenerationResult,
+  type ScenePanoramaReferenceImage,
   type ScenePanoramaStreamCallback
 } from "@/lib/ai/image-runtime";
-import { generateDefaultLlmReply, streamDefaultLlmReply, type RuntimeChatMessage, type RuntimeTokenUsage } from "@/lib/ai/runtime";
+import {
+  generateDefaultLlmReply,
+  streamDefaultLlmReply,
+  type RuntimeChatContentPart,
+  type RuntimeChatMessage,
+  type RuntimeTokenUsage
+} from "@/lib/ai/runtime";
 import { ensureConfiguredAdminUser, getCurrentViewer, requireAuth } from "@/lib/auth";
 import type { AuthViewer } from "@/lib/auth-types";
+import { configureServerOutboundProxy } from "@/lib/network/proxy";
 import {
   buildNarrativeLlmMessages,
   createConversationTitle,
@@ -25,7 +36,14 @@ import {
   summarizeConversationTokenUsage
 } from "@/lib/home-workspace-utils";
 import { prisma } from "@/lib/prisma";
-import { deleteMaterialImagesByUrls, uploadMaskBoardImage, uploadScenePanoramaFaceImage } from "@/lib/storage/material";
+import {
+  deleteMaterialImagesByUrls,
+  isValidMaterialImageBytes,
+  isValidMaterialImageFile,
+  uploadMaskBoardImage,
+  uploadScenePanoramaFaceImage,
+  uploadScenePanoramaMotherImage
+} from "@/lib/storage/material";
 
 const baseScriptSlug = "base-ai-script";
 const defaultUserId = "default-local";
@@ -33,6 +51,14 @@ const defaultUserSlug = "default-local";
 const assistantRole = "assistant";
 const userRole = "user";
 const communityAddedSource = "COMMUNITY_ADDED" satisfies WorkspaceScriptLibrarySource;
+export const defaultSceneScalePreset = "mid" satisfies WorkspaceSceneScalePreset;
+export const sceneScalePresetMeters: Record<WorkspaceSceneScalePreset, number> = {
+  aerial: 500,
+  closeUp: 2,
+  mid: 25,
+  near: 8,
+  wide: 100
+};
 const defaultMaterialSlugs = [
   "echo-mask",
   "mirror-mourning-mask",
@@ -338,12 +364,17 @@ export type SceneMaterialBlockInput = {
   id: string;
   name: string;
   description: string;
+  scalePreset?: WorkspaceSceneScalePreset;
   panorama: SceneMaterialPanoramaInput | null;
 };
 
 export type SceneMaterialPanoramaInput = {
   faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
-  faces: Record<ScenePanoramaFace, string>;
+  faces?: Partial<Record<ScenePanoramaFace, string>>;
+  mother?: {
+    source: "generated" | "uploaded";
+    url: string;
+  } | null;
 };
 
 export type SceneDraftPatch = {
@@ -354,11 +385,13 @@ export type SceneDraftPatch = {
     id?: string;
     name: string;
     description: string;
+    scalePreset?: WorkspaceSceneScalePreset;
   }>;
   updateBlocks?: Array<{
     id: string;
     name?: string;
     description?: string;
+    scalePreset?: WorkspaceSceneScalePreset;
   }>;
   removeBlockIds?: string[];
 };
@@ -368,7 +401,15 @@ export type SceneAiAssistResult = {
   patch: SceneDraftPatch;
 };
 
+export type SceneAssistReferenceImage = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+  byteSize: number;
+};
+
 export type ScenePanoramaGenerationState = ScenePanoramaGenerationResult;
+export type ScenePanoramaMotherGenerationState = ScenePanoramaMotherGenerationResult;
 export type ScenePanoramaStreamHandler = ScenePanoramaStreamCallback;
 
 type WorkspaceMaskBoardDrawingStyle =
@@ -381,6 +422,7 @@ type WorkspaceMaskBoardDrawingStyle =
   | "comic"
   | "concept";
 type WorkspaceScenePanoramaDrawingStyle = WorkspaceMaskBoardDrawingStyle;
+export type WorkspaceSceneScalePreset = "closeUp" | "near" | "mid" | "wide" | "aerial";
 
 type WorkspaceMaskBodyFieldId =
   | "hairStyle"
@@ -448,7 +490,7 @@ export type WorkspaceMaskMaterialMetadata = {
 
 export type WorkspaceSceneMaterialMetadata = {
   kind: "scene";
-  version: 1;
+  version: 1 | 2;
   name: string;
   description: string;
   style: WorkspaceMaterialStyle;
@@ -457,9 +499,15 @@ export type WorkspaceSceneMaterialMetadata = {
     id: string;
     name: string;
     description: string;
+    scaleMeters?: number;
+    scalePreset?: WorkspaceSceneScalePreset;
     panorama: {
       faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
-      faces: Record<ScenePanoramaFace, { url: string }>;
+      faces?: Partial<Record<ScenePanoramaFace, { url: string }>>;
+      mother?: {
+        source: "generated" | "uploaded";
+        url: string;
+      } | null;
     } | null;
   }>;
 };
@@ -1096,27 +1144,47 @@ export async function updateSceneMaterial(
   }
 }
 
-export async function assistSceneDraft(input: SceneMaterialCreateInput, instruction: string, locale: Locale): Promise<SceneAiAssistResult> {
+export async function assistSceneDraft(
+  input: SceneMaterialCreateInput,
+  instruction: string,
+  locale: Locale,
+  referenceImages: SceneAssistReferenceImage[] = []
+): Promise<SceneAiAssistResult> {
   const viewer = await requireAuth();
-  const normalizedInstruction = instruction.trim();
+  const normalizedInstruction = instruction.trim() || (referenceImages.length > 0
+    ? (locale === "en-US"
+        ? "Sync the scene draft from the uploaded reference images."
+        : "请根据上传的参考图片同步完善当前场景草稿。")
+    : "");
 
   if (!normalizedInstruction) {
     throw new Error("SCENE_ASSIST_EMPTY_INSTRUCTION");
   }
 
-  const reply = await generateDefaultLlmReply(
-    buildSceneAssistMessages(input, normalizedInstruction, locale),
-    viewer.id,
-    false,
-    locale,
-    {
-      feature: "scene.assist",
-      input: {
-        currentDraft: input,
-        instruction: normalizedInstruction
+  let reply: Awaited<ReturnType<typeof generateDefaultLlmReply>>;
+
+  try {
+    reply = await generateDefaultLlmReply(
+      buildSceneAssistMessages(input, normalizedInstruction, locale, referenceImages),
+      viewer.id,
+      false,
+      locale,
+      {
+        feature: "scene.assist",
+        input: {
+          currentDraft: input,
+          instruction: normalizedInstruction,
+          referenceImages: summarizeSceneAssistReferenceImages(referenceImages)
+        }
       }
+    );
+  } catch (error) {
+    if (referenceImages.length > 0 && isLikelyLlmVisionUnsupportedError(error)) {
+      throw new Error("SCENE_ASSIST_REFERENCE_IMAGE_UNSUPPORTED");
     }
-  );
+
+    throw error;
+  }
   const parsed = parseJsonObject(reply.content);
   const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : reply.content.trim();
@@ -1136,6 +1204,25 @@ export async function generateSceneBlockPanorama(
   return runSceneBlockPanoramaGeneration(input, blockId, locale, undefined, options);
 }
 
+export async function generateSceneBlockPanoramaMother(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  options?: Pick<ScenePanoramaGenerationOptions, "referenceImages">
+): Promise<ScenePanoramaMotherGenerationState> {
+  return runSceneBlockPanoramaMotherGeneration(input, blockId, locale, undefined, options);
+}
+
+export async function streamSceneBlockPanoramaMother(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  onEvent: ScenePanoramaStreamHandler,
+  options?: Pick<ScenePanoramaGenerationOptions, "referenceImages">
+): Promise<ScenePanoramaMotherGenerationState> {
+  return runSceneBlockPanoramaMotherGeneration(input, blockId, locale, onEvent, options);
+}
+
 export async function streamSceneBlockPanorama(
   input: SceneMaterialCreateInput,
   blockId: string,
@@ -1146,6 +1233,35 @@ export async function streamSceneBlockPanorama(
   return runSceneBlockPanoramaGeneration(input, blockId, locale, onEvent, options);
 }
 
+async function runSceneBlockPanoramaMotherGeneration(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  onEvent?: ScenePanoramaStreamHandler,
+  options?: Pick<ScenePanoramaGenerationOptions, "referenceImages">
+): Promise<ScenePanoramaMotherGenerationState> {
+  const viewer = await requireAuth();
+  const block = validateScenePanoramaGenerationInput(input, blockId);
+  const generationInput = buildScenePanoramaGenerationInput(input, block, locale);
+  const observationContext = {
+    feature: "scene.block.panorama.mother.generate",
+    input: {
+      currentDraft: input,
+      blockId,
+      locale,
+      referenceImageCount: options?.referenceImages?.length ?? 0
+    },
+    locale
+  };
+  const generationOptions = { referenceImages: options?.referenceImages };
+
+  if (onEvent) {
+    return streamDefaultScenePanoramaMother(generationInput, viewer.id, onEvent, observationContext, generationOptions);
+  }
+
+  return generateDefaultScenePanoramaMother(generationInput, viewer.id, observationContext, generationOptions);
+}
+
 async function runSceneBlockPanoramaGeneration(
   input: SceneMaterialCreateInput,
   blockId: string,
@@ -1154,8 +1270,36 @@ async function runSceneBlockPanoramaGeneration(
   options?: ScenePanoramaGenerationOptions
 ): Promise<ScenePanoramaGenerationState> {
   const viewer = await requireAuth();
-  const block = input.blocks.find((item) => item.id === blockId);
+  const block = validateScenePanoramaGenerationInput(input, blockId);
   const maxRedrawAttempts = normalizeScenePanoramaMaxRedrawAttempts(options?.maxRedrawAttempts);
+
+  if (!options?.motherImage) {
+    throw new Error("SCENE_PANORAMA_MOTHER_REQUIRED");
+  }
+
+  const generationInput = buildScenePanoramaGenerationInput(input, block, locale);
+  const observationContext = {
+    feature: "scene.block.panorama.generate",
+    input: {
+      currentDraft: input,
+      blockId,
+      locale,
+      maxRedrawAttempts,
+      hasMotherImage: true
+    },
+    locale
+  };
+  const generationOptions = { maxRedrawAttempts, motherImage: options.motherImage };
+
+  if (onEvent) {
+    return streamDefaultScenePanorama(generationInput, viewer.id, onEvent, observationContext, generationOptions);
+  }
+
+  return generateDefaultScenePanorama(generationInput, viewer.id, observationContext, generationOptions);
+}
+
+function validateScenePanoramaGenerationInput(input: SceneMaterialCreateInput, blockId: string) {
+  const block = input.blocks.find((item) => item.id === blockId);
 
   if (!input.name.trim() || !input.description.trim()) {
     throw new Error("SCENE_DESCRIPTION_REQUIRED");
@@ -1169,32 +1313,25 @@ async function runSceneBlockPanoramaGeneration(
     throw new Error("SCENE_BLOCK_DESCRIPTION_REQUIRED");
   }
 
-  const generationInput = {
+  return block;
+}
+
+function buildScenePanoramaGenerationInput(
+  input: SceneMaterialCreateInput,
+  block: SceneMaterialBlockInput,
+  locale: Locale
+) {
+  return {
     sceneName: input.name.trim(),
     sceneDescription: input.description.trim(),
     blockName: block.name.trim(),
     blockDescription: block.description.trim(),
+    blockScaleMeters: sceneScalePresetMeters[normalizeSceneScalePreset(block.scalePreset)],
+    blockScalePreset: normalizeSceneScalePreset(block.scalePreset),
     panoramaDrawingStyle: normalizeScenePanoramaDrawingStyle(input.panoramaDrawingStyle),
     style: input.style,
     locale
   };
-  const observationContext = {
-    feature: "scene.block.panorama.generate",
-    input: {
-      currentDraft: input,
-      blockId,
-      locale,
-      maxRedrawAttempts
-    },
-    locale
-  };
-  const generationOptions = { maxRedrawAttempts };
-
-  if (onEvent) {
-    return streamDefaultScenePanorama(generationInput, viewer.id, onEvent, observationContext, generationOptions);
-  }
-
-  return generateDefaultScenePanorama(generationInput, viewer.id, observationContext, generationOptions);
 }
 
 export async function deleteSelfCreatedMaterial(materialId: string, locale: Locale) {
@@ -1519,7 +1656,7 @@ function buildMaskMaterialMetadata(
 function buildSceneMaterialMetadata(input: SceneMaterialCreateInput): WorkspaceSceneMaterialMetadata {
   return {
     kind: "scene",
-    version: 1,
+    version: 2,
     name: input.name.trim(),
     description: input.description.trim(),
     style: input.style,
@@ -1528,24 +1665,40 @@ function buildSceneMaterialMetadata(input: SceneMaterialCreateInput): WorkspaceS
       id: normalizeSceneBlockId(block.id),
       name: block.name.trim(),
       description: block.description.trim(),
+      scaleMeters: sceneScalePresetMeters[normalizeSceneScalePreset(block.scalePreset)],
+      scalePreset: normalizeSceneScalePreset(block.scalePreset),
       panorama: block.panorama
         ? {
             faceSource: block.panorama.faceSource,
-            faces: scenePanoramaFaces.reduce<Record<ScenePanoramaFace, { url: string }>>((faces, face) => {
-              const url = block.panorama?.faces[face]?.trim() ?? "";
-
-              if (!url) {
-                throw new Error(`SCENE_PANORAMA_FACE_REQUIRED_${face}`);
-              }
-
-              faces[face] = { url };
-
-              return faces;
-            }, {} as Record<ScenePanoramaFace, { url: string }>)
+            faces: buildScenePanoramaMetadataFaces(block.panorama),
+            mother: block.panorama.mother?.url
+              ? {
+                  source: block.panorama.mother.source,
+                  url: block.panorama.mother.url
+                }
+              : null
           }
         : null
     }))
   };
+}
+
+function buildScenePanoramaMetadataFaces(panorama: SceneMaterialPanoramaInput) {
+  if (!hasAnyScenePanoramaFace(panorama.faces)) {
+    return {};
+  }
+
+  return scenePanoramaFaces.reduce<Record<ScenePanoramaFace, { url: string }>>((faces, face) => {
+    const url = panorama.faces?.[face]?.trim() ?? "";
+
+    if (!url) {
+      throw new Error(`SCENE_PANORAMA_FACE_REQUIRED_${face}`);
+    }
+
+    faces[face] = { url };
+
+    return faces;
+  }, {} as Record<ScenePanoramaFace, { url: string }>);
 }
 
 function validateSceneDraftBlocks(blocks: SceneMaterialBlockInput[]) {
@@ -1562,9 +1715,9 @@ function validateSceneDraftBlocks(blocks: SceneMaterialBlockInput[]) {
       throw new Error("SCENE_BLOCK_DESCRIPTION_REQUIRED");
     }
 
-    if (block.panorama) {
+    if (block.panorama && hasAnyScenePanoramaFace(block.panorama.faces)) {
       scenePanoramaFaces.forEach((face) => {
-        if (!block.panorama?.faces[face]?.trim()) {
+        if (!block.panorama?.faces?.[face]?.trim()) {
           throw new Error(`SCENE_PANORAMA_FACE_REQUIRED_${face}`);
         }
       });
@@ -1574,22 +1727,128 @@ function validateSceneDraftBlocks(blocks: SceneMaterialBlockInput[]) {
 
 function getScenePreviewUrl(blocks: SceneMaterialBlockInput[]) {
   for (const block of blocks) {
-    const front = block.panorama?.faces.front?.trim();
+    const front = block.panorama?.faces?.front?.trim();
 
     if (front) {
       return front;
     }
   }
 
+  for (const block of blocks) {
+    const mother = block.panorama?.mother?.url.trim();
+
+    if (mother) {
+      return mother;
+    }
+  }
+
   return null;
+}
+
+function hasAnyScenePanoramaFace(faces: SceneMaterialPanoramaInput["faces"] | undefined) {
+  return scenePanoramaFaces.some((face) => Boolean(faces?.[face]?.trim()));
 }
 
 export async function uploadScenePanoramaFace(userId: string, file: File) {
   return uploadScenePanoramaFaceImage(userId, file);
 }
 
+export async function uploadScenePanoramaMother(userId: string, file: File) {
+  return uploadScenePanoramaMotherImage(userId, file);
+}
+
+export async function prepareScenePanoramaMotherImage(
+  file: File | null,
+  url: string | null,
+  origin: string
+): Promise<ScenePanoramaReferenceImage> {
+  if (file && file.size > 0) {
+    if (!isValidMaterialImageFile(file)) {
+      throw new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+    }
+
+    return {
+      bytes: Buffer.from(await file.arrayBuffer()),
+      contentType: file.type.toLowerCase(),
+      fileName: file.name || "scene-panorama-mother.png"
+    };
+  }
+
+  if (!url) {
+    throw new Error("SCENE_PANORAMA_MOTHER_REQUIRED");
+  }
+
+  await configureServerOutboundProxy();
+  const response = await fetch(resolveMaterialImageUrl(url, origin));
+
+  if (!response.ok) {
+    throw new Error("SCENE_PANORAMA_MOTHER_DOWNLOAD_FAILED");
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase().split(";")[0]?.trim() ?? "";
+  const bytes = Buffer.from(await response.arrayBuffer());
+
+  if (!contentType || !isValidMaterialImageBytesForPanorama(bytes, contentType)) {
+    throw new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+  }
+
+  return {
+    bytes,
+    contentType,
+    fileName: "scene-panorama-mother.png"
+  };
+}
+
+export async function prepareScenePanoramaReferenceImages(files: File[]): Promise<ScenePanoramaReferenceImage[]> {
+  return Promise.all(
+    files.slice(0, 3).map(async (file) => {
+      if (!isValidMaterialImageFile(file)) {
+        throw new Error("INVALID_SCENE_REFERENCE_IMAGE_FILE");
+      }
+
+      return {
+        bytes: Buffer.from(await file.arrayBuffer()),
+        contentType: file.type.toLowerCase(),
+        fileName: file.name || "scene-reference.png"
+      };
+    })
+  );
+}
+
+export async function prepareSceneAssistReferenceImages(files: File[]): Promise<SceneAssistReferenceImage[]> {
+  return Promise.all(
+    files.slice(0, 3).map(async (file) => {
+      if (!isValidMaterialImageFile(file)) {
+        throw new Error("INVALID_SCENE_REFERENCE_IMAGE_FILE");
+      }
+
+      const contentType = file.type.toLowerCase();
+      const bytes = Buffer.from(await file.arrayBuffer());
+
+      return {
+        byteSize: bytes.byteLength,
+        contentType,
+        dataUrl: `data:${contentType};base64,${bytes.toString("base64")}`,
+        fileName: file.name || "scene-reference.png"
+      };
+    })
+  );
+}
+
 export async function cleanupUploadedMaterialImages(urls: string[]) {
   await deleteMaterialImagesByUrls(urls);
+}
+
+function resolveMaterialImageUrl(url: string, origin: string) {
+  if (url.startsWith("/")) {
+    return new URL(url, origin).toString();
+  }
+
+  return url;
+}
+
+function isValidMaterialImageBytesForPanorama(bytes: Uint8Array, contentType: string) {
+  return isValidMaterialImageBytes(bytes, contentType);
 }
 
 function getExistingMaskBoardImageSource(metadata: unknown): WorkspaceMaskBoardImageSource | null {
@@ -1654,6 +1913,10 @@ function normalizeScenePanoramaDrawingStyle(style?: string | null): WorkspaceSce
   return normalizeMaskBoardDrawingStyle(style);
 }
 
+function normalizeSceneScalePreset(preset?: string | null): WorkspaceSceneScalePreset {
+  return preset && preset in sceneScalePresetMeters ? preset as WorkspaceSceneScalePreset : defaultSceneScalePreset;
+}
+
 function getMaskBoardDrawingStylePrompt(style: WorkspaceMaskBoardDrawingStyle, locale: Locale) {
   const zh: Record<WorkspaceMaskBoardDrawingStyle, string> = {
     anime: "二次元插画，干净线条，角色辨识度高",
@@ -1708,9 +1971,29 @@ function buildMaskAssistMessages(input: MaskMaterialCreateInput, instruction: st
   ];
 }
 
-function buildSceneAssistMessages(input: SceneMaterialCreateInput, instruction: string, locale: Locale): RuntimeChatMessage[] {
+function buildSceneAssistMessages(
+  input: SceneMaterialCreateInput,
+  instruction: string,
+  locale: Locale,
+  referenceImages: SceneAssistReferenceImage[] = []
+): RuntimeChatMessage[] {
   const isEnglish = locale === "en-US";
   const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+  const textContent = JSON.stringify({
+    currentDraft: input,
+    instruction,
+    referenceImages: summarizeSceneAssistReferenceImages(referenceImages)
+  });
+  const userContent: RuntimeChatContentPart[] = [
+    {
+      type: "text",
+      text: textContent
+    },
+    ...referenceImages.map((image) => ({
+      type: "image_url" as const,
+      image_url: { url: image.dataUrl }
+    }))
+  ];
 
   return [
     {
@@ -1719,23 +2002,49 @@ function buildSceneAssistMessages(input: SceneMaterialCreateInput, instruction: 
         "You are an assistant for editing a scene material in New World Novel.",
         "A scene material describes an interactive fiction place and its sub-areas.",
         "Scene description and every block description must be non-empty.",
-        "You may update scene name, scene description, style, block names, block descriptions, add blocks, or remove blocks.",
+        "You may update scene name, scene description, style, block names, block descriptions, block scale presets, add blocks, or remove blocks.",
+        "When reference images are attached, inspect them and use visible spatial layout, scale, materials, lighting, and mood to update the text draft.",
         "Never modify panorama image data or URLs.",
         "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
         "Patch may include name, description, style, addBlocks, updateBlocks, removeBlockIds.",
         "style must be one of realistic, fantasy, sciFi, mystery, cyberpunk, classical, apocalyptic.",
-        "addBlocks is an array of {name, description}. updateBlocks is an array of {id, name?, description?}. removeBlockIds is an array of existing block ids.",
+        "scalePreset must be one of closeUp, near, mid, wide, aerial.",
+        "addBlocks is an array of {name, description, scalePreset?}. updateBlocks is an array of {id, name?, description?, scalePreset?}. removeBlockIds is an array of existing block ids.",
         languageRule
       ].join("\n")
     },
     {
       role: "user",
-      content: JSON.stringify({
-        currentDraft: input,
-        instruction
-      })
+      content: referenceImages.length > 0 ? userContent : textContent
     }
   ];
+}
+
+function summarizeSceneAssistReferenceImages(images: SceneAssistReferenceImage[]) {
+  return images.map((image) => ({
+    byteSize: image.byteSize,
+    contentType: image.contentType,
+    fileName: image.fileName
+  }));
+}
+
+function isLikelyLlmVisionUnsupportedError(error: unknown) {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  const status = typeof error === "object" && error ? (error as Record<string, unknown>).status : null;
+
+  return (
+    status === 400 ||
+    message.includes("image") ||
+    message.includes("vision") ||
+    message.includes("multimodal") ||
+    message.includes("content part") ||
+    message.includes("unsupported")
+  ) && (
+    message.includes("image") ||
+    message.includes("vision") ||
+    message.includes("multimodal") ||
+    message.includes("content part")
+  );
 }
 
 function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
@@ -1847,7 +2156,8 @@ function sanitizeSceneDraftPatch(value: unknown): SceneDraftPatch {
       .map((block) => ({
         ...(typeof block.id === "string" ? { id: normalizeSceneBlockId(block.id) } : {}),
         description: typeof block.description === "string" ? block.description.slice(0, 2000) : "",
-        name: typeof block.name === "string" ? block.name.slice(0, 120) : ""
+        name: typeof block.name === "string" ? block.name.slice(0, 120) : "",
+        scalePreset: normalizeSceneScalePreset(typeof block.scalePreset === "string" ? block.scalePreset : null)
       }))
       .filter((block) => block.name.trim() && block.description.trim())
       .slice(0, 8);
@@ -1859,7 +2169,8 @@ function sanitizeSceneDraftPatch(value: unknown): SceneDraftPatch {
       .map((block) => ({
         id: typeof block.id === "string" ? normalizeSceneBlockId(block.id) : "",
         ...(typeof block.name === "string" ? { name: block.name.slice(0, 120) } : {}),
-        ...(typeof block.description === "string" ? { description: block.description.slice(0, 2000) } : {})
+        ...(typeof block.description === "string" ? { description: block.description.slice(0, 2000) } : {}),
+        ...(typeof block.scalePreset === "string" ? { scalePreset: normalizeSceneScalePreset(block.scalePreset) } : {})
       }))
       .filter((block) => block.id)
       .slice(0, 16);

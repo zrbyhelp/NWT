@@ -41,7 +41,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   assistHomeMaskDraft,
-  assistHomeSceneDraft,
+  assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
   createHomeConversation,
   createHomeMaskMaterial,
@@ -53,7 +53,8 @@ import {
   setHomeMaterialCommunitySharing,
   updateHomeMaskMaterial,
   updateHomeSceneMaterial,
-  uploadHomeScenePanoramaFace
+  uploadHomeScenePanoramaFace,
+  uploadHomeScenePanoramaMother
 } from "@/app/[locale]/actions";
 import { AuthDialog } from "@/components/auth-dialog";
 import { HeaderActions } from "@/components/header-actions";
@@ -70,6 +71,7 @@ import type {
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceSceneMaterialMetadata,
+  WorkspaceSceneScalePreset,
   WorkspaceMaterialStyle,
   WorkspaceScript
 } from "@/lib/home-workspace";
@@ -99,6 +101,8 @@ type ScenePanoramaStreamFaceImage = ScenePanoramaStreamImage & {
 type ScenePanoramaStreamDoneEvent = {
   bestAttempt?: number;
   color?: unknown;
+  colorError?: string;
+  colorStatus?: "adjusted" | "rejected" | "unchanged" | "skipped";
   earlyStopped?: boolean;
   mode: "enhanced" | "direct-cut";
   quality?: unknown;
@@ -111,6 +115,7 @@ type ScenePanoramaStreamDoneEvent = {
 type ScenePanoramaStreamEvent =
   | { type: "progress"; progress: number; stage: string; messageKey: string }
   | { type: "mother"; image: ScenePanoramaStreamImage }
+  | { type: "motherDone"; image: ScenePanoramaStreamImage; sizeProfile?: string }
   | { type: "face"; attempt: number; face: ScenePanoramaFace; image: ScenePanoramaStreamFaceImage; phase: "preview" | "final" }
   | { type: "iterating"; attempt: number; faces: ScenePanoramaFace[] }
   | {
@@ -130,9 +135,18 @@ const materialStyles = ["realistic", "fantasy", "sciFi", "mystery", "cyberpunk",
 const materialTypes = ["mask", "map", "item", "creature", "scene"] as const;
 const scenePanoramaFaces = ["front", "back", "left", "right", "top", "bottom"] as const;
 const scenePanoramaThreeFaceOrder = ["right", "left", "top", "bottom", "front", "back"] as const;
-const defaultScenePanoramaMaxRedrawAttempts = 3;
+const sceneScalePresets = [
+  { id: "closeUp", meters: 2 },
+  { id: "near", meters: 8 },
+  { id: "mid", meters: 25 },
+  { id: "wide", meters: 100 },
+  { id: "aerial", meters: 500 }
+] as const;
+const defaultSceneScalePreset = "mid" satisfies WorkspaceSceneScalePreset;
+const maxSceneReferenceImages = 3;
+const defaultScenePanoramaMaxRedrawAttempts = 1;
 const minScenePanoramaMaxRedrawAttempts = 1;
-const maxScenePanoramaMaxRedrawAttempts = 6;
+const maxScenePanoramaMaxRedrawAttempts = 10;
 const materialIcons = {
   mask: VenetianMask,
   map: MapPinned,
@@ -184,6 +198,11 @@ type MaskVoiceFieldId = (typeof maskVoiceFields)[number]["id"];
 type MaskPersonalityFieldId = (typeof maskPersonalityGroups)[number]["fields"][number];
 type MaskBoardDrawingStyle = (typeof maskBoardDrawingStyles)[number];
 type ScenePanoramaDrawingStyle = MaskBoardDrawingStyle;
+type SceneReferenceImageDraft = {
+  id: string;
+  file: File;
+  previewUrl: string;
+};
 type MaskCreateDraft = {
   name: string;
   intro: string;
@@ -222,9 +241,16 @@ type ScenePanoramaFaceDraft = {
   source: "uploaded" | "generated" | "existing" | "direct-cut" | "reference-repaint";
   storedUrl: string | null;
 };
+type ScenePanoramaMotherDraft = {
+  file: File | null;
+  previewUrl: string;
+  source: "generated" | "uploaded" | "existing";
+  storedUrl: string | null;
+};
 type ScenePanoramaDraft = {
   faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
   faces: Partial<Record<ScenePanoramaFace, ScenePanoramaFaceDraft>>;
+  mother: ScenePanoramaMotherDraft | null;
 };
 type ScenePanoramaGenerationDraft = {
   completed: boolean;
@@ -241,6 +267,8 @@ type SceneBlockDraft = {
   id: string;
   name: string;
   description: string;
+  referenceImages: SceneReferenceImageDraft[];
+  scalePreset: WorkspaceSceneScalePreset;
   panorama: ScenePanoramaDraft | null;
 };
 type SceneCreateDraft = {
@@ -304,6 +332,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [sceneAiInput, setSceneAiInput] = useState("");
   const [sceneAiMessages, setSceneAiMessages] = useState<SceneAiMessage[]>([]);
   const [sceneAiPending, setSceneAiPending] = useState(false);
+  const [sceneAiReferenceImages, setSceneAiReferenceImages] = useState<SceneReferenceImageDraft[]>([]);
   const [scenePanoramaPendingBlockId, setScenePanoramaPendingBlockId] = useState("");
   const [scenePanoramaGenerationByBlock, setScenePanoramaGenerationByBlock] = useState<Record<string, ScenePanoramaGenerationDraft>>({});
   const [scenePanoramaMaxRedrawAttempts, setScenePanoramaMaxRedrawAttempts] = useState(defaultScenePanoramaMaxRedrawAttempts);
@@ -1433,6 +1462,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setSceneActiveBlockId(nextDraft.blocks[0]?.id ?? "");
     setSceneAiInput("");
     setSceneAiMessages([]);
+    setSceneAiReferenceImages((current) => {
+      current.forEach(revokeSceneReferenceImagePreview);
+
+      return [];
+    });
     setSceneEditingMaterialId("");
     setScenePanoramaGenerationByBlock({});
   }
@@ -1464,6 +1498,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setSceneActiveBlockId(nextDraft.blocks[0]?.id ?? "");
     setSceneAiInput("");
     setSceneAiMessages([]);
+    setSceneAiReferenceImages((current) => {
+      current.forEach(revokeSceneReferenceImagePreview);
+
+      return [];
+    });
     setSceneEditingMaterialId(material.id);
     setSceneCreateOpen(true);
   }
@@ -1484,7 +1523,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setSceneCreateDraft((current) => ({ ...current, panoramaDrawingStyle }));
   }
 
-  function updateSceneBlock(blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description">>) {
+  function updateSceneBlock(blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description" | "scalePreset">>) {
     setSceneCreateDraft((current) => ({
       ...current,
       blocks: current.blocks.map((block) => (block.id === blockId ? { ...block, ...patch } : block))
@@ -1572,7 +1611,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             faces: {
               ...(block.panorama?.faces ?? {}),
               [face]: image
-            }
+            },
+            mother: block.panorama?.mother ?? null
           }
         };
       })
@@ -1614,10 +1654,106 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setScenePanoramaMaxRedrawAttempts(normalizeScenePanoramaMaxRedrawAttempts(value));
   }
 
+  function addSceneBlockReferenceImages(blockId: string, files: FileList | File[]) {
+    const { images: nextImages, invalidCount } = createSceneReferenceImageDrafts(Array.from(files));
+
+    if (invalidCount > 0) {
+      toast.error(materialT("sceneForm.invalidReferenceImage"));
+    }
+
+    if (nextImages.length === 0) {
+      return;
+    }
+
+    setSceneCreateDraft((current) => ({
+      ...current,
+      blocks: current.blocks.map((block) => {
+        if (block.id !== blockId) {
+          return block;
+        }
+
+        const availableSlots = Math.max(0, maxSceneReferenceImages - block.referenceImages.length);
+        const accepted = nextImages.slice(0, availableSlots);
+        const rejected = nextImages.slice(availableSlots);
+
+        rejected.forEach(revokeSceneReferenceImagePreview);
+
+        if (accepted.length < nextImages.length) {
+          toast.error(materialT("sceneForm.referenceImageLimit"));
+        }
+
+        return {
+          ...block,
+          referenceImages: [...block.referenceImages, ...accepted]
+        };
+      })
+    }));
+  }
+
+  function removeSceneBlockReferenceImage(blockId: string, imageId: string) {
+    setSceneCreateDraft((current) => ({
+      ...current,
+      blocks: current.blocks.map((block) => {
+        if (block.id !== blockId) {
+          return block;
+        }
+
+        const removed = block.referenceImages.find((image) => image.id === imageId);
+
+        if (removed) {
+          revokeSceneReferenceImagePreview(removed);
+        }
+
+        return {
+          ...block,
+          referenceImages: block.referenceImages.filter((image) => image.id !== imageId)
+        };
+      })
+    }));
+  }
+
+  function addSceneAiReferenceImages(files: FileList | File[]) {
+    const { images: nextImages, invalidCount } = createSceneReferenceImageDrafts(Array.from(files));
+
+    if (invalidCount > 0) {
+      toast.error(materialT("sceneForm.invalidReferenceImage"));
+    }
+
+    if (nextImages.length === 0) {
+      return;
+    }
+
+    setSceneAiReferenceImages((current) => {
+      const availableSlots = Math.max(0, maxSceneReferenceImages - current.length);
+      const accepted = nextImages.slice(0, availableSlots);
+      const rejected = nextImages.slice(availableSlots);
+
+      rejected.forEach(revokeSceneReferenceImagePreview);
+
+      if (accepted.length < nextImages.length) {
+        toast.error(materialT("sceneForm.referenceImageLimit"));
+      }
+
+      return [...current, ...accepted];
+    });
+  }
+
+  function removeSceneAiReferenceImage(imageId: string) {
+    setSceneAiReferenceImages((current) => {
+      const removed = current.find((image) => image.id === imageId);
+
+      if (removed) {
+        revokeSceneReferenceImagePreview(removed);
+      }
+
+      return current.filter((image) => image.id !== imageId);
+    });
+  }
+
   async function sendSceneAiMessage(authenticatedViewer = viewer) {
     const instruction = sceneAiInput.trim();
 
-    if (!instruction || sceneAiPending) {
+    if ((!instruction && sceneAiReferenceImages.length === 0) || sceneAiPending) {
       return;
     }
 
@@ -1631,12 +1767,32 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     setSceneAiInput("");
     setSceneAiPending(true);
-    setSceneAiMessages((current) => [...current, { id: createClientId("scene-ai-user"), role: "user", content: instruction }]);
+    setSceneAiMessages((current) => [
+      ...current,
+      {
+        id: createClientId("scene-ai-user"),
+        role: "user",
+        content: instruction || materialT("sceneForm.aiReferenceOnlyMessage")
+      }
+    ]);
 
     try {
-      const result = await assistHomeSceneDraft(serializeSceneTextDraft(sceneCreateDraft), instruction, locale);
+      const formData = new FormData();
+
+      formData.append("draft", JSON.stringify(serializeSceneTextDraft(sceneCreateDraft)));
+      formData.append("instruction", instruction);
+      sceneAiReferenceImages.forEach((image) => {
+        formData.append("referenceImages", image.file);
+      });
+
+      const result = await assistHomeSceneDraftWithImages(formData, locale);
 
       applySceneDraftPatch(result.patch);
+      setSceneAiReferenceImages((current) => {
+        current.forEach(revokeSceneReferenceImagePreview);
+
+        return [];
+      });
       setSceneAiMessages((current) => [
         ...current,
         { id: createClientId("scene-ai-assistant"), role: "assistant", content: result.message }
@@ -1657,7 +1813,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
   }
 
-  async function generateScenePanorama(blockId: string, authenticatedViewer = viewer) {
+  async function generateScenePanoramaMother(blockId: string, authenticatedViewer = viewer) {
     if (scenePanoramaPendingBlockId) {
       return;
     }
@@ -1673,6 +1829,145 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       requestAuth((nextViewer) => {
         setViewer(nextViewer);
         void generateScenePanorama(blockId, nextViewer);
+      });
+      return;
+    }
+
+    setScenePanoramaPendingBlockId(blockId);
+
+    try {
+      setScenePanoramaGenerationByBlock((current) => ({
+        ...current,
+        [blockId]: createInitialScenePanoramaGenerationDraft()
+      }));
+
+      const motherEvent = await streamHomeScenePanoramaMother(
+        serializeSceneTextDraft(sceneCreateDraft),
+        blockId,
+        locale,
+        sceneCreateDraft.blocks.find((block) => block.id === blockId)?.referenceImages ?? [],
+        (event) => {
+          if (event.type === "progress") {
+            setScenePanoramaGenerationByBlock((current) => ({
+              ...current,
+              [blockId]: {
+                ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+                messageKey: event.messageKey,
+                progress: event.progress,
+                stage: event.stage
+              }
+            }));
+          }
+
+          if (event.type === "mother") {
+            setScenePanoramaGenerationByBlock((current) => ({
+              ...current,
+              [blockId]: {
+                ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+                motherImage: event.image,
+                progress: Math.max(current[blockId]?.progress ?? 0, 100),
+                messageKey: "sceneForm.panoramaProgressMotherReady",
+                stage: "mother-ready"
+              }
+            }));
+          }
+
+          if (event.type === "motherDone") {
+            setScenePanoramaGenerationByBlock((current) => ({
+              ...current,
+              [blockId]: {
+                ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+                completed: true,
+                motherImage: event.image,
+                progress: 100,
+                messageKey: "sceneForm.panoramaProgressMotherReady",
+                stage: "mother-ready"
+              }
+            }));
+          }
+        }
+      );
+      const motherImage = motherEvent.image;
+
+      const file = await dataUrlToFile(motherImage.dataUrl, motherImage.fileName, motherImage.contentType);
+
+      if (!isValidScenePanoramaMother(file)) {
+        throw new Error("INVALID_SCENE_PANORAMA_MOTHER_FILE");
+      }
+
+      setSceneCreateDraft((current) => ({
+        ...current,
+        blocks: current.blocks.map((block) => {
+          if (block.id !== blockId) {
+            return block;
+          }
+
+          revokeScenePanoramaMotherPreview(block.panorama?.mother);
+
+          return {
+            ...block,
+            panorama: {
+              faceSource: block.panorama?.faceSource ?? "reference-repaint",
+              faces: block.panorama?.faces ?? {},
+              mother: {
+                file,
+                previewUrl: motherImage.dataUrl,
+                source: "generated",
+                storedUrl: null
+              }
+            }
+          };
+        })
+      }));
+      toast.success(materialT("sceneForm.panoramaMotherGenerated"));
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void generateScenePanoramaMother(blockId, nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveScenePanoramaError(error, materialT));
+      setScenePanoramaGenerationByBlock((current) => ({
+        ...current,
+        [blockId]: {
+          ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+          error: error instanceof Error ? error.message : String(error),
+          messageKey: "sceneForm.panoramaProgressFailed",
+          stage: "failed"
+        }
+      }));
+    } finally {
+      setScenePanoramaPendingBlockId("");
+    }
+  }
+
+  async function generateScenePanorama(blockId: string, authenticatedViewer = viewer) {
+    if (scenePanoramaPendingBlockId) {
+      return;
+    }
+
+    const validationError = validateSceneBlockGeneration(sceneCreateDraft, blockId);
+
+    if (validationError) {
+      toast.error(materialT(validationError));
+      return;
+    }
+
+    const blockDraft = sceneCreateDraft.blocks.find((block) => block.id === blockId);
+    const mother = blockDraft?.panorama?.mother ?? null;
+
+    if (!mother || (!mother.previewUrl && !mother.storedUrl)) {
+      toast.error(materialT("sceneForm.panoramaMotherRequired"));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void generateScenePanoramaMother(blockId, nextViewer);
       });
       return;
     }
@@ -1694,6 +1989,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         blockId,
         locale,
         maxRedrawAttempts,
+        mother,
         (event) => {
           if (event.type === "progress") {
             setScenePanoramaGenerationByBlock((current) => ({
@@ -1703,19 +1999,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
                 messageKey: event.messageKey,
                 progress: event.progress,
                 stage: event.stage
-              }
-            }));
-          }
-
-          if (event.type === "mother") {
-            setScenePanoramaGenerationByBlock((current) => ({
-              ...current,
-              [blockId]: {
-                ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
-                motherImage: event.image,
-                progress: Math.max(current[blockId]?.progress ?? 0, 22),
-                messageKey: "sceneForm.panoramaProgressMotherReady",
-                stage: "mother-ready"
               }
             }));
           }
@@ -1850,7 +2133,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             ...block,
             panorama: {
               faceSource: doneEvent?.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
-              faces: Object.fromEntries(faces)
+              faces: Object.fromEntries(faces),
+              mother: block.panorama?.mother ?? null
             }
           };
         })
@@ -1859,6 +2143,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         materialT(
           doneEvent?.qualityBestEffort
             ? "sceneForm.panoramaGeneratedBestEffort"
+            : doneEvent?.colorStatus === "rejected"
+              ? "sceneForm.panoramaGeneratedColorRejected"
+            : doneEvent?.colorStatus === "skipped"
+              ? "sceneForm.panoramaGeneratedColorSkipped"
             : doneEvent?.mode === "direct-cut"
               ? "sceneForm.panoramaGeneratedFallback"
               : "sceneForm.panoramaGenerated"
@@ -2232,6 +2520,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             aiInput={sceneAiInput}
             aiMessages={sceneAiMessages}
             aiPending={sceneAiPending}
+            aiReferenceImages={sceneAiReferenceImages}
             draft={sceneCreateDraft}
             isPending={isPending || isSceneActionPending}
             panoramaGenerationByBlock={scenePanoramaGenerationByBlock}
@@ -2240,7 +2529,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             saveLabel={materialT(isEditingScene ? "sceneForm.saveEdit" : "saveScene")}
             title={materialT(isEditingScene ? "sceneForm.editTitle" : "sceneForm.title")}
             description={materialT(isEditingScene ? "sceneForm.editDescription" : "sceneForm.description")}
+            onAddAiReferenceImages={addSceneAiReferenceImages}
             onAddBlock={addSceneBlock}
+            onAddBlockReferenceImages={addSceneBlockReferenceImages}
             onCancel={closeSceneCreateDialog}
             onChangeActiveBlock={setSceneActiveBlockId}
             onChangeAiInput={setSceneAiInput}
@@ -2251,8 +2542,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onChangePanoramaDrawingStyle={updateScenePanoramaDrawingStyle}
             onChangeStyle={updateSceneStyle}
             onClearBlockPanorama={clearSceneBlockPanorama}
+            onGenerateMother={(blockId) => void generateScenePanoramaMother(blockId)}
             onGeneratePanorama={(blockId) => void generateScenePanorama(blockId)}
+            onRemoveAiReferenceImage={removeSceneAiReferenceImage}
             onRemoveBlock={removeSceneBlock}
+            onRemoveBlockReferenceImage={removeSceneBlockReferenceImage}
             onSelectFace={selectScenePanoramaFace}
             onSendAiMessage={() => void sendSceneAiMessage()}
             onSubmit={submitSceneCreateDraft}
@@ -2962,11 +3256,23 @@ async function streamHomeScenePanorama(
   blockId: string,
   locale: Locale,
   maxRedrawAttempts: number,
+  mother: ScenePanoramaMotherDraft,
   onEvent: (event: ScenePanoramaStreamEvent) => void
 ) {
+  const formData = new FormData();
+
+  formData.append("draft", JSON.stringify(input));
+  formData.append("blockId", blockId);
+  formData.append("locale", locale);
+  formData.append("maxRedrawAttempts", String(maxRedrawAttempts));
+  if (mother.file) {
+    formData.append("motherImage", mother.file);
+  } else if (mother.storedUrl) {
+    formData.append("motherUrl", mother.storedUrl);
+  }
+
   const response = await fetch("/api/materials/scene-panorama/stream", {
-    body: JSON.stringify({ blockId, input, locale, maxRedrawAttempts }),
-    headers: { "Content-Type": "application/json" },
+    body: formData,
     method: "POST"
   });
 
@@ -3020,6 +3326,88 @@ async function streamHomeScenePanorama(
     }
 
     if (event?.type === "done") {
+      doneEvent = event;
+    }
+  }
+
+  if (!doneEvent) {
+    throw new Error("SCENE_PANORAMA_STREAM_INCOMPLETE");
+  }
+
+  return doneEvent;
+}
+
+async function streamHomeScenePanoramaMother(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  referenceImages: SceneReferenceImageDraft[],
+  onEvent: (event: ScenePanoramaStreamEvent) => void
+) {
+  const formData = new FormData();
+
+  formData.append("draft", JSON.stringify(input));
+  formData.append("blockId", blockId);
+  formData.append("locale", locale);
+  referenceImages.forEach((image) => {
+    formData.append("referenceImages", image.file);
+  });
+
+  const response = await fetch("/api/materials/scene-panorama/mother/stream", {
+    body: formData,
+    method: "POST"
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error("SCENE_PANORAMA_STREAM_FAILED");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let doneEvent: Extract<ScenePanoramaStreamEvent, { type: "motherDone" }> | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+
+    for (const chunk of chunks) {
+      const event = parseScenePanoramaStreamEvent(chunk);
+
+      if (!event) {
+        continue;
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+      }
+
+      onEvent(event);
+
+      if (event.type === "motherDone") {
+        doneEvent = event;
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    const event = parseScenePanoramaStreamEvent(buffer);
+
+    if (event?.type === "error") {
+      throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+    }
+
+    if (event) {
+      onEvent(event);
+    }
+
+    if (event?.type === "motherDone") {
       doneEvent = event;
     }
   }
@@ -3533,7 +3921,7 @@ function SceneMaterialDetail({
   const activeBlock = record.blocks.find((block) => block.id === activeBlockId) ?? record.blocks[0];
   const faces = activeBlock?.panorama
     ? scenePanoramaFaces.reduce<Record<ScenePanoramaFace, string>>((result, face) => {
-        result[face] = activeBlock.panorama?.faces[face]?.url ?? "";
+        result[face] = activeBlock.panorama?.faces?.[face]?.url ?? "";
 
         return result;
       }, {} as Record<ScenePanoramaFace, string>)
@@ -3565,6 +3953,13 @@ function SceneMaterialDetail({
           <div className="space-y-3">
             <div>
               <h3 className="text-sm font-semibold text-foreground/72">{activeBlock.name}</h3>
+              <p className="mt-1 text-xs text-foreground/48">
+                {t("sceneForm.blockScaleDetail", {
+                  scale: t(`sceneForm.blockScalePresets.${normalizeSceneScalePreset(activeBlock.scalePreset)}`, {
+                    meters: sceneScalePresets.find((preset) => preset.id === normalizeSceneScalePreset(activeBlock.scalePreset))?.meters ?? 25
+                  })
+                })}
+              </p>
               <p className="mt-2 whitespace-pre-line text-sm leading-7 text-foreground/68">{activeBlock.description}</p>
             </div>
             <ScenePanoramaViewer
@@ -4339,6 +4734,7 @@ function SceneCreateDialog({
   aiInput,
   aiMessages,
   aiPending,
+  aiReferenceImages,
   draft,
   description,
   isPending,
@@ -4347,7 +4743,9 @@ function SceneCreateDialog({
   panoramaPendingBlockId,
   saveLabel,
   title,
+  onAddAiReferenceImages,
   onAddBlock,
+  onAddBlockReferenceImages,
   onCancel,
   onChangeActiveBlock,
   onChangeAiInput,
@@ -4358,8 +4756,11 @@ function SceneCreateDialog({
   onChangePanoramaDrawingStyle,
   onChangeStyle,
   onClearBlockPanorama,
+  onGenerateMother,
   onGeneratePanorama,
+  onRemoveAiReferenceImage,
   onRemoveBlock,
+  onRemoveBlockReferenceImage,
   onSelectFace,
   onSendAiMessage,
   onSubmit,
@@ -4369,6 +4770,7 @@ function SceneCreateDialog({
   aiInput: string;
   aiMessages: SceneAiMessage[];
   aiPending: boolean;
+  aiReferenceImages: SceneReferenceImageDraft[];
   draft: SceneCreateDraft;
   description: string;
   isPending: boolean;
@@ -4377,19 +4779,24 @@ function SceneCreateDialog({
   panoramaPendingBlockId: string;
   saveLabel: string;
   title: string;
+  onAddAiReferenceImages: (files: FileList | File[]) => void;
   onAddBlock: () => void;
+  onAddBlockReferenceImages: (blockId: string, files: FileList | File[]) => void;
   onCancel: () => void;
   onChangeActiveBlock: (blockId: string) => void;
   onChangeAiInput: (value: string) => void;
-  onChangeBlock: (blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description">>) => void;
+  onChangeBlock: (blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description" | "scalePreset">>) => void;
   onChangeDescription: (value: string) => void;
   onChangeName: (value: string) => void;
   onChangePanoramaMaxRedrawAttempts: (value: number) => void;
   onChangePanoramaDrawingStyle: (style: ScenePanoramaDrawingStyle) => void;
   onChangeStyle: (style: WorkspaceMaterialStyle) => void;
   onClearBlockPanorama: (blockId: string) => void;
+  onGenerateMother: (blockId: string) => void;
   onGeneratePanorama: (blockId: string) => void;
+  onRemoveAiReferenceImage: (imageId: string) => void;
   onRemoveBlock: (blockId: string) => void;
+  onRemoveBlockReferenceImage: (blockId: string, imageId: string) => void;
   onSelectFace: (blockId: string, face: ScenePanoramaFace, file: File | null) => void;
   onSendAiMessage: () => void;
   onSubmit: () => void;
@@ -4527,7 +4934,7 @@ function SceneCreateDialog({
                             <Trash2 className="h-4 w-4" aria-hidden="true" />
                           </button>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-[13rem_minmax(0,1fr)]">
+                        <div className="grid gap-3 md:grid-cols-[13rem_12rem_minmax(0,1fr)]">
                           <label className="block space-y-1.5 text-sm">
                             <span className="text-foreground/64">{t("sceneForm.blockName")}</span>
                             <input
@@ -4537,6 +4944,21 @@ function SceneCreateDialog({
                               placeholder={t("sceneForm.blockNamePlaceholder")}
                               className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition placeholder:text-foreground/38 focus:border-primary"
                             />
+                          </label>
+                          <label className="block space-y-1.5 text-sm">
+                            <span className="text-foreground/64">{t("sceneForm.blockScale")}</span>
+                            <select
+                              value={block.scalePreset}
+                              onFocus={() => onChangeActiveBlock(block.id)}
+                              onChange={(event) => onChangeBlock(block.id, { scalePreset: event.target.value as WorkspaceSceneScalePreset })}
+                              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition focus:border-primary"
+                            >
+                              {sceneScalePresets.map((preset) => (
+                                <option key={preset.id} value={preset.id}>
+                                  {t(`sceneForm.blockScalePresets.${preset.id}`, { meters: preset.meters })}
+                                </option>
+                              ))}
+                            </select>
                           </label>
                           <label className="block space-y-1.5 text-sm">
                             <span className="text-foreground/64">{t("sceneForm.blockDescription")}</span>
@@ -4558,8 +4980,14 @@ function SceneCreateDialog({
                           isPending={panoramaPendingBlockId === block.id}
                           isBlocked={Boolean(panoramaPendingBlockId)}
                           maxRedrawAttempts={panoramaMaxRedrawAttempts}
+                          referenceImages={block.referenceImages}
+                          onAddReferenceImages={(files) => onAddBlockReferenceImages(block.id, files)}
                           onChangeMaxRedrawAttempts={onChangePanoramaMaxRedrawAttempts}
                           onClear={() => onClearBlockPanorama(block.id)}
+                          onGenerateMother={() => {
+                            onChangeActiveBlock(block.id);
+                            onGenerateMother(block.id);
+                          }}
                           onGenerate={() => {
                             onChangeActiveBlock(block.id);
                             onGeneratePanorama(block.id);
@@ -4568,6 +4996,7 @@ function SceneCreateDialog({
                             onChangeActiveBlock(block.id);
                             onSelectFace(block.id, face, file);
                           }}
+                          onRemoveReferenceImage={(imageId) => onRemoveBlockReferenceImage(block.id, imageId)}
                           t={t}
                         />
                       </section>
@@ -4583,7 +5012,10 @@ function SceneCreateDialog({
               input={aiInput}
               isPending={aiPending}
               messages={aiMessages}
+              referenceImages={aiReferenceImages}
+              onAddReferenceImages={onAddAiReferenceImages}
               onChangeInput={onChangeAiInput}
+              onRemoveReferenceImage={onRemoveAiReferenceImage}
               onSend={onSendAiMessage}
               t={t}
             />
@@ -4621,9 +5053,13 @@ function SceneBlockPanoramaPanel({
   isBlocked,
   isPending,
   maxRedrawAttempts,
+  referenceImages,
+  onAddReferenceImages,
   onChangeMaxRedrawAttempts,
   onClear,
+  onGenerateMother,
   onGenerate,
+  onRemoveReferenceImage,
   onSelectFace,
   t
 }: {
@@ -4633,13 +5069,18 @@ function SceneBlockPanoramaPanel({
   isBlocked: boolean;
   isPending: boolean;
   maxRedrawAttempts: number;
+  referenceImages: SceneReferenceImageDraft[];
+  onAddReferenceImages: (files: FileList | File[]) => void;
   onChangeMaxRedrawAttempts: (value: number) => void;
   onClear: () => void;
+  onGenerateMother: () => void;
   onGenerate: () => void;
+  onRemoveReferenceImage: (imageId: string) => void;
   onSelectFace: (face: ScenePanoramaFace, file: File | null) => void;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [motherPreviewOpen, setMotherPreviewOpen] = useState(false);
   const generationImages = generation?.faces ?? null;
   const generationFaces = useMemo(
     () => (generationImages ? getScenePanoramaGenerationFaceUrls(generationImages) : null),
@@ -4648,6 +5089,8 @@ function SceneBlockPanoramaPanel({
   const previewFaces = generationFaces ?? faces;
   const completePreviewFaces = previewFaces && isCompleteScenePanoramaFaceUrls(previewFaces) ? previewFaces : null;
   const isGenerating = generation ? !generation.completed && !generation.error : false;
+  const motherUrl = generation?.motherImage?.dataUrl ?? block.panorama?.mother?.previewUrl ?? block.panorama?.mother?.storedUrl ?? "";
+  const canGenerateFaces = Boolean(motherUrl);
 
   return (
     <section className="mt-3 space-y-2.5 border-t border-border/70 pt-3" aria-label={t("sceneForm.panoramaTitle")}>
@@ -4682,8 +5125,17 @@ function SceneBlockPanoramaPanel({
           </label>
           <button
             type="button"
-            onClick={onGenerate}
+            onClick={onGenerateMother}
             disabled={isBlocked}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-border bg-background px-3 text-xs font-medium text-foreground/68 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
+          >
+            {isPending && !canGenerateFaces ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Images className="h-3.5 w-3.5" aria-hidden="true" />}
+            {t("sceneForm.generatePanoramaMother")}
+          </button>
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={isBlocked || !canGenerateFaces}
             className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-foreground px-3 text-xs font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
           >
             {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -4704,18 +5156,48 @@ function SceneBlockPanoramaPanel({
               style={{ width: `${Math.max(0, Math.min(100, generation.progress))}%` }}
             />
           </div>
-          {generation.motherImage ? (
+          {motherUrl ? (
             <div className="overflow-hidden rounded-md border border-border bg-muted/40">
               <div className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-foreground/52">
                 <span>{t("sceneForm.panoramaMotherPreview")}</span>
                 {isGenerating ? <span>{t("sceneForm.panoramaPreviewOnly")}</span> : null}
               </div>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={generation.motherImage.dataUrl} alt="" className="aspect-[2/1] w-full object-cover" />
+              <SceneEquirectangularPanoramaViewer
+                className="aspect-[2/1] rounded-none border-0"
+                emptyLabel={t("sceneForm.panoramaMotherEmpty")}
+                imageUrl={motherUrl}
+                expandLabel={t("sceneForm.panoramaMotherPreviewOpen")}
+                onExpand={() => setMotherPreviewOpen(true)}
+              />
             </div>
           ) : null}
         </div>
       ) : null}
+      {!generation && motherUrl ? (
+        <div className="overflow-hidden rounded-lg border border-border bg-background/70 p-2.5">
+          <div className="flex items-center justify-between gap-2 pb-2 text-xs text-foreground/52">
+            <span>{t("sceneForm.panoramaMotherPreview")}</span>
+          </div>
+          <SceneEquirectangularPanoramaViewer
+            className="aspect-[2/1] rounded-md"
+            emptyLabel={t("sceneForm.panoramaMotherEmpty")}
+            imageUrl={motherUrl}
+            expandLabel={t("sceneForm.panoramaMotherPreviewOpen")}
+            onExpand={() => setMotherPreviewOpen(true)}
+          />
+        </div>
+      ) : null}
+
+      <SceneReferenceImageStrip
+        addLabel={t("sceneForm.referenceImageAdd")}
+        emptyLabel={t("sceneForm.panoramaReferenceEmpty")}
+        images={referenceImages}
+        isDisabled={isBlocked}
+        removeLabel={t("sceneForm.referenceImageRemove")}
+        title={t("sceneForm.panoramaReferenceImages")}
+        onAddImages={onAddReferenceImages}
+        onRemoveImage={onRemoveReferenceImage}
+      />
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(16rem,1fr)]">
         <ScenePanoramaViewer
@@ -4781,7 +5263,84 @@ function SceneBlockPanoramaPanel({
           t={t}
         />
       ) : null}
+      {motherPreviewOpen && motherUrl ? (
+        <SceneEquirectangularPanoramaPreviewDialog
+          imageUrl={motherUrl}
+          onClose={() => setMotherPreviewOpen(false)}
+          t={t}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function SceneReferenceImageStrip({
+  addLabel,
+  emptyLabel,
+  images,
+  isDisabled,
+  removeLabel,
+  title,
+  onAddImages,
+  onRemoveImage
+}: {
+  addLabel: string;
+  emptyLabel: string;
+  images: SceneReferenceImageDraft[];
+  isDisabled?: boolean;
+  removeLabel: string;
+  title: string;
+  onAddImages: (files: FileList | File[]) => void;
+  onRemoveImage: (imageId: string) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-background/70 p-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-foreground/62">{title}</span>
+        <label className={cn(
+          "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-border px-2 text-xs font-medium text-foreground/60 transition hover:bg-muted hover:text-foreground",
+          isDisabled ? "pointer-events-none opacity-45" : ""
+        )}>
+          <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+          {addLabel}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            className="sr-only"
+            disabled={isDisabled}
+            onChange={(event) => {
+              if (event.target.files) {
+                onAddImages(event.target.files);
+              }
+
+              event.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {images.length > 0 ? (
+        <div className="grid grid-cols-3 gap-2">
+          {images.map((image) => (
+            <div key={image.id} className="group relative overflow-hidden rounded-md border border-border bg-muted/30">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image.previewUrl} alt="" className="aspect-video w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => onRemoveImage(image.id)}
+                className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-background/86 text-foreground/70 opacity-0 shadow-sm transition hover:text-foreground group-hover:opacity-100"
+                aria-label={removeLabel}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+              <span className="block truncate px-1.5 py-1 text-[0.68rem] text-foreground/50">{image.file.name}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-md border border-dashed border-border/75 px-3 py-2 text-xs text-foreground/42">{emptyLabel}</p>
+      )}
+    </div>
   );
 }
 
@@ -4789,14 +5348,20 @@ function SceneAssistantPanel({
   input,
   isPending,
   messages,
+  referenceImages,
+  onAddReferenceImages,
   onChangeInput,
+  onRemoveReferenceImage,
   onSend,
   t
 }: {
   input: string;
   isPending: boolean;
   messages: SceneAiMessage[];
+  referenceImages: SceneReferenceImageDraft[];
+  onAddReferenceImages: (files: FileList | File[]) => void;
   onChangeInput: (value: string) => void;
+  onRemoveReferenceImage: (imageId: string) => void;
   onSend: () => void;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
@@ -4822,6 +5387,18 @@ function SceneAssistantPanel({
           ))
         )}
       </div>
+      <div className="mt-3">
+        <SceneReferenceImageStrip
+          addLabel={t("sceneForm.referenceImageAdd")}
+          emptyLabel={t("sceneForm.aiReferenceEmpty")}
+          images={referenceImages}
+          isDisabled={isPending}
+          removeLabel={t("sceneForm.referenceImageRemove")}
+          title={t("sceneForm.aiReferenceImages")}
+          onAddImages={onAddReferenceImages}
+          onRemoveImage={onRemoveReferenceImage}
+        />
+      </div>
       <div className="mt-3 flex gap-2">
         <textarea
           value={input}
@@ -4839,7 +5416,7 @@ function SceneAssistantPanel({
         <button
           type="button"
           onClick={onSend}
-          disabled={!input.trim() || isPending}
+          disabled={(!input.trim() && referenceImages.length === 0) || isPending}
           className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-foreground text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
           aria-label={t("sceneForm.aiSend")}
         >
@@ -5123,6 +5700,250 @@ function ScenePanoramaViewer({
   );
 }
 
+function SceneEquirectangularPanoramaViewer({
+  className,
+  emptyLabel,
+  expandLabel,
+  imageUrl,
+  onExpand
+}: {
+  className?: string;
+  emptyLabel: string;
+  expandLabel?: string;
+  imageUrl: string | null;
+  onExpand?: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const onExpandRef = useRef(onExpand);
+  const viewRef = useRef({ fov: 70, lat: 0, lon: 0 });
+  const [webglReady, setWebglReady] = useState(false);
+
+  useEffect(() => {
+    onExpandRef.current = onExpand;
+  }, [onExpand]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container || !imageUrl) {
+      setWebglReady(false);
+      return;
+    }
+
+    const currentImageUrl = imageUrl;
+    let disposed = false;
+    let cleanup = () => {};
+
+    async function init() {
+      setWebglReady(false);
+
+      try {
+        const canvas = document.createElement("canvas");
+        const hasWebgl = Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
+
+        if (!hasWebgl || !containerRef.current) {
+          setWebglReady(false);
+          return;
+        }
+
+        const THREE = await import("three");
+        THREE.ColorManagement.enabled = true;
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(viewRef.current.fov, 1, 0.1, 100);
+        const geometry = new THREE.SphereGeometry(50, 64, 32);
+        geometry.scale(-1, 1, 1);
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin("anonymous");
+        const texture = await loader.loadAsync(currentImageUrl);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const material = new THREE.MeshBasicMaterial({ map: texture });
+        const sphere = new THREE.Mesh(geometry, material);
+        let observer: ResizeObserver | null = null;
+        const removeListeners: Array<() => void> = [];
+        let lon = viewRef.current.lon;
+        let lat = viewRef.current.lat;
+        let pointerDown = false;
+        let startX = 0;
+        let startY = 0;
+        let startLon = 0;
+        let startLat = 0;
+        let movedSincePointerDown = false;
+
+        scene.add(sphere);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
+        renderer.domElement.style.display = "block";
+        renderer.domElement.style.touchAction = "none";
+        containerRef.current.appendChild(renderer.domElement);
+        cleanup = () => {
+          observer?.disconnect();
+          removeListeners.forEach((removeListener) => removeListener());
+          texture.dispose();
+          material.dispose();
+          geometry.dispose();
+          renderer.domElement.remove();
+          renderer.dispose();
+        };
+
+        if (disposed) {
+          cleanup();
+          return;
+        }
+
+        function updateCamera() {
+          lat = Math.max(-85, Math.min(85, lat));
+          const phi = THREE.MathUtils.degToRad(90 - lat);
+          const theta = THREE.MathUtils.degToRad(lon);
+
+          camera.lookAt(
+            new THREE.Vector3(
+              Math.sin(phi) * Math.cos(theta),
+              Math.cos(phi),
+              Math.sin(phi) * Math.sin(theta)
+            )
+          );
+        }
+
+        function render() {
+          updateCamera();
+          renderer.render(scene, camera);
+        }
+
+        function resize() {
+          if (!containerRef.current) {
+            return;
+          }
+
+          const width = Math.max(1, containerRef.current.clientWidth);
+          const height = Math.max(1, containerRef.current.clientHeight);
+
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height);
+          render();
+        }
+
+        function onPointerDown(event: PointerEvent) {
+          pointerDown = true;
+          movedSincePointerDown = false;
+          startX = event.clientX;
+          startY = event.clientY;
+          startLon = lon;
+          startLat = lat;
+          renderer.domElement.setPointerCapture(event.pointerId);
+          renderer.domElement.classList.add("cursor-grabbing");
+        }
+
+        function onPointerMove(event: PointerEvent) {
+          if (!pointerDown) {
+            return;
+          }
+
+          const deltaX = event.clientX - startX;
+          const deltaY = event.clientY - startY;
+
+          movedSincePointerDown ||= Math.hypot(deltaX, deltaY) > 6;
+          lon = startLon - deltaX * 0.12;
+          lat = startLat + deltaY * 0.12;
+          viewRef.current = { ...viewRef.current, lat, lon };
+          render();
+        }
+
+        function onPointerUp(event: PointerEvent) {
+          const shouldExpand = pointerDown && !movedSincePointerDown && event.type === "pointerup" && Boolean(onExpandRef.current);
+
+          pointerDown = false;
+          renderer.domElement.classList.remove("cursor-grabbing");
+
+          if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+            renderer.domElement.releasePointerCapture(event.pointerId);
+          }
+
+          if (shouldExpand) {
+            onExpandRef.current?.();
+          }
+        }
+
+        function onWheel(event: WheelEvent) {
+          event.preventDefault();
+          camera.fov = Math.max(35, Math.min(95, camera.fov + Math.sign(event.deltaY) * 5));
+          camera.updateProjectionMatrix();
+          viewRef.current = { ...viewRef.current, fov: camera.fov };
+          render();
+        }
+
+        observer = new ResizeObserver(resize);
+        renderer.domElement.className = "h-full w-full cursor-grab rounded-xl";
+        renderer.domElement.addEventListener("pointerdown", onPointerDown);
+        renderer.domElement.addEventListener("pointermove", onPointerMove);
+        renderer.domElement.addEventListener("pointerup", onPointerUp);
+        renderer.domElement.addEventListener("pointercancel", onPointerUp);
+        renderer.domElement.addEventListener("lostpointercapture", onPointerUp);
+        renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+        removeListeners.push(
+          () => renderer.domElement.removeEventListener("pointerdown", onPointerDown),
+          () => renderer.domElement.removeEventListener("pointermove", onPointerMove),
+          () => renderer.domElement.removeEventListener("pointerup", onPointerUp),
+          () => renderer.domElement.removeEventListener("pointercancel", onPointerUp),
+          () => renderer.domElement.removeEventListener("lostpointercapture", onPointerUp),
+          () => renderer.domElement.removeEventListener("wheel", onWheel)
+        );
+        observer.observe(containerRef.current);
+        resize();
+        setWebglReady(true);
+      } catch {
+        cleanup();
+        setWebglReady(false);
+      }
+    }
+
+    void init();
+
+    return () => {
+      disposed = true;
+      cleanup();
+    };
+  }, [imageUrl]);
+
+  if (!imageUrl) {
+    return (
+      <div
+        className={cn(
+          "flex w-full items-center justify-center rounded-xl border border-dashed border-border bg-background/70 px-4 text-center text-sm text-foreground/48",
+          className ?? "aspect-[2/1]"
+        )}
+      >
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("relative w-full overflow-hidden rounded-xl border border-border bg-background/70", className ?? "aspect-[2/1]")}>
+      <div ref={containerRef} className="absolute inset-0" />
+      {!webglReady ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+      ) : null}
+      {onExpand ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onExpand();
+          }}
+          className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background/88 text-foreground/68 shadow-sm backdrop-blur transition hover:bg-background hover:text-foreground"
+          aria-label={expandLabel ?? ""}
+        >
+          <Maximize2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function ScenePanoramaPreviewDialog({
   faces,
   onClose,
@@ -5162,6 +5983,51 @@ function ScenePanoramaPreviewDialog({
           className="min-h-0 flex-1 rounded-none border-0"
           faces={faces}
           emptyLabel={t("sceneForm.panoramaEmpty")}
+        />
+      </section>
+    </div>
+  );
+}
+
+function SceneEquirectangularPanoramaPreviewDialog({
+  imageUrl,
+  onClose,
+  t
+}: {
+  imageUrl: string;
+  onClose: () => void;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/40 p-3 backdrop-blur-sm sm:p-5">
+      <section className="relative flex h-[min(82vh,52rem)] w-[min(94vw,76rem)] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl shadow-foreground/25">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <h3 className="text-sm font-semibold text-foreground/72">{t("sceneForm.panoramaMotherPreviewTitle")}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-foreground/68 transition hover:bg-muted hover:text-foreground"
+            aria-label={t("sceneForm.panoramaPreviewClose")}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <SceneEquirectangularPanoramaViewer
+          className="min-h-0 flex-1 rounded-none border-0"
+          imageUrl={imageUrl}
+          emptyLabel={t("sceneForm.panoramaMotherEmpty")}
         />
       </section>
     </div>
@@ -5515,6 +6381,8 @@ function createDefaultSceneBlock(): SceneBlockDraft {
     id: createClientId("scene-block"),
     name: "",
     description: "",
+    referenceImages: [],
+    scalePreset: defaultSceneScalePreset,
     panorama: null
   };
 }
@@ -5580,11 +6448,13 @@ function createSceneDraftFromMaterial(material: WorkspaceMaterial): SceneCreateD
     id: block.id,
     name: block.name,
     description: block.description,
+    referenceImages: [],
+    scalePreset: normalizeSceneScalePreset(block.scalePreset),
     panorama: block.panorama
       ? {
           faceSource: block.panorama.faceSource,
           faces: scenePanoramaFaces.reduce<Partial<Record<ScenePanoramaFace, ScenePanoramaFaceDraft>>>((faces, face) => {
-            const url = block.panorama?.faces[face]?.url ?? "";
+            const url = block.panorama?.faces?.[face]?.url ?? "";
 
             if (url) {
               faces[face] = {
@@ -5596,7 +6466,15 @@ function createSceneDraftFromMaterial(material: WorkspaceMaterial): SceneCreateD
             }
 
             return faces;
-          }, {})
+          }, {}),
+          mother: block.panorama.mother?.url
+            ? {
+                file: null,
+                previewUrl: block.panorama.mother.url,
+                source: "existing" as const,
+                storedUrl: block.panorama.mother.url
+              }
+            : null
         }
       : null
   })) : [createDefaultSceneBlock()];
@@ -5638,6 +6516,7 @@ function serializeSceneTextDraft(draft: SceneCreateDraft): SceneMaterialCreateIn
       id: block.id,
       name: block.name,
       description: block.description,
+      scalePreset: block.scalePreset,
       panorama: null
     }))
   };
@@ -5666,7 +6545,8 @@ function applyPatchToSceneDraft(draft: SceneCreateDraft, patch: SceneDraftPatch)
         ? {
             ...block,
             ...(typeof update.name === "string" ? { name: update.name } : {}),
-            ...(typeof update.description === "string" ? { description: update.description } : {})
+            ...(typeof update.description === "string" ? { description: update.description } : {}),
+            ...(update.scalePreset ? { scalePreset: normalizeSceneScalePreset(update.scalePreset) } : {})
           }
         : block;
     });
@@ -5674,6 +6554,8 @@ function applyPatchToSceneDraft(draft: SceneCreateDraft, patch: SceneDraftPatch)
     id: block.id || createClientId("scene-block"),
     name: block.name,
     description: block.description,
+    referenceImages: [],
+    scalePreset: normalizeSceneScalePreset(block.scalePreset),
     panorama: null
   }));
   const blocks = [...updatedBlocks, ...addedBlocks];
@@ -5778,11 +6660,25 @@ function isScenePanoramaDrawingStyle(style: string): style is ScenePanoramaDrawi
   return maskBoardDrawingStyles.includes(style as ScenePanoramaDrawingStyle);
 }
 
+function normalizeSceneScalePreset(value: unknown): WorkspaceSceneScalePreset {
+  return typeof value === "string" && sceneScalePresets.some((preset) => preset.id === value)
+    ? value as WorkspaceSceneScalePreset
+    : defaultSceneScalePreset;
+}
+
 function isValidMaskBoardImage(file: File) {
   return maskBoardAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxMaskBoardImageBytes;
 }
 
 function isValidScenePanoramaFace(file: File) {
+  return scenePanoramaAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxScenePanoramaFaceBytes;
+}
+
+function isValidScenePanoramaMother(file: File) {
+  return scenePanoramaAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxScenePanoramaFaceBytes;
+}
+
+function isValidSceneReferenceImage(file: File) {
   return scenePanoramaAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxScenePanoramaFaceBytes;
 }
 
@@ -5822,6 +6718,14 @@ function isCompleteScenePanoramaFaceUrls(
   faces: Partial<Record<ScenePanoramaFace, string>>
 ): faces is Record<ScenePanoramaFace, string> {
   return scenePanoramaFaces.every((face) => Boolean(faces[face]));
+}
+
+function hasAnyScenePanoramaFaceDraft(faces: ScenePanoramaDraft["faces"]) {
+  return scenePanoramaFaces.some((face) => {
+    const image = faces[face];
+
+    return Boolean(image?.previewUrl || image?.storedUrl || image?.file);
+  });
 }
 
 function getCompleteScenePanoramaFaceUrls(panorama: ScenePanoramaDraft | null) {
@@ -5898,7 +6802,7 @@ function validateSceneDraftForSave(draft: SceneCreateDraft) {
       return "sceneForm.errors.blockDescriptionRequired";
     }
 
-    if (block.panorama) {
+    if (block.panorama && hasAnyScenePanoramaFaceDraft(block.panorama.faces)) {
       const completeFaces = getCompleteScenePanoramaFaceUrls(block.panorama);
 
       if (!completeFaces) {
@@ -5919,7 +6823,50 @@ async function uploadSceneDraftPanoramaFaces(draft: SceneCreateDraft, uploadedFa
         id: block.id,
         name: block.name,
         description: block.description,
+        scalePreset: block.scalePreset,
         panorama: null
+      });
+      continue;
+    }
+
+    let mother: { source: "generated" | "uploaded"; url: string } | null = null;
+
+    if (block.panorama.mother) {
+      const motherDraft = block.panorama.mother;
+
+      if (motherDraft.storedUrl && !motherDraft.file) {
+        mother = {
+          source: motherDraft.source === "existing" ? "generated" : motherDraft.source,
+          url: motherDraft.storedUrl
+        };
+      } else if (motherDraft.file) {
+        const formData = new FormData();
+
+        formData.append("file", motherDraft.file);
+
+        const result = await uploadHomeScenePanoramaMother(formData);
+
+        uploadedFaceUrls.push(result.url);
+        mother = {
+          source: motherDraft.source === "uploaded" ? "uploaded" : "generated",
+          url: result.url
+        };
+      }
+    }
+
+    if (!hasAnyScenePanoramaFaceDraft(block.panorama.faces)) {
+      blocks.push({
+        id: block.id,
+        name: block.name,
+        description: block.description,
+        scalePreset: block.scalePreset,
+        panorama: mother
+          ? {
+              faceSource: block.panorama.faceSource,
+              faces: {},
+              mother
+            }
+          : null
       });
       continue;
     }
@@ -5972,9 +6919,11 @@ async function uploadSceneDraftPanoramaFaces(draft: SceneCreateDraft, uploadedFa
       id: block.id,
       name: block.name,
       description: block.description,
+      scalePreset: block.scalePreset,
       panorama: {
         faceSource: block.panorama.faceSource,
-        faces
+        faces,
+        mother
       }
     });
   }
@@ -6001,6 +6950,27 @@ function createPreviewUrl(file: File) {
   }
 
   return "";
+}
+
+function createSceneReferenceImageDrafts(files: File[]) {
+  let invalidCount = 0;
+  const images = files.reduce<SceneReferenceImageDraft[]>((result, file) => {
+    if (!isValidSceneReferenceImage(file)) {
+      invalidCount += 1;
+
+      return result;
+    }
+
+    result.push({
+      id: createClientId("scene-reference"),
+      file,
+      previewUrl: createPreviewUrl(file)
+    });
+
+    return result;
+  }, []);
+
+  return { images, invalidCount };
 }
 
 async function downloadMaterialArchive(url: string) {
@@ -6054,7 +7024,15 @@ function revokeSceneDraftPreviews(draft: SceneCreateDraft) {
 }
 
 function revokeSceneBlockPreviews(block: SceneBlockDraft) {
+  revokeScenePanoramaMotherPreview(block.panorama?.mother);
   Object.values(block.panorama?.faces ?? {}).forEach(revokeSceneFacePreview);
+  block.referenceImages.forEach(revokeSceneReferenceImagePreview);
+}
+
+function revokeScenePanoramaMotherPreview(mother: ScenePanoramaMotherDraft | null | undefined) {
+  if (mother?.previewUrl.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(mother.previewUrl);
+  }
 }
 
 function revokeSceneFacePreview(face: ScenePanoramaFaceDraft) {
@@ -6063,9 +7041,29 @@ function revokeSceneFacePreview(face: ScenePanoramaFaceDraft) {
   }
 }
 
+function revokeSceneReferenceImagePreview(image: SceneReferenceImageDraft) {
+  if (image.previewUrl.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(image.previewUrl);
+  }
+}
+
 async function dataUrlToFile(dataUrl: string, fileName: string, contentType: string) {
-  const response = await fetch(dataUrl);
-  const blob = await response.blob();
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+
+  if (!match) {
+    throw new Error("SCENE_PANORAMA_IMAGE_DATA_URL_INVALID");
+  }
+
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] ?? "";
+  const binary = isBase64 ? atob(payload) : decodeURIComponent(payload);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  const blob = new Blob([bytes], { type: contentType || match[1] || "image/png" });
 
   return new File([blob], fileName, { type: contentType });
 }
@@ -6123,6 +7121,14 @@ function resolveSceneAiError(error: unknown, t: (key: string) => string) {
     return t("sceneForm.missingProviderSecret");
   }
 
+  if (message.includes("SCENE_ASSIST_REFERENCE_IMAGE_UNSUPPORTED")) {
+    return t("sceneForm.aiReferenceUnsupported");
+  }
+
+  if (message.includes("INVALID_SCENE_REFERENCE_IMAGE_FILE")) {
+    return t("sceneForm.invalidReferenceImage");
+  }
+
   return t("sceneForm.aiFailed");
 }
 
@@ -6141,6 +7147,22 @@ function resolveScenePanoramaError(error: unknown, t: (key: string) => string) {
     return t("sceneForm.invalidPanoramaFace");
   }
 
+  if (message.includes("INVALID_SCENE_PANORAMA_MOTHER_FILE")) {
+    return t("sceneForm.invalidPanoramaMother");
+  }
+
+  if (message.includes("SCENE_PANORAMA_MOTHER_REQUIRED")) {
+    return t("sceneForm.panoramaMotherRequired");
+  }
+
+  if (message.includes("INVALID_SCENE_REFERENCE_IMAGE_FILE")) {
+    return t("sceneForm.invalidReferenceImage");
+  }
+
+  if (message.includes("SCENE_PANORAMA_FINAL_FACE_TOO_LARGE")) {
+    return t("sceneForm.panoramaFinalFaceTooLarge");
+  }
+
   if (message.includes("SCENE_PANORAMA_QUALITY_FAILED")) {
     return t("sceneForm.panoramaQualityFailed");
   }
@@ -6157,6 +7179,10 @@ function resolveSceneSaveError(error: unknown, t: (key: string) => string, isEdi
 
   if (message.includes("INVALID_SCENE_PANORAMA_FACE_FILE") || message.includes("INVALID_MATERIAL_IMAGE_FILE")) {
     return t("sceneForm.invalidPanoramaFace");
+  }
+
+  if (message.includes("INVALID_SCENE_PANORAMA_MOTHER_FILE")) {
+    return t("sceneForm.invalidPanoramaMother");
   }
 
   if (

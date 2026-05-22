@@ -129,6 +129,67 @@ describe("password auth", () => {
     });
   });
 
+  it("treats ADMIN_ACCOUNT as admin even when the database role is USER", async () => {
+    process.env.ADMIN_ACCOUNT = "Root";
+    mocks.prisma.appUser.findUnique.mockResolvedValue(null);
+    mocks.prisma.appUser.create.mockImplementation(async ({ data }) => ({
+      id: "user-id",
+      ...data
+    }));
+
+    const { loginWithPassword, registerWithPassword, requireAdmin } = await import("@/lib/auth");
+    await registerWithPassword({ account: "reader", password: "secret123" });
+    const passwordHash = mocks.prisma.appUser.create.mock.calls[0][0].data.passwordHash as string;
+
+    mocks.prisma.appUser.findUnique.mockResolvedValue({
+      account: "root",
+      displayName: "root",
+      id: "admin-id",
+      passwordHash,
+      role: "USER"
+    });
+
+    await expect(loginWithPassword({ account: "ROOT", password: "secret123" })).resolves.toMatchObject({
+      viewer: { account: "root", role: "ADMIN" }
+    });
+
+    mocks.prisma.authSession.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      id: "session-id",
+      user: {
+        account: "root",
+        avatarUrl: null,
+        displayName: "root",
+        id: "admin-id",
+        role: "USER",
+        showAiThinking: false
+      }
+    });
+
+    await expect(requireAdmin()).resolves.toMatchObject({ account: "root", role: "ADMIN" });
+  });
+
+  it("rejects database ADMIN role when the account does not match ADMIN_ACCOUNT", async () => {
+    process.env.ADMIN_ACCOUNT = "root";
+    mocks.cookieStore.set("nwt_session", "token");
+    mocks.prisma.authSession.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      id: "session-id",
+      user: {
+        account: "reader",
+        avatarUrl: null,
+        displayName: "reader",
+        id: "user-id",
+        role: "ADMIN",
+        showAiThinking: false
+      }
+    });
+
+    const { requireAdmin } = await import("@/lib/auth");
+
+    await expect(requireAdmin()).rejects.toThrow("FORBIDDEN");
+  });
+
   it("logs in with the correct password and rejects a bad password", async () => {
     mocks.prisma.appUser.findUnique.mockResolvedValue(null);
     mocks.prisma.appUser.create.mockImplementation(async ({ data }) => ({

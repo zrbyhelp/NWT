@@ -7,7 +7,6 @@
     "description": "A new fiction experience built around AI dialogue, plot progression, knowledge graphs, and persistent memory.",
     "metric": "Current context budget {count} tokens",
     "actions": {
-      "admin": "Admin",
       "language": "Language"
     },
     "auth": {
@@ -56,6 +55,7 @@
       "tabs": {
         "general": "General",
         "account": "Account",
+        "admin": "Admin",
         "appearance": "Appearance",
         "providers": "AI Providers",
         "llm": "LLM Models",
@@ -65,6 +65,9 @@
       },
       "mainSite": "Open Main Site",
       "mainSiteAction": "Open",
+      "docs": "Open Docs",
+      "docsDescription": "Open the local VitePress documentation site in a new tab.",
+      "docsAction": "Open",
       "showThinking": "Show thinking content",
       "showThinkingDescription": "When enabled, provider reasoning content is shown when available.",
       "logoutAction": "Log out",
@@ -149,6 +152,28 @@
           "invalidAvatarFile": "Avatar files must be gif/png/jpg/webp and no larger than 5 MB.",
           "invalidDisplayName": "Display name must be 1-40 characters.",
           "generic": "Could not save account settings. Please try again later."
+        }
+      },
+      "admin": {
+        "title": "Admin",
+        "description": "Visible only to the account configured by ADMIN_ACCOUNT for global server settings.",
+        "outboundProxyTitle": "Global Outbound Proxy",
+        "outboundProxyDescription": "When enabled, AI calls, image generation, provider model fetching, material image downloads, and R2 reads/writes use this proxy for external services.",
+        "enabled": "Enable proxy",
+        "httpProxy": "HTTP proxy",
+        "httpProxyPlaceholder": "For example http://127.0.0.1:7890",
+        "httpsProxy": "HTTPS proxy",
+        "httpsProxyPlaceholder": "For example http://127.0.0.1:7890",
+        "noProxy": "NO_PROXY",
+        "noProxyPlaceholder": "127.0.0.1,localhost",
+        "save": "Save proxy settings",
+        "saved": "Proxy settings saved",
+        "loading": "Loading admin settings",
+        "errors": {
+          "forbidden": "The current account is not an admin, so admin settings cannot be saved.",
+          "urlRequired": "Enable proxy requires at least one HTTP or HTTPS proxy URL.",
+          "invalidUrl": "Proxy URLs must start with http:// or https://.",
+          "generic": "Could not save admin settings. Please try again later."
         }
       },
       "ai": {
@@ -754,22 +779,45 @@
         "removeBlock": "Remove block",
         "blockName": "Block Name",
         "blockNamePlaceholder": "Example: Main Hall, East Corridor, Rooftop Garden",
+        "blockScale": "Block Scale",
+        "blockScaleDetail": "Scale: {scale}",
+        "blockScalePresets": {
+          "closeUp": "Close-up / {meters}m",
+          "near": "Near / {meters}m",
+          "mid": "Medium / {meters}m",
+          "wide": "Wide / {meters}m",
+          "aerial": "Aerial / {meters}m"
+        },
         "blockDescription": "Block Description",
         "blockDescriptionPlaceholder": "Describe this sub-area's structure, light, materials, interactables, and mood",
         "aiTitle": "AI Assist",
         "aiEmpty": "Ask AI to complete the scene description, refine blocks, or add and remove blocks directly.",
         "aiPlaceholder": "Example: Expand it into an abandoned lab with an archive room and greenhouse",
         "aiSend": "Send scene AI assist message",
+        "aiReferenceImages": "AI Image References",
+        "aiReferenceEmpty": "Upload up to 3 reference images so AI can sync the scene draft from the visuals.",
+        "aiReferenceOnlyMessage": "Sync the scene draft from the reference images",
+        "aiReferenceUnsupported": "The default LLM does not support image input. Switch to a vision-capable model in Experience Settings.",
         "aiMissingDefaultLlm": "No usable default LLM is configured. Set one in Experience Settings first.",
         "aiFailed": "Scene AI assist failed. Please try again later.",
         "missingProviderSecret": "The default model provider has no API key. Complete it in Experience Settings first.",
         "panoramaTitle": "Block Panorama",
-        "panoramaDescription": "Generate a local preview first. Cubemap faces are uploaded only when the scene is saved.",
-        "generatePanorama": "Generate Block Panorama",
+        "panoramaDescription": "Generate the panorama master first, then generate cubemap faces from it. Assets upload only when the scene is saved.",
+        "panoramaReferenceImages": "Master References",
+        "panoramaReferenceEmpty": "Upload up to 3 references for this panorama master generation only.",
+        "referenceImageAdd": "Upload reference",
+        "referenceImageRemove": "Remove reference image",
+        "referenceImageLimit": "Each reference area supports up to 3 images.",
+        "invalidReferenceImage": "Reference images must be PNG/JPG/WebP and no larger than 10MB.",
+        "generatePanoramaMother": "Generate Master",
+        "generatePanorama": "Generate Faces",
         "panoramaIterationRounds": "Max iterations",
         "panoramaEmpty": "No complete cubemap panorama yet",
         "panoramaFaceIterating": "Iterating image",
         "panoramaMotherPreview": "Panorama Master",
+        "panoramaMotherEmpty": "No panorama master yet",
+        "panoramaMotherPreviewTitle": "Panorama Master Preview",
+        "panoramaMotherPreviewOpen": "Open panorama master preview",
         "panoramaPreviewOnly": "Preview only",
         "panoramaPreviewTitle": "Panorama Preview",
         "panoramaPreviewOpen": "Open panorama preview",
@@ -786,14 +834,17 @@
           "bottom": "Bottom"
         },
         "panoramaGenerated": "Block panorama generated.",
+        "panoramaMotherGenerated": "Panorama master generated.",
         "panoramaGeneratedBestEffort": "Best available block panorama generated. Seam quality may still need review, so inspect the enlarged preview.",
+        "panoramaGeneratedColorRejected": "Block panorama generated. Color and seam post-processing was not applied, so inspect the enlarged preview.",
+        "panoramaGeneratedColorSkipped": "Block panorama generated. Color and seam post-processing did not complete, so inspect the enlarged preview.",
         "panoramaGeneratedFallback": "Block panorama generated. The current model did not perform reference repainting.",
         "panoramaGenerateFailed": "Failed to generate the block panorama. Please try again later.",
         "panoramaProgressDone": "Block panorama is complete",
         "panoramaProgressFaces": "Generating cubemap faces",
         "panoramaProgressFailed": "Block panorama generation failed",
         "panoramaProgressIterating": "Seams need repair. Iterating affected images",
-        "panoramaProgressColor": "Harmonizing colors",
+        "panoramaProgressColor": "Harmonizing color and seams",
         "panoramaProgressMother": "Generating panorama master",
         "panoramaProgressMotherReady": "Panorama master generated",
         "panoramaProgressQuality": "Checking seam quality",
@@ -802,6 +853,9 @@
         "panoramaQualityFailed": "The block panorama did not pass seam quality checks. Regenerate it.",
         "panoramaReferenceEditUnsupported": "The default image model does not support reference-image repainting, so it cannot generate production-ready cubemap panoramas. Switch to an image-editing model in Experience Settings.",
         "invalidPanoramaFace": "Panorama faces only support PNG/JPG/WebP up to 10MB, and must be square when saved.",
+        "invalidPanoramaMother": "Panorama masters only support PNG/JPG/WebP up to 10MB, and must be close to 2:1 when saved.",
+        "panoramaMotherRequired": "Generate the panorama master before generating cubemap faces.",
+        "panoramaFinalFaceTooLarge": "The block panorama finished, but a final face is still larger than 10MB. Reduce complexity or regenerate.",
         "panoramaUploadFailed": "Failed to upload the cubemap faces. Check the R2 storage settings and try again.",
         "panoramaUploadTooLarge": "Failed to upload the cubemap faces. One face is too large, so regenerate or compress it before saving.",
         "migrationRequired": "The scene category migration has not been applied yet. Run Prisma migrations before saving the scene.",
@@ -873,60 +927,6 @@
       "openSettings": "Open experience settings",
       "newThread": "New interaction thread",
       "worldGraph": "Open world graph"
-    }
-  },
-  "admin": {
-    "shell": {
-      "brand": "NWT Admin",
-      "description": "Operations Core",
-      "backHome": "Back home",
-      "noAccessKicker": "Access denied",
-      "noAccessTitle": "Administrator account required",
-      "noAccessDescription": "The current account is not an administrator. Log in with the ADMIN_ACCOUNT and ADMIN_PASSWORD account from environment variables.",
-      "nav": {
-        "dashboard": "Dashboard",
-        "threads": "Threads",
-        "graph": "World Graph",
-        "jobs": "Job Queue",
-        "settings": "Settings"
-      }
-    },
-    "dashboard": {
-      "kicker": "Admin Foundation",
-      "title": "AI Interactive Fiction Operations",
-      "description": "The first admin version has no authentication yet and provides core entry points for threads, world graph, jobs, and system settings.",
-      "stats": {
-        "threads": {
-          "label": "Threads",
-          "value": "Stub"
-        },
-        "jobs": {
-          "label": "Job Queue",
-          "value": "Pending"
-        },
-        "graph": {
-          "label": "Graph Status",
-          "value": "Neo4j"
-        },
-        "models": {
-          "label": "Model Config",
-          "value": "OpenAI"
-        }
-      },
-      "sections": {
-        "dialogue": {
-          "title": "Thread Operations",
-          "body": "Future work will manage user and AI plot interactions, context, branches, and streaming dialogue state."
-        },
-        "memory": {
-          "title": "Memory and Graph",
-          "body": "Entry point for Qdrant retrieval, Neo4j world relationships, and LangChain text splitting jobs."
-        },
-        "operations": {
-          "title": "System Settings",
-          "body": "Future settings for model providers, R2 storage, Langfuse observability, and background jobs."
-        }
-      }
     }
   }
 }

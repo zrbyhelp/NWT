@@ -8,7 +8,7 @@
 - `REDIS_URL`：BullMQ 使用的 Redis 连接地址。
 - `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL`：OpenAI-compatible 兼容回退配置，仅用于没有用户上下文的内部调用。首页登录用户聊天必须配置当前账号自己的默认 LLM。
 - `AI_CONFIG_ENCRYPTION_KEY`：AI 供应商 API Key 的加密密钥。保存或读取设置弹窗中的供应商密钥时必须配置，建议使用足够长的随机字符串。
-- `ADMIN_ACCOUNT`、`ADMIN_PASSWORD`：后台管理员账号和密码。配置后系统会自动确保该账号为管理员；未配置时普通注册和登录仍可使用，但没有可进入后台的管理员账号。
+- `ADMIN_ACCOUNT`、`ADMIN_PASSWORD`：管理员账号和密码。管理员身份只由当前登录账号是否等于 `ADMIN_ACCOUNT` 判断；`ADMIN_PASSWORD` 用于确保该账号可登录。未配置时普通注册和登录仍可使用，但设置中不会出现“管理员”分类。
 - `QDRANT_URL`：Qdrant 地址。
 - `NEO4J_URI`、`NEO4J_USERNAME`、`NEO4J_PASSWORD`：Neo4j 配置。
 - `R2_ACCOUNT_ID`、`R2_ENDPOINT`、`R2_PUBLIC_BASE_URL`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_BUCKET_NAME`：Cloudflare R2 配置。`R2_ENDPOINT` 可省略，省略时会由 `R2_ACCOUNT_ID` 自动拼接默认 R2 endpoint；`R2_PUBLIC_BASE_URL` 可选，用于头像上传后的公开访问地址。未配置时，应用会使用 `/api/storage/r2/[key]` 代理读取 R2 私有对象。
@@ -53,4 +53,4 @@ API Key 不会在前端明文展示，编辑供应商时只能重填或清空。
 
 ## 登录与权限
 
-首页、剧本浏览、社区剧本浏览和社区素材浏览不要求登录。创建会话、发送消息、删除会话、加入社区素材、管理 AI 设置、上传头像、修改密码和访问“我的剧本”需要普通账号登录；访问 `/zh-CN/admin` 与 `/en-US/admin` 需要管理员角色。第一版开放账号密码注册，不做邮箱验证、验证码或邀请码。
+首页、剧本浏览、社区剧本浏览和社区素材浏览不要求登录。创建会话、发送消息、删除会话、加入社区素材、管理 AI 设置、上传头像、修改密码和访问“我的剧本”需要普通账号登录；全局代理等管理员设置需要当前登录账号匹配 `ADMIN_ACCOUNT`。项目不再提供独立 `/admin` 后台路由。第一版开放账号密码注册，不做邮箱验证、验证码或邀请码。

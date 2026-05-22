@@ -2,7 +2,7 @@ import "server-only";
 
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
-import { getR2PublicObjectUrl, r2, r2BucketName } from "@/lib/storage/r2";
+import { getR2Client, getR2PublicObjectUrl, r2BucketName } from "@/lib/storage/r2";
 import { avatarContentTypeExtensions, isValidAvatarFile } from "@/lib/storage/avatar-constraints";
 
 export async function uploadUserAvatar(userId: string, file: File) {
@@ -15,6 +15,7 @@ export async function uploadUserAvatar(userId: string, file: File) {
 
   const key = `avatars/${encodePathSegment(userId)}/${Date.now()}-${randomUUID()}.${extension}`;
   const body = Buffer.from(await file.arrayBuffer());
+  const r2 = await getR2Client();
 
   await r2.send(
     new PutObjectCommand({

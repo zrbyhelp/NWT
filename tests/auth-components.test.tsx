@@ -48,6 +48,10 @@ vi.mock("@/app/[locale]/actions", () => ({
   uploadHomeAvatar: vi.fn(async () => ({
     viewer: { account: "reader", avatarUrl: "https://cdn.example.com/avatar.gif", displayName: "reader", id: "user-id", role: "USER", showAiThinking: false }
   })),
+  getHomeAdminSystemSettings: vi.fn(async () => ({
+    outboundProxy: { enabled: false, httpProxy: "", httpsProxy: "", noProxy: "127.0.0.1,localhost" }
+  })),
+  saveHomeAdminOutboundProxySettings: vi.fn(async (outboundProxy) => ({ outboundProxy })),
   getHomeAiConfig: vi.fn(async () => ({ imageModels: [], providers: [], llmModels: [], vectorModels: [] })),
   fetchHomeProviderModels: vi.fn(async () => []),
   saveHomeAiProvider: vi.fn(),

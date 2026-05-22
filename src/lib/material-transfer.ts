@@ -9,6 +9,7 @@ import type {
 } from "@prisma/client";
 import type { Locale } from "@/i18n/routing";
 import { requireAuth } from "@/lib/auth";
+import { configureServerOutboundProxy } from "@/lib/network/proxy";
 import { prisma } from "@/lib/prisma";
 import {
   getMaterialImageExtension,
@@ -57,6 +58,11 @@ type MaterialArchiveScenePanoramaFace = {
   image: MaterialArchiveImage;
 };
 
+type MaterialArchiveScenePanoramaMother = {
+  blockId: string;
+  image: MaterialArchiveImage;
+};
+
 type MaterialArchiveItem = {
   slug: string;
   category: WorkspaceMaterialCategory;
@@ -68,6 +74,7 @@ type MaterialArchiveItem = {
   metadata: unknown;
   image: MaterialArchiveImage | null;
   scenePanoramaFaces?: MaterialArchiveScenePanoramaFace[];
+  scenePanoramaMothers?: MaterialArchiveScenePanoramaMother[];
 };
 
 type MaterialArchiveManifest = {
@@ -87,6 +94,11 @@ type PreparedImportMaterial = {
     imageBytes: Uint8Array;
     imageContentType: string;
   }>;
+  scenePanoramaMotherImages: Array<{
+    blockId: string;
+    imageBytes: Uint8Array;
+    imageContentType: string;
+  }>;
 };
 
 type UploadedImportMaterial = PreparedImportMaterial & {
@@ -94,6 +106,10 @@ type UploadedImportMaterial = PreparedImportMaterial & {
   scenePanoramaFaceUrls: Array<{
     blockId: string;
     face: ScenePanoramaFace;
+    url: string;
+  }>;
+  scenePanoramaMotherUrls: Array<{
+    blockId: string;
     url: string;
   }>;
   metadata: unknown;
@@ -138,7 +154,8 @@ export async function exportSelfCreatedMaterialsZip({
   for (const record of records) {
     const pathSlug = createArchivePathSegment(record.slug);
     const sceneFaces = await downloadScenePanoramaFaces(record.metadata, pathSlug, origin);
-    const image = sceneFaces.length === 0 && record.previewUrl ? await downloadMaterialImage(record.previewUrl, origin) : null;
+    const sceneMothers = await downloadScenePanoramaMothers(record.metadata, pathSlug, origin);
+    const image = sceneFaces.length === 0 && sceneMothers.length === 0 && record.previewUrl ? await downloadMaterialImage(record.previewUrl, origin) : null;
     const imageFileName = image ? `preview.${image.extension}` : "";
     const imagePath = image ? `materials/${pathSlug}/images/${imageFileName}` : "";
 
@@ -147,6 +164,9 @@ export async function exportSelfCreatedMaterialsZip({
     }
 
     sceneFaces.forEach((asset) => {
+      zip.file(asset.image.path, asset.bytes);
+    });
+    sceneMothers.forEach((asset) => {
       zip.file(asset.image.path, asset.bytes);
     });
 
@@ -170,6 +190,10 @@ export async function exportSelfCreatedMaterialsZip({
       scenePanoramaFaces: sceneFaces.map((asset) => ({
         blockId: asset.blockId,
         face: asset.face,
+        image: asset.image
+      })),
+      scenePanoramaMothers: sceneMothers.map((asset) => ({
+        blockId: asset.blockId,
         image: asset.image
       }))
     };
@@ -209,12 +233,24 @@ export async function importMaterialsZip(bytes: ArrayBuffer | Uint8Array, locale
         url: await uploadMaterialImageBytes(viewer.id, faceImage.imageBytes, faceImage.imageContentType, "imports")
       }))
     );
+    const scenePanoramaMotherUrls = await Promise.all(
+      prepared.scenePanoramaMotherImages.map(async (motherImage) => ({
+        blockId: motherImage.blockId,
+        url: await uploadMaterialImageBytes(viewer.id, motherImage.imageBytes, motherImage.imageContentType, "imports")
+      }))
+    );
 
     uploadedMaterials.push({
       ...prepared,
-      previewUrl: getImportedScenePreviewUrl(scenePanoramaFaceUrls) ?? previewUrl,
+      previewUrl: getImportedScenePreviewUrl(scenePanoramaFaceUrls, scenePanoramaMotherUrls) ?? previewUrl,
       scenePanoramaFaceUrls,
-      metadata: updateImportedMetadataImage(prepared.archiveItem.metadata, previewUrl, scenePanoramaFaceUrls)
+      scenePanoramaMotherUrls,
+      metadata: updateImportedMetadataImage(
+        prepared.archiveItem.metadata,
+        previewUrl,
+        scenePanoramaFaceUrls,
+        scenePanoramaMotherUrls
+      )
     });
   }
 
@@ -304,6 +340,8 @@ async function getAllSelfCreatedMaterials(userId: string) {
 }
 
 async function downloadMaterialImage(previewUrl: string, origin: string) {
+  await configureServerOutboundProxy();
+
   const url = resolveMaterialImageUrl(previewUrl, origin);
   const response = await fetch(url);
 
@@ -390,6 +428,57 @@ async function downloadScenePanoramaFaces(metadata: unknown, pathSlug: string, o
   return assets;
 }
 
+async function downloadScenePanoramaMothers(metadata: unknown, pathSlug: string, origin: string) {
+  const record = getSceneMetadataRecord(metadata);
+  const assets: Array<{
+    blockId: string;
+    bytes: Uint8Array;
+    image: MaterialArchiveImage;
+  }> = [];
+
+  if (!record || !Array.isArray(record.blocks)) {
+    return assets;
+  }
+
+  for (const block of record.blocks) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+
+    const blockRecord = block as Record<string, unknown>;
+    const blockId = normalizeText(blockRecord.id, "block");
+    const panorama = blockRecord.panorama;
+
+    if (!panorama || typeof panorama !== "object") {
+      continue;
+    }
+
+    const mother = (panorama as Record<string, unknown>).mother;
+    const url = mother && typeof mother === "object" ? (mother as Record<string, unknown>).url : null;
+
+    if (typeof url !== "string" || !url) {
+      continue;
+    }
+
+    const image = await downloadMaterialImage(url, origin);
+    const fileName = `mother.${image.extension}`;
+    const path = `materials/${pathSlug}/panorama/${createArchivePathSegment(blockId)}/${fileName}`;
+
+    assets.push({
+      blockId,
+      bytes: image.bytes,
+      image: {
+        path,
+        fileName,
+        contentType: image.contentType,
+        byteSize: image.bytes.byteLength
+      }
+    });
+  }
+
+  return assets;
+}
+
 function resolveMaterialImageUrl(previewUrl: string, origin: string) {
   if (previewUrl.startsWith("/")) {
     return new URL(previewUrl, origin).toString();
@@ -431,6 +520,7 @@ async function prepareImportMaterials(zip: JSZip, manifest: MaterialArchiveManif
     let imageBytes: Uint8Array | null = null;
     let imageContentType: string | null = null;
     const scenePanoramaFaceImages: PreparedImportMaterial["scenePanoramaFaceImages"] = [];
+    const scenePanoramaMotherImages: PreparedImportMaterial["scenePanoramaMotherImages"] = [];
 
     if (archiveItem.image) {
       const imageFile = zip.file(archiveItem.image.path);
@@ -469,11 +559,33 @@ async function prepareImportMaterials(zip: JSZip, manifest: MaterialArchiveManif
       });
     }
 
+    for (const motherAsset of archiveItem.scenePanoramaMothers ?? []) {
+      const imageFile = zip.file(motherAsset.image.path);
+
+      if (!imageFile) {
+        throw new MaterialTransferError("MATERIAL_IMAGE_REQUIRED");
+      }
+
+      const imageBytes = await imageFile.async("uint8array");
+      const imageContentType = normalizeImageContentType(motherAsset.image.contentType);
+
+      if (!imageContentType || !isValidMaterialImageBytes(imageBytes, imageContentType)) {
+        throw new MaterialTransferError("INVALID_MATERIAL_IMAGE_FILE");
+      }
+
+      scenePanoramaMotherImages.push({
+        blockId: motherAsset.blockId,
+        imageBytes,
+        imageContentType
+      });
+    }
+
     preparedMaterials.push({
       archiveItem,
       imageBytes,
       imageContentType,
-      scenePanoramaFaceImages
+      scenePanoramaFaceImages,
+      scenePanoramaMotherImages
     });
   }
 
@@ -526,7 +638,8 @@ function validateArchiveItem(value: unknown): MaterialArchiveItem {
     descriptionEn: normalizeLongText(record.descriptionEn, ""),
     metadata: cloneJson(record.metadata ?? null),
     image: validateArchiveImage(record.image),
-    scenePanoramaFaces: validateArchiveScenePanoramaFaces(record.scenePanoramaFaces)
+    scenePanoramaFaces: validateArchiveScenePanoramaFaces(record.scenePanoramaFaces),
+    scenePanoramaMothers: validateArchiveScenePanoramaMothers(record.scenePanoramaMothers)
   };
 }
 
@@ -555,6 +668,34 @@ function validateArchiveScenePanoramaFaces(value: unknown): MaterialArchiveScene
     return {
       blockId,
       face,
+      image: validateRequiredArchiveImage(record.image)
+    };
+  });
+}
+
+function validateArchiveScenePanoramaMothers(value: unknown): MaterialArchiveScenePanoramaMother[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new MaterialTransferError("INVALID_MATERIAL_MANIFEST");
+  }
+
+  return value.map((item) => {
+    if (!item || typeof item !== "object") {
+      throw new MaterialTransferError("INVALID_MATERIAL_MANIFEST");
+    }
+
+    const record = item as Record<string, unknown>;
+    const blockId = normalizeText(record.blockId, "");
+
+    if (!blockId) {
+      throw new MaterialTransferError("INVALID_MATERIAL_MANIFEST");
+    }
+
+    return {
+      blockId,
       image: validateRequiredArchiveImage(record.image)
     };
   });
@@ -639,8 +780,13 @@ function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale) {
 
         const blockRecord = block as Record<string, unknown>;
         const title = typeof blockRecord.name === "string" && blockRecord.name ? blockRecord.name : `${isEnglish ? "Block" : "区块"} ${index + 1}`;
+        const scalePreset = typeof blockRecord.scalePreset === "string" ? blockRecord.scalePreset : "";
+        const scaleMeters = typeof blockRecord.scaleMeters === "number" ? blockRecord.scaleMeters : null;
 
         lines.push(`### ${title}`, "");
+        if (scalePreset || scaleMeters) {
+          lines.push(`- ${isEnglish ? "Scale" : "规模"}: ${scalePreset || "-"}${scaleMeters ? ` / ${scaleMeters}m` : ""}`, "");
+        }
         pushOptionalMarkdownBlock(lines, isEnglish ? "Description" : "说明", blockRecord.description);
       });
     }
@@ -654,6 +800,14 @@ function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale) {
     lines.push(`## ${isEnglish ? "Panorama Faces" : "全景六面图"}`, "");
     item.scenePanoramaFaces.forEach((asset) => {
       lines.push(`- ${asset.blockId} / ${asset.face}: ${asset.image.path}`);
+    });
+    lines.push("");
+  }
+
+  if (item.scenePanoramaMothers && item.scenePanoramaMothers.length > 0) {
+    lines.push(`## ${isEnglish ? "Panorama Masters" : "全景母图"}`, "");
+    item.scenePanoramaMothers.forEach((asset) => {
+      lines.push(`- ${asset.blockId}: ${asset.image.path}`);
     });
     lines.push("");
   }
@@ -692,7 +846,8 @@ function pushRecordMarkdown(lines: string[], title: string, value: unknown) {
 function updateImportedMetadataImage(
   metadata: unknown,
   previewUrl: string | null,
-  scenePanoramaFaceUrls: Array<{ blockId: string; face: ScenePanoramaFace; url: string }> = []
+  scenePanoramaFaceUrls: Array<{ blockId: string; face: ScenePanoramaFace; url: string }> = [],
+  scenePanoramaMotherUrls: Array<{ blockId: string; url: string }> = []
 ) {
   const cloned = cloneJson(metadata);
 
@@ -711,7 +866,7 @@ function updateImportedMetadataImage(
       : null;
   }
 
-  if (record.kind === "scene" && Array.isArray(record.blocks) && scenePanoramaFaceUrls.length > 0) {
+  if (record.kind === "scene" && Array.isArray(record.blocks) && (scenePanoramaFaceUrls.length > 0 || scenePanoramaMotherUrls.length > 0)) {
     record.blocks = record.blocks.map((block) => {
       if (!block || typeof block !== "object") {
         return block;
@@ -720,8 +875,9 @@ function updateImportedMetadataImage(
       const blockRecord = block as Record<string, unknown>;
       const blockId = typeof blockRecord.id === "string" ? blockRecord.id : "";
       const blockFaces = scenePanoramaFaceUrls.filter((item) => item.blockId === blockId);
+      const blockMother = scenePanoramaMotherUrls.find((item) => item.blockId === blockId);
 
-      if (blockFaces.length === 0) {
+      if (blockFaces.length === 0 && !blockMother) {
         return blockRecord;
       }
 
@@ -736,7 +892,8 @@ function updateImportedMetadataImage(
 
       blockRecord.panorama = {
         ...previousPanorama,
-        faces
+        ...(blockFaces.length > 0 ? { faces } : {}),
+        ...(blockMother ? { mother: { source: "generated", url: blockMother.url } } : {})
       };
 
       return blockRecord;
@@ -746,8 +903,11 @@ function updateImportedMetadataImage(
   return record;
 }
 
-function getImportedScenePreviewUrl(scenePanoramaFaceUrls: Array<{ blockId: string; face: ScenePanoramaFace; url: string }>) {
-  return scenePanoramaFaceUrls.find((item) => item.face === "front")?.url ?? null;
+function getImportedScenePreviewUrl(
+  scenePanoramaFaceUrls: Array<{ blockId: string; face: ScenePanoramaFace; url: string }>,
+  scenePanoramaMotherUrls: Array<{ blockId: string; url: string }> = []
+) {
+  return scenePanoramaFaceUrls.find((item) => item.face === "front")?.url ?? scenePanoramaMotherUrls[0]?.url ?? null;
 }
 
 function getMaskBoardImageSource(value: unknown) {

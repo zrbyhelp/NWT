@@ -60,14 +60,7 @@ export async function registerWithPassword(input: AuthCredentialsInput): Promise
       });
 
   return {
-    viewer: await createSession({
-      account: user.account,
-      avatarUrl: user.avatarUrl,
-      displayName: user.displayName,
-      id: user.id,
-      role: user.role,
-      showAiThinking: user.showAiThinking ?? false
-    })
+    viewer: await createSession(mapViewer(user))
   };
 }
 
@@ -83,14 +76,7 @@ export async function loginWithPassword(input: AuthCredentialsInput): Promise<Au
   }
 
   return {
-    viewer: await createSession({
-      account: user.account,
-      avatarUrl: user.avatarUrl,
-      displayName: user.displayName,
-      id: user.id,
-      role: user.role,
-      showAiThinking: user.showAiThinking ?? false
-    })
+    viewer: await createSession(mapViewer(user))
   };
 }
 
@@ -199,11 +185,17 @@ export async function requireAuth(): Promise<AuthViewer> {
 export async function requireAdmin(): Promise<AuthViewer> {
   const viewer = await requireAuth();
 
-  if (viewer.role !== "ADMIN") {
+  if (!isConfiguredAdminAccount(viewer.account)) {
     throw new Error("FORBIDDEN");
   }
 
   return viewer;
+}
+
+export function isConfiguredAdminAccount(account: string | null | undefined) {
+  const adminAccount = normalizeOptionalAccount(process.env.ADMIN_ACCOUNT);
+
+  return Boolean(adminAccount && normalizeOptionalAccount(account) === adminAccount);
 }
 
 export async function ensureConfiguredAdminUser() {
@@ -286,7 +278,7 @@ function normalizeAccount(account: string) {
   return account.trim().toLowerCase();
 }
 
-function normalizeOptionalAccount(account: string | undefined) {
+function normalizeOptionalAccount(account: string | null | undefined) {
   return account ? normalizeAccount(account) : "";
 }
 
@@ -353,7 +345,7 @@ function mapViewer(user: {
     avatarUrl: user.avatarUrl ?? null,
     displayName: user.displayName,
     id: user.id,
-    role: user.role,
+    role: isConfiguredAdminAccount(user.account) ? "ADMIN" : "USER",
     showAiThinking: user.showAiThinking ?? false
   };
 }

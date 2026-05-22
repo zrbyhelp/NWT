@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateDefaultScenePanorama } from "@/lib/ai/image-runtime";
+import { generateDefaultScenePanorama, generateDefaultScenePanoramaMother } from "@/lib/ai/image-runtime";
 import { getScenePanoramaFaceSourceCoordinate, splitEquirectangularToCubemap } from "@/lib/ai/scene-panorama-projection";
 import {
   analyzeScenePanoramaFaces,
@@ -92,13 +92,15 @@ vi.mock("@/lib/ai/runtime", () => ({
 vi.mock("@/lib/ai/image-runtime", () => ({
   generateDefaultMaskBoardImage: vi.fn(),
   generateDefaultScenePanorama: vi.fn(),
+  generateDefaultScenePanoramaMother: vi.fn(),
   normalizeScenePanoramaMaxRedrawAttempts: vi.fn((value: unknown) => {
-    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : 3;
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : 1;
 
-    return Number.isFinite(parsed) ? Math.min(6, Math.max(1, Math.round(parsed))) : 3;
+    return Number.isFinite(parsed) ? Math.min(10, Math.max(1, Math.round(parsed))) : 1;
   }),
   scenePanoramaFaces: ["front", "back", "left", "right", "top", "bottom"],
-  streamDefaultScenePanorama: vi.fn()
+  streamDefaultScenePanorama: vi.fn(),
+  streamDefaultScenePanoramaMother: vi.fn()
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -131,6 +133,7 @@ vi.mock("@/lib/storage/material", () => ({
   deleteMaterialImagesByUrls: vi.fn(),
   uploadMaskBoardImage: vi.fn(async () => "https://cdn.example.com/materials/mask-board.png"),
   uploadScenePanoramaFaceImage: vi.fn(async () => "https://cdn.example.com/materials/scene-face.png"),
+  uploadScenePanoramaMotherImage: vi.fn(async () => "https://cdn.example.com/materials/scene-mother.png"),
   uploadMaterialImageBytes: vi.fn(async () => "https://cdn.example.com/materials/imported-board.png")
 }));
 
@@ -461,7 +464,7 @@ describe("home workspace data", () => {
       showAiThinking: false
     });
 
-    const material = await createSceneMaterial(input, Object.values(input.blocks[0].panorama!.faces), "zh-CN");
+    const material = await createSceneMaterial(input, Object.values(input.blocks[0].panorama!.faces ?? {}), "zh-CN");
 
     expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -501,7 +504,7 @@ describe("home workspace data", () => {
     const { requireAuth } = await import("@/lib/auth");
     const { createSceneMaterial } = await import("@/lib/home-workspace");
     const input = createSceneInput();
-    const uploadedFaceUrls = Object.values(input.blocks[0].panorama!.faces);
+    const uploadedFaceUrls = Object.values(input.blocks[0].panorama!.faces ?? {});
 
     vi.mocked(requireAuth).mockResolvedValue({
       account: "reader",
@@ -538,7 +541,9 @@ describe("home workspace data", () => {
       repaired: true
     });
 
-    await generateSceneBlockPanorama(createSceneInput({ panoramaDrawingStyle: "guofeng" }), "block-main", "zh-CN");
+    await generateSceneBlockPanorama(createSceneInput({ panoramaDrawingStyle: "guofeng" }), "block-main", "zh-CN", {
+      motherImage: createSceneMotherReference()
+    });
 
     expect(generateDefaultScenePanorama).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -553,7 +558,48 @@ describe("home workspace data", () => {
         feature: "scene.block.panorama.generate"
       }),
       expect.objectContaining({
-        maxRedrawAttempts: 3
+        maxRedrawAttempts: 1,
+        motherImage: expect.objectContaining({ fileName: "mother.png" })
+      })
+    );
+  });
+
+  it("generates a scene panorama mother separately with reference images", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateSceneBlockPanoramaMother } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(generateDefaultScenePanoramaMother).mockResolvedValue({
+      mother: {
+        contentType: "image/png",
+        dataUrl: "data:image/png;base64,bW90aGVy",
+        fileName: "mother.png"
+      },
+      sizeProfile: "4k"
+    });
+
+    await generateSceneBlockPanoramaMother(createSceneInput({ panoramaDrawingStyle: "guofeng" }), "block-main", "zh-CN", {
+      referenceImages: [createSceneMotherReference()]
+    });
+
+    expect(generateDefaultScenePanoramaMother).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blockName: "主厅",
+        panoramaDrawingStyle: "guofeng"
+      }),
+      "reader-id",
+      expect.objectContaining({
+        feature: "scene.block.panorama.mother.generate"
+      }),
+      expect.objectContaining({
+        referenceImages: [expect.objectContaining({ fileName: "mother.png" })]
       })
     );
   });
@@ -589,7 +635,7 @@ describe("home workspace data", () => {
       (event) => {
         events.push(event);
       },
-      { maxRedrawAttempts: 4 }
+      { maxRedrawAttempts: 4, motherImage: createSceneMotherReference() }
     );
 
     expect(events).toContainEqual(expect.objectContaining({ progress: 8, type: "progress" }));
@@ -969,11 +1015,14 @@ describe("home workspace data", () => {
 
     expect(material.image).toBeNull();
     expect(material.scenePanoramaFaces).toHaveLength(6);
+    expect(material.scenePanoramaMothers).toHaveLength(1);
     expect(material.scenePanoramaFaces.map((asset: { face: string }) => asset.face).sort()).toEqual(
       [...sceneFaceNames].sort()
     );
     expect(await zip.file(material.scenePanoramaFaces[0].image.path)!.async("uint8array")).toHaveLength(3);
+    expect(await zip.file(material.scenePanoramaMothers[0].image.path)!.async("uint8array")).toHaveLength(3);
     expect(await zip.file("materials/scene-lab/material.md")!.async("text")).toContain("全景六面图");
+    expect(await zip.file("materials/scene-lab/material.md")!.async("text")).toContain("全景母图");
   });
 
   it("imports a material archive as a private self-created copy with a re-uploaded image", async () => {
@@ -1047,7 +1096,7 @@ describe("home workspace data", () => {
 
     const result = await importMaterialsZip(archive, "zh-CN");
 
-    expect(uploadMaterialImageBytes).toHaveBeenCalledTimes(6);
+    expect(uploadMaterialImageBytes).toHaveBeenCalledTimes(7);
     expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -1061,7 +1110,11 @@ describe("home workspace data", () => {
                 panorama: expect.objectContaining({
                   faces: expect.objectContaining({
                     front: { url: "https://cdn.example.com/materials/imported-board.png" }
-                  })
+                  }),
+                  mother: {
+                    source: "generated",
+                    url: "https://cdn.example.com/materials/imported-board.png"
+                  }
                 })
               })
             ]
@@ -1357,7 +1410,11 @@ function createSceneInput(overrides: Partial<SceneMaterialCreateInput> = {}): Sc
             faces[face] = `https://cdn.example.com/scene/main-${face}.png`;
 
             return faces;
-          }, {} as Record<(typeof sceneFaceNames)[number], string>)
+          }, {} as Record<(typeof sceneFaceNames)[number], string>),
+          mother: {
+            source: "generated",
+            url: "https://cdn.example.com/scene/main-mother.png"
+          }
         }
       }
     ],
@@ -1388,6 +1445,14 @@ function createGeneratedSceneFaces() {
   }>);
 }
 
+function createSceneMotherReference() {
+  return {
+    bytes: Buffer.from("mother"),
+    contentType: "image/png",
+    fileName: "mother.png"
+  };
+}
+
 function createSceneMetadata(panoramaDrawingStyle = "realistic") {
   return {
     kind: "scene",
@@ -1407,7 +1472,11 @@ function createSceneMetadata(panoramaDrawingStyle = "realistic") {
             faces[face] = { url: `https://cdn.example.com/scene/main-${face}.png` };
 
             return faces;
-          }, {} as Record<(typeof sceneFaceNames)[number], { url: string }>)
+          }, {} as Record<(typeof sceneFaceNames)[number], { url: string }>),
+          mother: {
+            source: "generated",
+            url: "https://cdn.example.com/scene/main-mother.png"
+          }
         }
       }
     ]
@@ -1579,6 +1648,15 @@ async function createSceneMaterialArchiveBytes() {
       }
     };
   });
+  const motherAsset = {
+    blockId: "block-main",
+    image: {
+      path: "materials/scene-lab/panorama/block-main/mother.png",
+      fileName: "mother.png",
+      contentType: "image/png",
+      byteSize: 3
+    }
+  };
 
   zip.file(
     "manifest.json",
@@ -1597,11 +1675,13 @@ async function createSceneMaterialArchiveBytes() {
           descriptionEn: "An old research lab covered by rain and vines.",
           metadata: createSceneMetadata("concept"),
           image: null,
-          scenePanoramaFaces: faceAssets
+          scenePanoramaFaces: faceAssets,
+          scenePanoramaMothers: [motherAsset]
         }
       ]
     })
   );
+  zip.file(motherAsset.image.path, new Uint8Array([1, 2, 3]));
 
   return zip.generateAsync({ type: "uint8array" });
 }

@@ -11,6 +11,7 @@ const runtimeMocks = vi.hoisted(() => ({
   getDefaultImageRuntimeConfig: vi.fn(),
   harmonizeScenePanoramaFaceColors: vi.fn(),
   splitEquirectangularToCubemap: vi.fn(),
+  stabilizeScenePanoramaMotherImage: vi.fn(),
   stabilizeScenePanoramaFaces: vi.fn(),
   toFile: vi.fn(async (_bytes: Buffer, fileName: string, options?: { type?: string }) => ({
     fileName,
@@ -42,6 +43,7 @@ vi.mock("@/lib/ai/scene-panorama-projection", () => ({
 vi.mock("@/lib/ai/scene-panorama-postprocess", () => ({
   analyzeScenePanoramaFaces: runtimeMocks.analyzeScenePanoramaFaces,
   harmonizeScenePanoramaFaceColors: runtimeMocks.harmonizeScenePanoramaFaceColors,
+  stabilizeScenePanoramaMotherImage: runtimeMocks.stabilizeScenePanoramaMotherImage,
   stabilizeScenePanoramaFaces: runtimeMocks.stabilizeScenePanoramaFaces
 }));
 
@@ -82,6 +84,7 @@ describe("scene panorama runtime", () => {
         fileName: `scene-panorama-${face}.png`
       }))
     );
+    runtimeMocks.stabilizeScenePanoramaMotherImage.mockImplementation(async (image: { bytes: Buffer; contentType: string; fileName: string }) => image);
     runtimeMocks.stabilizeScenePanoramaFaces.mockImplementation(async (
       _referenceFaces: unknown,
       candidateFaces: Array<{ contentType: string; fileName: string }>
@@ -102,10 +105,16 @@ describe("scene panorama runtime", () => {
         fileName: face.fileName.replace(/\.[a-z0-9]+$/i, ".webp")
       })),
       report: {
+        averageFaceColorDeltaAfter: 2,
+        averageFaceColorDeltaBefore: 8,
         averageReferenceColorDelta: 2,
+        colorAlgorithm: "mother-guided-color-transfer-v1",
         colorAdjusted: true,
+        colorRejected: false,
         faceDeltas: [],
-        maxFaceColorDelta: 3
+        maxFaceColorDelta: 3,
+        maxFaceColorDeltaAfter: 3,
+        maxFaceColorDeltaBefore: 10
       }
     }));
     runtimeMocks.analyzeScenePanoramaFaces.mockResolvedValue(createQualityReport(4, 4));
@@ -183,7 +192,7 @@ describe("scene panorama runtime", () => {
       providerName: "豆包"
     });
 
-    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id");
+    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id", undefined, { maxRedrawAttempts: 3 });
     const generatePayloads = runtimeMocks.generate.mock.calls.map(([payload]) => payload as Record<string, unknown>);
     const facePayloads = generatePayloads.slice(1);
 
@@ -220,6 +229,25 @@ describe("scene panorama runtime", () => {
     expect(doneIndex).toBeGreaterThan(firstFinalIndex);
     expect(events.filter((event) => event.type === "face" && event.phase === "preview")).toHaveLength(6);
     expect(events.filter((event) => event.type === "face" && event.phase === "final")).toHaveLength(6);
+  });
+
+  it("keeps the panorama when color harmonization fails", async () => {
+    const enhancedBytes = await createSolidPng(16, 16, [180, 120, 96]);
+    const events: Array<{ type: string; phase?: string; colorStatus?: string }> = [];
+
+    runtimeMocks.edit.mockResolvedValue({
+      data: [{ b64_json: enhancedBytes.toString("base64") }]
+    });
+    runtimeMocks.harmonizeScenePanoramaFaceColors.mockRejectedValueOnce(new Error("sharp color failed"));
+
+    const result = await streamDefaultScenePanorama(createGenerationInput(), "reader-id", (event) => {
+      events.push(event);
+    });
+
+    expect(result.colorStatus).toBe("skipped");
+    expect(result.colorError).toContain("sharp color failed");
+    expect(events.filter((event) => event.type === "face" && event.phase === "final")).toHaveLength(6);
+    expect(events.find((event) => event.type === "done")).toMatchObject({ colorStatus: "skipped" });
   });
 
   it("streams iterating faces when quality checks retry and still returns best effort", async () => {
@@ -318,10 +346,104 @@ describe("scene panorama runtime", () => {
 
     const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 16 });
 
+    expect(result.report.colorAlgorithm).toBe("mother-guided-color-transfer-v1");
     expect(result.report.colorAdjusted).toBe(true);
     expect(result.report.faceDeltas.every((delta) => delta.afterDelta < delta.beforeDelta)).toBe(true);
     expect(result.faces).toHaveLength(6);
     expect(result.faces.every((face) => face.contentType === "image/webp")).toBe(true);
+  });
+
+  it("harmonizes whole-face brightness and white balance across mismatched faces", async () => {
+    const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
+      "@/lib/ai/scene-panorama-postprocess"
+    );
+    const referenceFaces = await createSolidFaces([92, 112, 130], 32);
+    const candidateFaces = await createSolidFacesByColor([
+      [170, 95, 75],
+      [65, 105, 165],
+      [45, 70, 82],
+      [185, 170, 105],
+      [110, 90, 145],
+      [130, 120, 115]
+    ], 32);
+
+    const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 32 });
+
+    expect(result.report.averageFaceColorDeltaAfter).toBeLessThan(result.report.averageFaceColorDeltaBefore * 0.82);
+    expect(result.report.maxFaceColorDeltaAfter).toBeLessThan(result.report.maxFaceColorDeltaBefore);
+    expect(result.report.colorAdjusted).toBe(true);
+  });
+
+  it("uses robust whole-face statistics so highlights and black shadows do not dominate", async () => {
+    const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
+      "@/lib/ai/scene-panorama-postprocess"
+    );
+    const referenceFaces = await createPatchedFaces([88, 108, 126], 32);
+    const candidateFaces = await createPatchedFaces([132, 92, 76], 32);
+
+    const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 32 });
+
+    expect(result.report.averageFaceColorDeltaAfter).toBeLessThan(result.report.averageFaceColorDeltaBefore);
+    expect(result.report.maxFaceColorDeltaAfter).toBeLessThan(result.report.maxFaceColorDeltaBefore);
+  });
+
+  it("does not over-adjust faces that already share the same whole-face color", async () => {
+    const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
+      "@/lib/ai/scene-panorama-postprocess"
+    );
+    const referenceFaces = await createPatchedFaces([88, 108, 126], 32);
+    const candidateFaces = await createPatchedFaces([88, 108, 126], 32);
+
+    const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 32 });
+
+    expect(result.report.colorAdjusted).toBe(false);
+    expect(result.report.averageFaceColorDeltaBefore).toBeLessThan(0.1);
+    expect(result.report.averageFaceColorDeltaAfter).toBeLessThan(3);
+  });
+
+  it("uses the mother face as low-frequency color authority while reducing seam deltas", async () => {
+    const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
+      "@/lib/ai/scene-panorama-postprocess"
+    );
+    const referenceFaces = await createGradientFaces([88, 118, 138], [168, 122, 96], 48);
+    const candidateFaces = await createSeamShiftedFaces([
+      [190, 86, 70],
+      [72, 110, 172],
+      [64, 78, 92],
+      [202, 158, 92],
+      [130, 92, 150],
+      [138, 128, 112]
+    ], 48);
+    const beforeQuality = await postprocess.analyzeScenePanoramaFaces(candidateFaces, { faceSize: 48 });
+
+    const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 48 });
+    const afterQuality = await postprocess.analyzeScenePanoramaFaces(result.faces, { faceSize: 48 });
+
+    expect(result.report.colorAdjusted).toBe(true);
+    expect(result.report.averageFaceColorDeltaAfter).toBeLessThan(result.report.averageFaceColorDeltaBefore * 0.55);
+    expect(afterQuality.averageEdgeDelta).toBeLessThan(beforeQuality.averageEdgeDelta);
+    expect(afterQuality.maxEdgeDelta).toBeLessThan(beforeQuality.maxEdgeDelta);
+  });
+
+  it("stabilizes mother panorama horizontal wrap color before cubemap splitting", async () => {
+    const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
+      "@/lib/ai/scene-panorama-postprocess"
+    );
+    const mother = await createWrapMismatchPng(96, 48);
+    const beforeDelta = await measureHorizontalWrapDelta(mother, 96, 48);
+
+    const stabilized = await postprocess.stabilizeScenePanoramaMotherImage({
+      bytes: mother,
+      contentType: "image/png",
+      fileName: "mother.png"
+    }, {
+      normalizedHeight: 48,
+      normalizedWidth: 96
+    });
+    const afterDelta = await measureHorizontalWrapDelta(stabilized.bytes, 96, 48);
+
+    expect(stabilized.contentType).toBe("image/webp");
+    expect(afterDelta).toBeLessThan(beforeDelta);
   });
 
   it("uses Gemini native generateContent image options when the provider is not OpenAI-compatible", async () => {
@@ -468,7 +590,7 @@ describe("scene panorama runtime", () => {
       .mockResolvedValueOnce(createQualityReport(40, 40))
       .mockResolvedValueOnce(createQualityReport(72, 72));
 
-    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id");
+    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id", undefined, { maxRedrawAttempts: 3 });
 
     expect(runtimeMocks.edit.mock.calls.length).toBeGreaterThan(6);
     expect(result.qualityBestEffort).toBe(true);
@@ -512,8 +634,8 @@ async function createSolidPng(width: number, height: number, color: [number, num
     .toBuffer();
 }
 
-async function createSolidFaces(color: [number, number, number]) {
-  const bytes = await createSolidPng(16, 16, color);
+async function createSolidFaces(color: [number, number, number], size = 16) {
+  const bytes = await createSolidPng(size, size, color);
 
   return panoramaFaces.map((face) => ({
     bytes,
@@ -521,6 +643,201 @@ async function createSolidFaces(color: [number, number, number]) {
     face,
     fileName: `scene-panorama-${face}.png`
   }));
+}
+
+async function createSolidFacesByColor(colors: Array<[number, number, number]>, size = 16) {
+  return Promise.all(
+    panoramaFaces.map(async (face, index) => ({
+      bytes: await createSolidPng(size, size, colors[index] ?? colors.at(-1) ?? [0, 0, 0]),
+      contentType: "image/png",
+      face,
+      fileName: `scene-panorama-${face}.png`
+    }))
+  );
+}
+
+async function createPatchedFaces(baseColor: [number, number, number], size = 32) {
+  const bytes = await createPatchedPng(size, size, baseColor);
+
+  return panoramaFaces.map((face) => ({
+    bytes,
+    contentType: "image/png",
+    face,
+    fileName: `scene-panorama-${face}.png`
+  }));
+}
+
+async function createGradientFaces(
+  leftColor: [number, number, number],
+  rightColor: [number, number, number],
+  size = 48
+) {
+  return Promise.all(
+    panoramaFaces.map(async (face) => ({
+      bytes: await createGradientPng(size, size, leftColor, rightColor),
+      contentType: "image/png",
+      face,
+      fileName: `scene-panorama-${face}.png`
+    }))
+  );
+}
+
+async function createSeamShiftedFaces(colors: Array<[number, number, number]>, size = 48) {
+  return Promise.all(
+    panoramaFaces.map(async (face, index) => ({
+      bytes: await createSeamShiftedPng(size, size, colors[index] ?? colors.at(-1) ?? [0, 0, 0]),
+      contentType: "image/png",
+      face,
+      fileName: `scene-panorama-${face}.png`
+    }))
+  );
+}
+
+async function createPatchedPng(width: number, height: number, baseColor: [number, number, number]) {
+  const pixels = Buffer.alloc(width * height * 4);
+  const brightPatchSize = Math.max(2, Math.floor(Math.min(width, height) / 5));
+  const shadowPatchSize = Math.max(2, Math.floor(Math.min(width, height) / 4));
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const inBrightPatch = x < brightPatchSize && y < brightPatchSize;
+      const inShadowPatch = x >= width - shadowPatchSize && y >= height - shadowPatchSize;
+      const color: [number, number, number] = inBrightPatch
+        ? [248, 244, 226]
+        : inShadowPatch
+          ? [4, 5, 7]
+          : baseColor;
+
+      pixels[index] = color[0];
+      pixels[index + 1] = color[1];
+      pixels[index + 2] = color[2];
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height,
+      width
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function createGradientPng(
+  width: number,
+  height: number,
+  leftColor: [number, number, number],
+  rightColor: [number, number, number]
+) {
+  const pixels = Buffer.alloc(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const mix = x / Math.max(1, width - 1);
+      const index = (y * width + x) * 4;
+
+      for (let channel = 0; channel < 3; channel += 1) {
+        pixels[index + channel] = Math.round(leftColor[channel] * (1 - mix) + rightColor[channel] * mix);
+      }
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height,
+      width
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function createSeamShiftedPng(width: number, height: number, baseColor: [number, number, number]) {
+  const pixels = Buffer.alloc(width * height * 4);
+  const edgeWidth = Math.max(3, Math.round(width / 8));
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const edgeBoost = x < edgeWidth || x >= width - edgeWidth ? 48 : 0;
+      const localDetail = ((x + y) % 7) * 3;
+
+      pixels[index] = Math.min(255, baseColor[0] + edgeBoost + localDetail);
+      pixels[index + 1] = Math.max(0, baseColor[1] - edgeBoost / 3 + localDetail);
+      pixels[index + 2] = Math.max(0, baseColor[2] - edgeBoost / 2 + localDetail);
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height,
+      width
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function createWrapMismatchPng(width: number, height: number) {
+  const pixels = Buffer.alloc(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const isLeftEdge = x < width * 0.1;
+      const isRightEdge = x >= width * 0.9;
+      const color: [number, number, number] = isLeftEdge
+        ? [56, 86, 142]
+        : isRightEdge
+          ? [196, 118, 72]
+          : [128, 112, 104];
+
+      pixels[index] = color[0];
+      pixels[index + 1] = color[1];
+      pixels[index + 2] = color[2];
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height,
+      width
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function measureHorizontalWrapDelta(bytes: Buffer, width: number, height: number) {
+  const pixels = await sharp(bytes)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+  let total = 0;
+  let count = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    const leftIndex = y * width * 4;
+    const rightIndex = (y * width + width - 1) * 4;
+
+    for (let channel = 0; channel < 3; channel += 1) {
+      total += Math.abs(pixels[leftIndex + channel] - pixels[rightIndex + channel]);
+      count += 1;
+    }
+  }
+
+  return total / Math.max(1, count);
 }
 
 async function waitForMockCalls(mock: { mock: { calls: unknown[] } }, count: number) {

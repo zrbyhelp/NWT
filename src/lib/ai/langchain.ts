@@ -1,8 +1,11 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { getDefaultLlmRuntimeConfig } from "@/lib/ai/model-config";
+import { configureServerOutboundProxy } from "@/lib/network/proxy";
 import { type AiObservationContext, createLangGraphRunConfig } from "@/lib/observability/langfuse";
 
 export async function createChatModel(userId?: string | null, observationContext?: AiObservationContext) {
+  await configureServerOutboundProxy();
+
   const config = await getDefaultLlmRuntimeConfig(userId);
   const runConfig = createLangGraphRunConfig({
     ...observationContext,
