@@ -49,7 +49,6 @@ import {
   deleteHomeMaterial,
   deleteHomeConversation,
   generateHomeMaskBoard,
-  generateHomeSceneBlockPanorama,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
   updateHomeMaskMaterial,
@@ -89,11 +88,51 @@ type MessageStreamEvent =
   | { type: "delta"; content: string }
   | { type: "done"; conversation: WorkspaceConversation }
   | { type: "error"; message: string };
+type ScenePanoramaStreamImage = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+};
+type ScenePanoramaStreamFaceImage = ScenePanoramaStreamImage & {
+  face: ScenePanoramaFace;
+};
+type ScenePanoramaStreamDoneEvent = {
+  bestAttempt?: number;
+  color?: unknown;
+  earlyStopped?: boolean;
+  mode: "enhanced" | "direct-cut";
+  quality?: unknown;
+  qualityBestEffort?: boolean;
+  qualityPassed?: boolean;
+  repaired: boolean;
+  sizeProfile?: string;
+  type: "done";
+};
+type ScenePanoramaStreamEvent =
+  | { type: "progress"; progress: number; stage: string; messageKey: string }
+  | { type: "mother"; image: ScenePanoramaStreamImage }
+  | { type: "face"; attempt: number; face: ScenePanoramaFace; image: ScenePanoramaStreamFaceImage; phase: "preview" | "final" }
+  | { type: "iterating"; attempt: number; faces: ScenePanoramaFace[] }
+  | {
+      type: "quality";
+      accepted?: boolean;
+      attempt: number;
+      bestAttempt?: number;
+      failedFaces: ScenePanoramaFace[];
+      passed: boolean;
+      quality: unknown;
+      score?: number;
+    }
+  | ScenePanoramaStreamDoneEvent
+  | { type: "error"; message: string };
 const scriptCategories = ["featured", "world", "roleplay", "writing", "analysis"] as const;
 const materialStyles = ["realistic", "fantasy", "sciFi", "mystery", "cyberpunk", "classical", "apocalyptic"] as const;
 const materialTypes = ["mask", "map", "item", "creature", "scene"] as const;
 const scenePanoramaFaces = ["front", "back", "left", "right", "top", "bottom"] as const;
 const scenePanoramaThreeFaceOrder = ["right", "left", "top", "bottom", "front", "back"] as const;
+const defaultScenePanoramaMaxRedrawAttempts = 3;
+const minScenePanoramaMaxRedrawAttempts = 1;
+const maxScenePanoramaMaxRedrawAttempts = 6;
 const materialIcons = {
   mask: VenetianMask,
   map: MapPinned,
@@ -187,6 +226,17 @@ type ScenePanoramaDraft = {
   faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
   faces: Partial<Record<ScenePanoramaFace, ScenePanoramaFaceDraft>>;
 };
+type ScenePanoramaGenerationDraft = {
+  completed: boolean;
+  error: string | null;
+  faces: Partial<Record<ScenePanoramaFace, ScenePanoramaStreamFaceImage>>;
+  finalFaces: Partial<Record<ScenePanoramaFace, ScenePanoramaStreamFaceImage>>;
+  iteratingFaces: ScenePanoramaFace[];
+  messageKey: string;
+  motherImage: ScenePanoramaStreamImage | null;
+  progress: number;
+  stage: string;
+};
 type SceneBlockDraft = {
   id: string;
   name: string;
@@ -255,6 +305,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [sceneAiMessages, setSceneAiMessages] = useState<SceneAiMessage[]>([]);
   const [sceneAiPending, setSceneAiPending] = useState(false);
   const [scenePanoramaPendingBlockId, setScenePanoramaPendingBlockId] = useState("");
+  const [scenePanoramaGenerationByBlock, setScenePanoramaGenerationByBlock] = useState<Record<string, ScenePanoramaGenerationDraft>>({});
+  const [scenePanoramaMaxRedrawAttempts, setScenePanoramaMaxRedrawAttempts] = useState(defaultScenePanoramaMaxRedrawAttempts);
   const [sceneSavePending, setSceneSavePending] = useState(false);
   const [materialTransferPending, setMaterialTransferPending] = useState(false);
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
@@ -1382,6 +1434,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setSceneAiInput("");
     setSceneAiMessages([]);
     setSceneEditingMaterialId("");
+    setScenePanoramaGenerationByBlock({});
   }
 
   function openMaterialEditDialog(material: WorkspaceMaterial) {
@@ -1495,6 +1548,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       source: "uploaded",
       storedUrl: null
     });
+    clearScenePanoramaGeneration(blockId);
   }
 
   function updateScenePanoramaFace(blockId: string, face: ScenePanoramaFace, image: ScenePanoramaFaceDraft) {
@@ -1526,6 +1580,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   }
 
   function clearSceneBlockPanorama(blockId: string) {
+    clearScenePanoramaGeneration(blockId);
     setSceneCreateDraft((current) => ({
       ...current,
       blocks: current.blocks.map((block) => {
@@ -1541,6 +1596,22 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         };
       })
     }));
+  }
+
+  function clearScenePanoramaGeneration(blockId: string) {
+    setScenePanoramaGenerationByBlock((current) => {
+      if (!current[blockId]) {
+        return current;
+      }
+
+      const { [blockId]: _removed, ...rest } = current;
+
+      return rest;
+    });
+  }
+
+  function updateScenePanoramaMaxRedrawAttempts(value: number) {
+    setScenePanoramaMaxRedrawAttempts(normalizeScenePanoramaMaxRedrawAttempts(value));
   }
 
   async function sendSceneAiMessage(authenticatedViewer = viewer) {
@@ -1607,12 +1678,147 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
 
     setScenePanoramaPendingBlockId(blockId);
+    const maxRedrawAttempts = normalizeScenePanoramaMaxRedrawAttempts(scenePanoramaMaxRedrawAttempts);
+    const streamedFaces: Partial<Record<ScenePanoramaFace, ScenePanoramaStreamFaceImage>> = {};
+    const finalFaces: Partial<Record<ScenePanoramaFace, ScenePanoramaStreamFaceImage>> = {};
+    let doneEvent: ScenePanoramaStreamDoneEvent | null = null;
 
     try {
-      const result = await generateHomeSceneBlockPanorama(serializeSceneTextDraft(sceneCreateDraft), blockId, locale);
+      setScenePanoramaGenerationByBlock((current) => ({
+        ...current,
+        [blockId]: createInitialScenePanoramaGenerationDraft()
+      }));
+
+      doneEvent = await streamHomeScenePanorama(
+        serializeSceneTextDraft(sceneCreateDraft),
+        blockId,
+        locale,
+        maxRedrawAttempts,
+        (event) => {
+          if (event.type === "progress") {
+            setScenePanoramaGenerationByBlock((current) => ({
+              ...current,
+              [blockId]: {
+                ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+                messageKey: event.messageKey,
+                progress: event.progress,
+                stage: event.stage
+              }
+            }));
+          }
+
+          if (event.type === "mother") {
+            setScenePanoramaGenerationByBlock((current) => ({
+              ...current,
+              [blockId]: {
+                ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+                motherImage: event.image,
+                progress: Math.max(current[blockId]?.progress ?? 0, 22),
+                messageKey: "sceneForm.panoramaProgressMotherReady",
+                stage: "mother-ready"
+              }
+            }));
+          }
+
+          if (event.type === "face") {
+            streamedFaces[event.face] = event.image;
+
+            if (event.phase === "final") {
+              finalFaces[event.face] = event.image;
+            }
+
+            setScenePanoramaGenerationByBlock((current) => {
+              const previous = current[blockId] ?? createInitialScenePanoramaGenerationDraft();
+              const nextIteratingFaces =
+                event.phase === "final"
+                  ? previous.iteratingFaces.filter((face) => face !== event.face)
+                  : previous.iteratingFaces;
+
+              return {
+                ...current,
+                [blockId]: {
+                  ...previous,
+                  faces: {
+                    ...previous.faces,
+                    [event.face]: event.image
+                  },
+                  finalFaces: event.phase === "final"
+                    ? {
+                        ...previous.finalFaces,
+                        [event.face]: event.image
+                      }
+                    : previous.finalFaces,
+                  iteratingFaces: nextIteratingFaces,
+                  messageKey: event.phase === "final" ? "sceneForm.panoramaProgressQuality" : "sceneForm.panoramaProgressFaces",
+                  progress: Math.max(previous.progress, event.phase === "final" ? 66 : 38),
+                  stage: event.phase === "final" ? "quality-checking" : "faces-generating"
+                }
+              };
+            });
+          }
+
+          if (event.type === "iterating") {
+            setScenePanoramaGenerationByBlock((current) => {
+              const previous = current[blockId] ?? createInitialScenePanoramaGenerationDraft();
+
+              return {
+                ...current,
+                [blockId]: {
+                  ...previous,
+                  iteratingFaces: event.faces,
+                  messageKey: "sceneForm.panoramaProgressIterating",
+                  progress: Math.max(previous.progress, 72),
+                  stage: "iterating"
+                }
+              };
+            });
+          }
+
+          if (event.type === "quality") {
+            setScenePanoramaGenerationByBlock((current) => {
+              const previous = current[blockId] ?? createInitialScenePanoramaGenerationDraft();
+
+              return {
+                ...current,
+                [blockId]: {
+                  ...previous,
+                  iteratingFaces: event.passed ? [] : previous.iteratingFaces,
+                  messageKey: event.passed ? "sceneForm.panoramaProgressDone" : "sceneForm.panoramaProgressQuality",
+                  progress: Math.max(previous.progress, event.passed ? 96 : 70),
+                  stage: event.passed ? "quality-passed" : "quality-checking"
+                }
+              };
+            });
+          }
+
+          if (event.type === "done") {
+            doneEvent = event;
+            setScenePanoramaGenerationByBlock((current) => {
+              const previous = current[blockId] ?? createInitialScenePanoramaGenerationDraft();
+
+              return {
+                ...current,
+                [blockId]: {
+                  ...previous,
+                  completed: true,
+                  iteratingFaces: [],
+                  messageKey: "sceneForm.panoramaProgressDone",
+                  progress: 100,
+                  stage: "done"
+                }
+              };
+            });
+          }
+        }
+      );
       const faces = await Promise.all(
         scenePanoramaFaces.map(async (face) => {
-          const image = result.faces[face];
+          const image = finalFaces[face] ?? streamedFaces[face];
+
+          if (!image) {
+            throw new Error("SCENE_PANORAMA_IMAGE_EMPTY");
+          }
+
           const file = await dataUrlToFile(image.dataUrl, image.fileName, image.contentType);
 
           if (!isValidScenePanoramaFace(file)) {
@@ -1624,7 +1830,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             {
               file,
               previewUrl: image.dataUrl,
-              source: result.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
+              source: doneEvent?.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
               storedUrl: null
             } satisfies ScenePanoramaFaceDraft
           ] as const;
@@ -1643,7 +1849,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
           return {
             ...block,
             panorama: {
-              faceSource: result.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
+              faceSource: doneEvent?.mode === "direct-cut" ? "direct-cut" : "reference-repaint",
               faces: Object.fromEntries(faces)
             }
           };
@@ -1651,9 +1857,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       }));
       toast.success(
         materialT(
-          result.qualityBestEffort
+          doneEvent?.qualityBestEffort
             ? "sceneForm.panoramaGeneratedBestEffort"
-            : result.mode === "direct-cut"
+            : doneEvent?.mode === "direct-cut"
               ? "sceneForm.panoramaGeneratedFallback"
               : "sceneForm.panoramaGenerated"
         )
@@ -1668,6 +1874,15 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       }
 
       toast.error(resolveScenePanoramaError(error, materialT));
+      setScenePanoramaGenerationByBlock((current) => ({
+        ...current,
+        [blockId]: {
+          ...(current[blockId] ?? createInitialScenePanoramaGenerationDraft()),
+          error: error instanceof Error ? error.message : String(error),
+          messageKey: "sceneForm.panoramaProgressFailed",
+          stage: "failed"
+        }
+      }));
     } finally {
       setScenePanoramaPendingBlockId("");
     }
@@ -2019,6 +2234,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             aiPending={sceneAiPending}
             draft={sceneCreateDraft}
             isPending={isPending || isSceneActionPending}
+            panoramaGenerationByBlock={scenePanoramaGenerationByBlock}
+            panoramaMaxRedrawAttempts={scenePanoramaMaxRedrawAttempts}
             panoramaPendingBlockId={scenePanoramaPendingBlockId}
             saveLabel={materialT(isEditingScene ? "sceneForm.saveEdit" : "saveScene")}
             title={materialT(isEditingScene ? "sceneForm.editTitle" : "sceneForm.title")}
@@ -2030,6 +2247,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onChangeBlock={updateSceneBlock}
             onChangeDescription={updateSceneDescription}
             onChangeName={updateSceneName}
+            onChangePanoramaMaxRedrawAttempts={updateScenePanoramaMaxRedrawAttempts}
             onChangePanoramaDrawingStyle={updateScenePanoramaDrawingStyle}
             onChangeStyle={updateSceneStyle}
             onClearBlockPanorama={clearSceneBlockPanorama}
@@ -2737,6 +2955,90 @@ async function streamHomeMessage(
   }
 
   throw new Error("Message stream ended without a final conversation.");
+}
+
+async function streamHomeScenePanorama(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  maxRedrawAttempts: number,
+  onEvent: (event: ScenePanoramaStreamEvent) => void
+) {
+  const response = await fetch("/api/materials/scene-panorama/stream", {
+    body: JSON.stringify({ blockId, input, locale, maxRedrawAttempts }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST"
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error("SCENE_PANORAMA_STREAM_FAILED");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let doneEvent: ScenePanoramaStreamDoneEvent | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+
+    for (const chunk of chunks) {
+      const event = parseScenePanoramaStreamEvent(chunk);
+
+      if (!event) {
+        continue;
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+      }
+
+      onEvent(event);
+
+      if (event.type === "done") {
+        doneEvent = event;
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    const event = parseScenePanoramaStreamEvent(buffer);
+
+    if (event?.type === "error") {
+      throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+    }
+
+    if (event) {
+      onEvent(event);
+    }
+
+    if (event?.type === "done") {
+      doneEvent = event;
+    }
+  }
+
+  if (!doneEvent) {
+    throw new Error("SCENE_PANORAMA_STREAM_INCOMPLETE");
+  }
+
+  return doneEvent;
+}
+
+function parseScenePanoramaStreamEvent(chunk: string): ScenePanoramaStreamEvent | null {
+  const data = chunk
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+
+  return data ? JSON.parse(data) as ScenePanoramaStreamEvent : null;
 }
 
 function resolveSendError(error: unknown, t: (key: string) => string) {
@@ -4040,6 +4342,8 @@ function SceneCreateDialog({
   draft,
   description,
   isPending,
+  panoramaGenerationByBlock,
+  panoramaMaxRedrawAttempts,
   panoramaPendingBlockId,
   saveLabel,
   title,
@@ -4050,6 +4354,7 @@ function SceneCreateDialog({
   onChangeBlock,
   onChangeDescription,
   onChangeName,
+  onChangePanoramaMaxRedrawAttempts,
   onChangePanoramaDrawingStyle,
   onChangeStyle,
   onClearBlockPanorama,
@@ -4067,6 +4372,8 @@ function SceneCreateDialog({
   draft: SceneCreateDraft;
   description: string;
   isPending: boolean;
+  panoramaGenerationByBlock: Record<string, ScenePanoramaGenerationDraft>;
+  panoramaMaxRedrawAttempts: number;
   panoramaPendingBlockId: string;
   saveLabel: string;
   title: string;
@@ -4077,6 +4384,7 @@ function SceneCreateDialog({
   onChangeBlock: (blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description">>) => void;
   onChangeDescription: (value: string) => void;
   onChangeName: (value: string) => void;
+  onChangePanoramaMaxRedrawAttempts: (value: number) => void;
   onChangePanoramaDrawingStyle: (style: ScenePanoramaDrawingStyle) => void;
   onChangeStyle: (style: WorkspaceMaterialStyle) => void;
   onClearBlockPanorama: (blockId: string) => void;
@@ -4189,6 +4497,7 @@ function SceneCreateDialog({
                   {draft.blocks.map((block, index) => {
                     const isActive = block.id === activeBlock?.id;
                     const blockFaces = getCompleteScenePanoramaFaceUrls(block.panorama);
+                    const generation = panoramaGenerationByBlock[block.id] ?? null;
 
                     return (
                       <section
@@ -4245,8 +4554,11 @@ function SceneCreateDialog({
                         <SceneBlockPanoramaPanel
                           block={block}
                           faces={blockFaces}
+                          generation={generation}
                           isPending={panoramaPendingBlockId === block.id}
                           isBlocked={Boolean(panoramaPendingBlockId)}
+                          maxRedrawAttempts={panoramaMaxRedrawAttempts}
+                          onChangeMaxRedrawAttempts={onChangePanoramaMaxRedrawAttempts}
                           onClear={() => onClearBlockPanorama(block.id)}
                           onGenerate={() => {
                             onChangeActiveBlock(block.id);
@@ -4305,8 +4617,11 @@ function SceneCreateDialog({
 function SceneBlockPanoramaPanel({
   block,
   faces,
+  generation,
   isBlocked,
   isPending,
+  maxRedrawAttempts,
+  onChangeMaxRedrawAttempts,
   onClear,
   onGenerate,
   onSelectFace,
@@ -4314,14 +4629,25 @@ function SceneBlockPanoramaPanel({
 }: {
   block: SceneBlockDraft;
   faces: Record<ScenePanoramaFace, string> | null;
+  generation: ScenePanoramaGenerationDraft | null;
   isBlocked: boolean;
   isPending: boolean;
+  maxRedrawAttempts: number;
+  onChangeMaxRedrawAttempts: (value: number) => void;
   onClear: () => void;
   onGenerate: () => void;
   onSelectFace: (face: ScenePanoramaFace, file: File | null) => void;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const generationImages = generation?.faces ?? null;
+  const generationFaces = useMemo(
+    () => (generationImages ? getScenePanoramaGenerationFaceUrls(generationImages) : null),
+    [generationImages]
+  );
+  const previewFaces = generationFaces ?? faces;
+  const completePreviewFaces = previewFaces && isCompleteScenePanoramaFaceUrls(previewFaces) ? previewFaces : null;
+  const isGenerating = generation ? !generation.completed && !generation.error : false;
 
   return (
     <section className="mt-3 space-y-2.5 border-t border-border/70 pt-3" aria-label={t("sceneForm.panoramaTitle")}>
@@ -4341,6 +4667,19 @@ function SceneBlockPanoramaPanel({
               {t("sceneForm.clearPanorama")}
             </button>
           ) : null}
+          <label className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs text-foreground/60">
+            <span>{t("sceneForm.panoramaIterationRounds")}</span>
+            <input
+              type="number"
+              min={minScenePanoramaMaxRedrawAttempts}
+              max={maxScenePanoramaMaxRedrawAttempts}
+              value={maxRedrawAttempts}
+              disabled={isBlocked}
+              onChange={(event) => onChangeMaxRedrawAttempts(Number(event.target.value))}
+              className="h-6 w-10 rounded border border-border bg-background px-1 text-center text-xs font-medium text-foreground outline-none focus:border-primary disabled:text-foreground/40"
+              aria-label={t("sceneForm.panoramaIterationRounds")}
+            />
+          </label>
           <button
             type="button"
             onClick={onGenerate}
@@ -4353,17 +4692,48 @@ function SceneBlockPanoramaPanel({
         </div>
       </div>
 
+      {generation ? (
+        <div className="space-y-2 rounded-lg border border-border bg-background/70 p-2.5">
+          <div className="flex items-center justify-between gap-3 text-xs text-foreground/56">
+            <span>{t(generation.messageKey)}</span>
+            <span>{generation.progress}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-300"
+              style={{ width: `${Math.max(0, Math.min(100, generation.progress))}%` }}
+            />
+          </div>
+          {generation.motherImage ? (
+            <div className="overflow-hidden rounded-md border border-border bg-muted/40">
+              <div className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-foreground/52">
+                <span>{t("sceneForm.panoramaMotherPreview")}</span>
+                {isGenerating ? <span>{t("sceneForm.panoramaPreviewOnly")}</span> : null}
+              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={generation.motherImage.dataUrl} alt="" className="aspect-[2/1] w-full object-cover" />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(16rem,1fr)]">
         <ScenePanoramaViewer
-          faces={faces}
+          faces={previewFaces}
           emptyLabel={t("sceneForm.panoramaEmpty")}
           expandLabel={t("sceneForm.panoramaPreviewOpen")}
-          onExpand={faces ? () => setPreviewOpen(true) : undefined}
+          onExpand={completePreviewFaces ? () => setPreviewOpen(true) : undefined}
         />
 
         <div className="grid grid-cols-3 gap-2">
           {scenePanoramaFaces.map((face) => {
-            const image = block.panorama?.faces[face];
+            const generatedImage = generation?.faces[face];
+            const image = generatedImage
+              ? {
+                  previewUrl: generatedImage.dataUrl
+                }
+              : block.panorama?.faces[face];
+            const isIterating = generation?.iteratingFaces.includes(face) ?? false;
 
             return (
               <label
@@ -4375,8 +4745,15 @@ function SceneBlockPanoramaPanel({
                   <Upload className="h-3.5 w-3.5" aria-hidden="true" />
                 </span>
                 {image?.previewUrl ? (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={image.previewUrl} alt="" className="h-14 w-full object-cover" />
+                  <span className="relative block h-14 w-full overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image.previewUrl} alt="" className="h-full w-full object-cover" />
+                    {isIterating ? (
+                      <span className="absolute inset-0 grid place-items-center bg-background/72 px-1 text-center text-[0.68rem] font-medium text-foreground backdrop-blur-sm">
+                        {t("sceneForm.panoramaFaceIterating")}
+                      </span>
+                    ) : null}
+                  </span>
                 ) : (
                   <span className="flex h-14 items-center justify-center px-2 text-center text-foreground/38">
                     {t("sceneForm.faceEmpty")}
@@ -4397,9 +4774,9 @@ function SceneBlockPanoramaPanel({
           })}
         </div>
       </div>
-      {previewOpen && faces ? (
+      {previewOpen && completePreviewFaces ? (
         <ScenePanoramaPreviewDialog
-          faces={faces}
+          faces={completePreviewFaces}
           onClose={() => setPreviewOpen(false)}
           t={t}
         />
@@ -4483,11 +4860,12 @@ function ScenePanoramaViewer({
   className?: string;
   emptyLabel: string;
   expandLabel?: string;
-  faces: Record<ScenePanoramaFace, string> | null;
+  faces: Partial<Record<ScenePanoramaFace, string>> | null;
   onExpand?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onExpandRef = useRef(onExpand);
+  const viewRef = useRef({ fov: 70, lat: 0, lon: 0 });
   const [webglReady, setWebglReady] = useState(false);
 
   useEffect(() => {
@@ -4497,12 +4875,12 @@ function ScenePanoramaViewer({
   useEffect(() => {
     const container = containerRef.current;
 
-    if (!container || !faces) {
+    if (!container || !faces || !isCompleteScenePanoramaFaceUrls(faces)) {
       setWebglReady(false);
       return;
     }
 
-    const currentFaces = faces;
+    const currentFaces = faces as Record<ScenePanoramaFace, string>;
     let disposed = false;
     let cleanup = () => {};
 
@@ -4523,14 +4901,14 @@ function ScenePanoramaViewer({
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+        const camera = new THREE.PerspectiveCamera(viewRef.current.fov, 1, 0.1, 100);
         camera.position.set(0, 0, 0.1);
         const loader = new THREE.CubeTextureLoader();
         let cubeTexture: import("three").CubeTexture | null = null;
         let observer: ResizeObserver | null = null;
         const removeListeners: Array<() => void> = [];
-        let lon = 0;
-        let lat = 0;
+        let lon = viewRef.current.lon;
+        let lat = viewRef.current.lat;
         let pointerDown = false;
         let startX = 0;
         let startY = 0;
@@ -4625,6 +5003,7 @@ function ScenePanoramaViewer({
           movedSincePointerDown ||= Math.hypot(deltaX, deltaY) > 6;
           lon = startLon - deltaX * 0.12;
           lat = startLat + deltaY * 0.12;
+          viewRef.current = { ...viewRef.current, lat, lon };
           render();
         }
 
@@ -4647,6 +5026,7 @@ function ScenePanoramaViewer({
           event.preventDefault();
           camera.fov = Math.max(35, Math.min(95, camera.fov + Math.sign(event.deltaY) * 5));
           camera.updateProjectionMatrix();
+          viewRef.current = { ...viewRef.current, fov: camera.fov };
           render();
         }
 
@@ -4702,10 +5082,16 @@ function ScenePanoramaViewer({
       <div ref={containerRef} className="absolute inset-0" />
       {!webglReady ? (
         <div className="grid h-full grid-cols-3 gap-1 p-1">
-          {scenePanoramaFaces.map((face) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={face} src={faces[face]} alt="" className="h-full w-full rounded-md object-cover" />
-          ))}
+          {scenePanoramaFaces.map((face) =>
+            faces[face] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={face} src={faces[face]} alt="" className="h-full w-full rounded-md object-cover" />
+            ) : (
+              <div key={face} className="flex h-full items-center justify-center rounded-md bg-muted text-[0.68rem] text-foreground/38">
+                {emptyLabel}
+              </div>
+            )
+          )}
         </div>
       ) : null}
       {!webglReady && onExpand ? (
@@ -5400,6 +5786,30 @@ function isValidScenePanoramaFace(file: File) {
   return scenePanoramaAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxScenePanoramaFaceBytes;
 }
 
+function normalizeScenePanoramaMaxRedrawAttempts(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
+
+  if (!Number.isFinite(parsed)) {
+    return defaultScenePanoramaMaxRedrawAttempts;
+  }
+
+  return Math.min(maxScenePanoramaMaxRedrawAttempts, Math.max(minScenePanoramaMaxRedrawAttempts, Math.round(parsed)));
+}
+
+function createInitialScenePanoramaGenerationDraft(): ScenePanoramaGenerationDraft {
+  return {
+    completed: false,
+    error: null,
+    faces: {},
+    finalFaces: {},
+    iteratingFaces: [],
+    messageKey: "sceneForm.panoramaProgressQueued",
+    motherImage: null,
+    progress: 4,
+    stage: "queued"
+  };
+}
+
 function normalizeSceneFaceSource(source: ScenePanoramaFaceDraft["source"]): ScenePanoramaDraft["faceSource"] {
   if (source === "existing") {
     return "uploaded";
@@ -5408,7 +5818,9 @@ function normalizeSceneFaceSource(source: ScenePanoramaFaceDraft["source"]): Sce
   return source;
 }
 
-function isCompleteScenePanoramaFaceUrls(faces: Record<ScenePanoramaFace, string>) {
+function isCompleteScenePanoramaFaceUrls(
+  faces: Partial<Record<ScenePanoramaFace, string>>
+): faces is Record<ScenePanoramaFace, string> {
   return scenePanoramaFaces.every((face) => Boolean(faces[face]));
 }
 
@@ -5426,6 +5838,20 @@ function getCompleteScenePanoramaFaceUrls(panorama: ScenePanoramaDraft | null) {
   }, {} as Record<ScenePanoramaFace, string>);
 
   return isCompleteScenePanoramaFaceUrls(faces) ? faces : null;
+}
+
+function getScenePanoramaGenerationFaceUrls(facesByFace: Partial<Record<ScenePanoramaFace, ScenePanoramaStreamFaceImage>>) {
+  const faces = scenePanoramaFaces.reduce<Partial<Record<ScenePanoramaFace, string>>>((result, face) => {
+    const image = facesByFace[face];
+
+    if (image?.dataUrl) {
+      result[face] = image.dataUrl;
+    }
+
+    return result;
+  }, {});
+
+  return Object.keys(faces).length > 0 ? faces : null;
 }
 
 function validateSceneBlockGeneration(draft: SceneCreateDraft, blockId: string) {

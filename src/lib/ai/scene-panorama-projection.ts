@@ -19,9 +19,9 @@ export type ScenePanoramaProjectionOptions = {
 
 export const cubemapYawOffsetRadians = Math.PI / 4;
 
-const defaultNormalizedPanoramaWidth = 2048;
-const defaultNormalizedPanoramaHeight = 1024;
-const defaultPanoramaFaceSize = 1024;
+const defaultNormalizedPanoramaWidth = 4096;
+const defaultNormalizedPanoramaHeight = 2048;
+const defaultPanoramaFaceSize = 4096;
 
 export async function splitEquirectangularToCubemap(bytes: Buffer, options: ScenePanoramaProjectionOptions = {}) {
   const normalizedWidth = options.normalizedWidth ?? defaultNormalizedPanoramaWidth;

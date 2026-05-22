@@ -92,7 +92,13 @@ vi.mock("@/lib/ai/runtime", () => ({
 vi.mock("@/lib/ai/image-runtime", () => ({
   generateDefaultMaskBoardImage: vi.fn(),
   generateDefaultScenePanorama: vi.fn(),
-  scenePanoramaFaces: ["front", "back", "left", "right", "top", "bottom"]
+  normalizeScenePanoramaMaxRedrawAttempts: vi.fn((value: unknown) => {
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : 3;
+
+    return Number.isFinite(parsed) ? Math.min(6, Math.max(1, Math.round(parsed))) : 3;
+  }),
+  scenePanoramaFaces: ["front", "back", "left", "right", "top", "bottom"],
+  streamDefaultScenePanorama: vi.fn()
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -545,6 +551,57 @@ describe("home workspace data", () => {
       "reader-id",
       expect.objectContaining({
         feature: "scene.block.panorama.generate"
+      }),
+      expect.objectContaining({
+        maxRedrawAttempts: 3
+      })
+    );
+  });
+
+  it("streams scene panorama progress with the selected iteration count", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { streamDefaultScenePanorama } = await import("@/lib/ai/image-runtime");
+    const { streamSceneBlockPanorama } = await import("@/lib/home-workspace");
+    const events: Array<{ type: string; progress?: number }> = [];
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(streamDefaultScenePanorama).mockImplementation(async (_input, _userId, onEvent) => {
+      await onEvent({ messageKey: "sceneForm.panoramaProgressMother", progress: 8, stage: "mother-generating", type: "progress" });
+
+      return {
+        faces: createGeneratedSceneFaces(),
+        mode: "enhanced",
+        repaired: true
+      };
+    });
+
+    await streamSceneBlockPanorama(
+      createSceneInput({ panoramaDrawingStyle: "concept" }),
+      "block-main",
+      "zh-CN",
+      (event) => {
+        events.push(event);
+      },
+      { maxRedrawAttempts: 4 }
+    );
+
+    expect(events).toContainEqual(expect.objectContaining({ progress: 8, type: "progress" }));
+    expect(streamDefaultScenePanorama).toHaveBeenCalledWith(
+      expect.objectContaining({ panoramaDrawingStyle: "concept" }),
+      "reader-id",
+      expect.any(Function),
+      expect.objectContaining({
+        feature: "scene.block.panorama.generate"
+      }),
+      expect.objectContaining({
+        maxRedrawAttempts: 4
       })
     );
   });
@@ -1034,7 +1091,7 @@ describe("home workspace data", () => {
       }))
     );
 
-    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
+    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces, { faceSize: 64 });
     const stabilizedPixel = await readImagePixel(stabilized[0].bytes, 0, 0);
     const candidatePixel = await readImagePixel(candidateFaces[0].bytes, 0, 0);
     const referencePixel = await readImagePixel(referenceFaces[0].bytes, 0, 0);
@@ -1062,8 +1119,8 @@ describe("home workspace data", () => {
       }))
     );
 
-    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
-    const quality = await analyzeScenePanoramaFaces(stabilized);
+    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces, { faceSize: 64 });
+    const quality = await analyzeScenePanoramaFaces(stabilized, { faceSize: 64 });
 
     expect(quality.edgeDeltas).toHaveLength(12);
     expect(quality.innerBandDeltas).toHaveLength(12);
@@ -1073,8 +1130,8 @@ describe("home workspace data", () => {
   });
 
   it("rotates cubemap sampling so the back face center avoids the equirectangular seam", () => {
-    const normalizedWidth = 2048;
-    const normalizedHeight = 1024;
+    const normalizedWidth = 4096;
+    const normalizedHeight = 2048;
     const front = getScenePanoramaFaceSourceCoordinate("front", 0, 0, { normalizedHeight, normalizedWidth });
     const back = getScenePanoramaFaceSourceCoordinate("back", 0, 0, { normalizedHeight, normalizedWidth });
     const right = getScenePanoramaFaceSourceCoordinate("right", 0, 0, { normalizedHeight, normalizedWidth });
@@ -1095,7 +1152,7 @@ describe("home workspace data", () => {
       normalizedHeight: 128,
       normalizedWidth: 256
     });
-    const quality = await analyzeScenePanoramaFaces(faces);
+    const quality = await analyzeScenePanoramaFaces(faces, { faceSize: 64 });
 
     expect(quality.edgeDeltas).toHaveLength(12);
     expect(quality.maxEdgeDelta).toBeLessThan(12);
@@ -1121,7 +1178,7 @@ describe("home workspace data", () => {
       bytes: referenceBytes
     }));
 
-    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces);
+    const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces, { faceSize: 1024 });
     const originalEdgePixel = await readImagePixel(candidateBytes, 4, 4);
     const stabilizedEdgePixel = await readImagePixel(stabilized[0].bytes, 4, 4);
     const referenceEdgePixel = await readImagePixel(referenceBytes, 4, 4);

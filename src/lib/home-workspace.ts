@@ -7,9 +7,13 @@ import type { Locale } from "@/i18n/routing";
 import {
   generateDefaultMaskBoardImage,
   generateDefaultScenePanorama,
+  normalizeScenePanoramaMaxRedrawAttempts,
   scenePanoramaFaces,
+  streamDefaultScenePanorama,
   type ScenePanoramaFace,
-  type ScenePanoramaGenerationResult
+  type ScenePanoramaGenerationOptions,
+  type ScenePanoramaGenerationResult,
+  type ScenePanoramaStreamCallback
 } from "@/lib/ai/image-runtime";
 import { generateDefaultLlmReply, streamDefaultLlmReply, type RuntimeChatMessage, type RuntimeTokenUsage } from "@/lib/ai/runtime";
 import { ensureConfiguredAdminUser, getCurrentViewer, requireAuth } from "@/lib/auth";
@@ -365,6 +369,7 @@ export type SceneAiAssistResult = {
 };
 
 export type ScenePanoramaGenerationState = ScenePanoramaGenerationResult;
+export type ScenePanoramaStreamHandler = ScenePanoramaStreamCallback;
 
 type WorkspaceMaskBoardDrawingStyle =
   | "photo"
@@ -1122,9 +1127,35 @@ export async function assistSceneDraft(input: SceneMaterialCreateInput, instruct
   };
 }
 
-export async function generateSceneBlockPanorama(input: SceneMaterialCreateInput, blockId: string, locale: Locale): Promise<ScenePanoramaGenerationState> {
+export async function generateSceneBlockPanorama(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  options?: ScenePanoramaGenerationOptions
+): Promise<ScenePanoramaGenerationState> {
+  return runSceneBlockPanoramaGeneration(input, blockId, locale, undefined, options);
+}
+
+export async function streamSceneBlockPanorama(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  onEvent: ScenePanoramaStreamHandler,
+  options?: ScenePanoramaGenerationOptions
+): Promise<ScenePanoramaGenerationState> {
+  return runSceneBlockPanoramaGeneration(input, blockId, locale, onEvent, options);
+}
+
+async function runSceneBlockPanoramaGeneration(
+  input: SceneMaterialCreateInput,
+  blockId: string,
+  locale: Locale,
+  onEvent?: ScenePanoramaStreamHandler,
+  options?: ScenePanoramaGenerationOptions
+): Promise<ScenePanoramaGenerationState> {
   const viewer = await requireAuth();
   const block = input.blocks.find((item) => item.id === blockId);
+  const maxRedrawAttempts = normalizeScenePanoramaMaxRedrawAttempts(options?.maxRedrawAttempts);
 
   if (!input.name.trim() || !input.description.trim()) {
     throw new Error("SCENE_DESCRIPTION_REQUIRED");
@@ -1138,27 +1169,32 @@ export async function generateSceneBlockPanorama(input: SceneMaterialCreateInput
     throw new Error("SCENE_BLOCK_DESCRIPTION_REQUIRED");
   }
 
-  return generateDefaultScenePanorama(
-    {
-      sceneName: input.name.trim(),
-      sceneDescription: input.description.trim(),
-      blockName: block.name.trim(),
-      blockDescription: block.description.trim(),
-      panoramaDrawingStyle: normalizeScenePanoramaDrawingStyle(input.panoramaDrawingStyle),
-      style: input.style,
-      locale
+  const generationInput = {
+    sceneName: input.name.trim(),
+    sceneDescription: input.description.trim(),
+    blockName: block.name.trim(),
+    blockDescription: block.description.trim(),
+    panoramaDrawingStyle: normalizeScenePanoramaDrawingStyle(input.panoramaDrawingStyle),
+    style: input.style,
+    locale
+  };
+  const observationContext = {
+    feature: "scene.block.panorama.generate",
+    input: {
+      currentDraft: input,
+      blockId,
+      locale,
+      maxRedrawAttempts
     },
-    viewer.id,
-    {
-      feature: "scene.block.panorama.generate",
-      input: {
-        currentDraft: input,
-        blockId,
-        locale
-      },
-      locale
-    }
-  );
+    locale
+  };
+  const generationOptions = { maxRedrawAttempts };
+
+  if (onEvent) {
+    return streamDefaultScenePanorama(generationInput, viewer.id, onEvent, observationContext, generationOptions);
+  }
+
+  return generateDefaultScenePanorama(generationInput, viewer.id, observationContext, generationOptions);
 }
 
 export async function deleteSelfCreatedMaterial(materialId: string, locale: Locale) {

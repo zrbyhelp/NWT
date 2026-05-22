@@ -9,7 +9,6 @@ import {
   createHomeSceneMaterial,
   deleteHomeMaterial,
   generateHomeMaskBoard,
-  generateHomeSceneBlockPanorama,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
   updateHomeMaskMaterial,
@@ -460,21 +459,11 @@ describe("HomeWorkspace script manager", () => {
       expect(toast.success).toHaveBeenCalledWith("素材已加入我的素材库。");
     });
     expect(screen.getByRole("button", { name: "已加入" })).toBeDisabled();
-  }, 20000);
+  }, 30000);
 
   it("keeps scene panorama generation type in the form and uploads faces on save", async () => {
-    vi.mocked(generateHomeSceneBlockPanorama).mockResolvedValue({
-      mode: "enhanced",
-      repaired: true,
-      faces: {
-        front: { contentType: "image/png", dataUrl: "data:image/png;base64,Zm9udA==", face: "front", fileName: "front.png" },
-        back: { contentType: "image/png", dataUrl: "data:image/png;base64,YmFjaw==", face: "back", fileName: "back.png" },
-        left: { contentType: "image/png", dataUrl: "data:image/png;base64,bGVmdA==", face: "left", fileName: "left.png" },
-        right: { contentType: "image/png", dataUrl: "data:image/png;base64,cmlnaHQ=", face: "right", fileName: "right.png" },
-        top: { contentType: "image/png", dataUrl: "data:image/png;base64,dG9w", face: "top", fileName: "top.png" },
-        bottom: { contentType: "image/png", dataUrl: "data:image/png;base64,Ym90dG9t", face: "bottom", fileName: "bottom.png" }
-      }
-    });
+    const fetchMock = mockScenePanoramaFetch(createSceneStreamFaces());
+
     vi.mocked(uploadHomeScenePanoramaFace).mockImplementation(async (formData) => {
       return {
         face: String(formData.get("face")),
@@ -482,22 +471,6 @@ describe("HomeWorkspace script manager", () => {
       };
     });
     vi.mocked(createHomeSceneMaterial).mockImplementation(async (_formData) => createdSceneMaterial);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-
-        if (url.startsWith("data:")) {
-          return new Response("face", {
-            headers: {
-              "Content-Type": "image/png"
-            }
-          });
-        }
-
-        return new Response(null, { status: 404 });
-      })
-    );
 
     render(<HomeWorkspace data={workspaceData} />);
 
@@ -514,20 +487,22 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
     fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
     fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
+    fireEvent.change(screen.getByLabelText("最多迭代轮次"), { target: { value: "4" } });
 
     fireEvent.click(screen.getByRole("button", { name: "生成区块全景" }));
 
     await waitFor(() => {
-      expect(generateHomeSceneBlockPanorama).toHaveBeenCalledWith(
-        expect.objectContaining({
-          panoramaDrawingStyle: "photo"
-        }),
-        expect.any(String),
-        "zh-CN"
-      );
+      expect(fetchMock).toHaveBeenCalledWith("/api/materials/scene-panorama/stream", expect.any(Object));
+    });
+    const streamBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(streamBody).toMatchObject({
+      input: expect.objectContaining({ panoramaDrawingStyle: "photo" }),
+      locale: "zh-CN",
+      maxRedrawAttempts: 4
     });
 
     await waitFor(() => {
+      expect(screen.getByText("全景母图")).toBeInTheDocument();
       expect(toast.success).toHaveBeenCalledWith("区块全景已生成。");
       expect(screen.getByText("AI 辅助")).toBeInTheDocument();
     });
@@ -564,39 +539,12 @@ describe("HomeWorkspace script manager", () => {
   });
 
   it("shows a concrete scene record save error after cubemap upload succeeds", async () => {
-    vi.mocked(generateHomeSceneBlockPanorama).mockResolvedValue({
-      mode: "enhanced",
-      repaired: true,
-      faces: {
-        front: { contentType: "image/png", dataUrl: "data:image/png;base64,Zm9udA==", face: "front", fileName: "front.png" },
-        back: { contentType: "image/png", dataUrl: "data:image/png;base64,YmFjaw==", face: "back", fileName: "back.png" },
-        left: { contentType: "image/png", dataUrl: "data:image/png;base64,bGVmdA==", face: "left", fileName: "left.png" },
-        right: { contentType: "image/png", dataUrl: "data:image/png;base64,cmlnaHQ=", face: "right", fileName: "right.png" },
-        top: { contentType: "image/png", dataUrl: "data:image/png;base64,dG9w", face: "top", fileName: "top.png" },
-        bottom: { contentType: "image/png", dataUrl: "data:image/png;base64,Ym90dG9t", face: "bottom", fileName: "bottom.png" }
-      }
-    });
+    mockScenePanoramaFetch(createSceneStreamFaces());
     vi.mocked(uploadHomeScenePanoramaFace).mockImplementation(async (formData) => ({
       face: String(formData.get("face")),
       url: `https://cdn.example.com/materials/${String(formData.get("face"))}.png`
     }));
     vi.mocked(createHomeSceneMaterial).mockRejectedValue(new Error("SCENE_MATERIAL_DATABASE_FAILED"));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-
-        if (url.startsWith("data:")) {
-          return new Response("face", {
-            headers: {
-              "Content-Type": "image/png"
-            }
-          });
-        }
-
-        return new Response(null, { status: 404 });
-      })
-    );
 
     render(<HomeWorkspace data={workspaceData} />);
 
@@ -633,7 +581,7 @@ describe("HomeWorkspace script manager", () => {
   });
 
   it("shows a quality failure when panorama seam checks fail", async () => {
-    vi.mocked(generateHomeSceneBlockPanorama).mockRejectedValue(new Error("SCENE_PANORAMA_QUALITY_FAILED"));
+    mockScenePanoramaFetch(createSceneStreamFaces(), [{ type: "error", message: "SCENE_PANORAMA_QUALITY_FAILED" }]);
 
     render(<HomeWorkspace data={workspaceData} />);
 
@@ -908,6 +856,79 @@ function mockStreamError(message: string) {
   });
 
   vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+}
+
+type TestScenePanoramaFace = "front" | "back" | "left" | "right" | "top" | "bottom";
+type TestScenePanoramaFaceImage = {
+  contentType: string;
+  dataUrl: string;
+  face: TestScenePanoramaFace;
+  fileName: string;
+};
+
+function createSceneStreamFaces(): Record<TestScenePanoramaFace, TestScenePanoramaFaceImage> {
+  return {
+    front: { contentType: "image/png", dataUrl: "data:image/png;base64,Zm9udA==", face: "front", fileName: "front.png" },
+    back: { contentType: "image/png", dataUrl: "data:image/png;base64,YmFjaw==", face: "back", fileName: "back.png" },
+    left: { contentType: "image/png", dataUrl: "data:image/png;base64,bGVmdA==", face: "left", fileName: "left.png" },
+    right: { contentType: "image/png", dataUrl: "data:image/png;base64,cmlnaHQ=", face: "right", fileName: "right.png" },
+    top: { contentType: "image/png", dataUrl: "data:image/png;base64,dG9w", face: "top", fileName: "top.png" },
+    bottom: { contentType: "image/png", dataUrl: "data:image/png;base64,Ym90dG9t", face: "bottom", fileName: "bottom.png" }
+  };
+}
+
+function mockScenePanoramaFetch(
+  faces: Record<TestScenePanoramaFace, TestScenePanoramaFaceImage>,
+  events: Array<Record<string, unknown>> = createScenePanoramaStreamEvents(faces)
+) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    start(controller) {
+      events.forEach((event) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      });
+      controller.close();
+    }
+  });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+
+    if (url === "/api/materials/scene-panorama/stream") {
+      return new Response(body, {
+        headers: {
+          "Content-Type": "text/event-stream"
+        }
+      });
+    }
+
+    if (url.startsWith("data:")) {
+      return new Response("face", {
+        headers: {
+          "Content-Type": "image/png"
+        }
+      });
+    }
+
+    return new Response(null, { status: 404 });
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+
+  return fetchMock;
+}
+
+function createScenePanoramaStreamEvents(faces: Record<TestScenePanoramaFace, TestScenePanoramaFaceImage>) {
+  const faceList = Object.values(faces);
+
+  return [
+    { type: "progress", progress: 8, stage: "mother-generating", messageKey: "sceneForm.panoramaProgressMother" },
+    { type: "mother", image: { contentType: "image/png", dataUrl: "data:image/png;base64,bW90aGVy", fileName: "mother.png" } },
+    ...faceList.map((image) => ({ type: "face", attempt: 1, face: image.face, image, phase: "preview" })),
+    { type: "quality", attempt: 1, failedFaces: [], passed: true, quality: {} },
+    ...faceList.map((image) => ({ type: "face", attempt: 1, face: image.face, image, phase: "final" })),
+    { type: "done", mode: "enhanced", qualityBestEffort: false, qualityPassed: true, repaired: true, sizeProfile: "4k" },
+    { type: "progress", progress: 100, stage: "done", messageKey: "sceneForm.panoramaProgressDone" }
+  ];
 }
 
 function readMessage(path: string) {

@@ -1,10 +1,13 @@
 import "server-only";
 
 import OpenAI, { toFile } from "openai";
+import sharp from "sharp";
 import { getDefaultImageRuntimeConfig } from "@/lib/ai/model-config";
 import {
   analyzeScenePanoramaFaces,
+  harmonizeScenePanoramaFaceColors,
   stabilizeScenePanoramaFaces,
+  type ScenePanoramaColorReport,
   type ScenePanoramaQualityReport
 } from "@/lib/ai/scene-panorama-postprocess";
 import { splitEquirectangularToCubemap } from "@/lib/ai/scene-panorama-projection";
@@ -32,12 +35,56 @@ export type ScenePanoramaGenerationInput = {
 };
 
 export type ScenePanoramaGenerationResult = {
+  bestAttempt?: number;
+  color?: ScenePanoramaColorReport;
+  earlyStopped?: boolean;
   faces: Record<ScenePanoramaFace, ScenePanoramaFaceImage>;
   mode: "enhanced" | "direct-cut";
   quality?: ScenePanoramaQualityReport;
   qualityBestEffort?: boolean;
   qualityPassed?: boolean;
   repaired: boolean;
+  sizeProfile?: ScenePanoramaSizeProfileId;
+};
+
+export type ScenePanoramaStreamImage = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+};
+
+export type ScenePanoramaStreamEvent =
+  | { type: "progress"; progress: number; stage: string; messageKey: string }
+  | { type: "mother"; image: ScenePanoramaStreamImage }
+  | { type: "face"; attempt: number; face: ScenePanoramaFace; image: ScenePanoramaFaceImage; phase: "preview" | "final" }
+  | { type: "iterating"; attempt: number; faces: ScenePanoramaFace[] }
+  | {
+      type: "quality";
+      attempt: number;
+      failedFaces: ScenePanoramaFace[];
+      passed: boolean;
+      quality: ScenePanoramaQualityReport;
+      accepted?: boolean;
+      bestAttempt?: number;
+      score?: number;
+    }
+  | {
+      type: "done";
+      bestAttempt?: number;
+      color?: ScenePanoramaColorReport;
+      earlyStopped?: boolean;
+      mode: ScenePanoramaGenerationResult["mode"];
+      quality?: ScenePanoramaQualityReport;
+      qualityBestEffort?: boolean;
+      qualityPassed?: boolean;
+      repaired: boolean;
+      sizeProfile?: ScenePanoramaSizeProfileId;
+    };
+
+export type ScenePanoramaStreamCallback = (event: ScenePanoramaStreamEvent) => Promise<void> | void;
+
+export type ScenePanoramaGenerationOptions = {
+  maxRedrawAttempts?: number;
 };
 
 type FaceBuffer = {
@@ -48,119 +95,338 @@ type FaceBuffer = {
 };
 
 type ScenePanoramaRepaintResult = {
+  bestAttempt: number;
+  earlyStopped: boolean;
   faces: FaceBuffer[];
   quality: ScenePanoramaQualityReport;
   qualityPassed: boolean;
   qualityRepairRounds: number;
   qualityRetriedFaces: ScenePanoramaFace[];
+  score: number;
 };
 
-const panoramaMotherSize = "1792x1024";
-const panoramaFaceSize = 1024;
-const maxFaceRedrawAttempts = 3;
+export type ScenePanoramaSizeProfileId = "4k" | "legacy";
+
+type ScenePanoramaSizeProfile = {
+  faceEditSize: string;
+  faceSize: number;
+  id: ScenePanoramaSizeProfileId;
+  motherSize: string;
+  normalizedHeight: number;
+  normalizedWidth: number;
+};
+
+type ImageModelCallPresetId = "doubao" | "gemini" | "openai" | "generic";
+
+type ImageModelCallTransport = "gemini-native" | "openai-compatible";
+
+type ImageReferenceEditMode = "auto" | "generation-image-field" | "openai-edits";
+
+type ImageRequestKind = "maskBoard" | "sceneFace" | "sceneMother";
+
+type GeminiImageRequestOptions = {
+  aspectRatio: string;
+  imageSize?: "1K" | "2K" | "4K";
+};
+
+type ImageModelCallPreset = {
+  id: ImageModelCallPresetId;
+  includeGenerateOutputFormat: boolean;
+  includeHighFidelityEditOptions: boolean;
+  includeResponseFormat: boolean;
+  maskBoardSize: string;
+  referenceEditMode: ImageReferenceEditMode;
+  sceneFaceSize: string;
+  sceneMotherSize: string;
+  transport: ImageModelCallTransport;
+  geminiOptions: Record<ImageRequestKind, GeminiImageRequestOptions>;
+};
+
+type ImageRuntimeConfig = {
+  apiKey: string;
+  baseUrl: string;
+  modelId: string;
+  providerName: string;
+};
+
+type GeneratedImageBuffer = {
+  bytes: Buffer;
+  contentType: string;
+  fileName: string;
+  outputKind: "base64" | "gemini-inline" | "url";
+};
+
+const scenePanoramaDefaultSizeProfile: ScenePanoramaSizeProfile = {
+  faceEditSize: "4096x4096",
+  faceSize: 4096,
+  id: "4k",
+  motherSize: "4096x2048",
+  normalizedHeight: 2048,
+  normalizedWidth: 4096
+};
+const maskBoardTargetResolution = "3840x2160";
+const geminiDefaultImageOptions: Record<ImageRequestKind, GeminiImageRequestOptions> = {
+  maskBoard: { aspectRatio: "16:9", imageSize: "4K" },
+  sceneFace: { aspectRatio: "1:1", imageSize: "4K" },
+  sceneMother: { aspectRatio: "21:9", imageSize: "4K" }
+};
+const genericImageCallPreset: ImageModelCallPreset = {
+  id: "generic",
+  geminiOptions: geminiDefaultImageOptions,
+  includeGenerateOutputFormat: false,
+  includeHighFidelityEditOptions: false,
+  includeResponseFormat: true,
+  maskBoardSize: maskBoardTargetResolution,
+  referenceEditMode: "auto",
+  sceneFaceSize: scenePanoramaDefaultSizeProfile.faceEditSize,
+  sceneMotherSize: scenePanoramaDefaultSizeProfile.motherSize,
+  transport: "openai-compatible"
+};
+const doubaoImageCallPreset: ImageModelCallPreset = {
+  ...genericImageCallPreset,
+  id: "doubao",
+  referenceEditMode: "generation-image-field"
+};
+const geminiOpenAICompatibleImageCallPreset: ImageModelCallPreset = {
+  ...genericImageCallPreset,
+  id: "gemini",
+  referenceEditMode: "generation-image-field"
+};
+export const defaultScenePanoramaMaxRedrawAttempts = 3;
+export const maxScenePanoramaMaxRedrawAttempts = 6;
+export const minScenePanoramaMaxRedrawAttempts = 1;
 const maxAllowedScenePanoramaEdgeDelta = 18;
 const maxAllowedScenePanoramaInnerBandDelta = 28;
 
+function createImageOpenAiClient(config: ImageRuntimeConfig) {
+  const client = new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+    timeout: 0
+  });
+
+  (client as OpenAI & {
+    fetchWithTimeout: (
+      url: RequestInfo,
+      init: RequestInit | undefined,
+      ms: number,
+      controller: AbortController
+    ) => Promise<Response>;
+  }).fetchWithTimeout = async (url, init, _ms, controller) => {
+    const { signal, method, ...options } = init || {};
+    const fetchSignal = mergeAbortSignals(controller.signal, signal);
+    const fetchOptions: RequestInit = {
+      signal: fetchSignal,
+      method: method ? method.toUpperCase() : "GET",
+      ...options
+    };
+
+    return fetch.call(undefined, url, fetchOptions);
+  };
+
+  return client;
+}
+
+function mergeAbortSignals(first?: AbortSignal | null, second?: AbortSignal | null) {
+  const signals = [first, second].filter((signal): signal is AbortSignal => Boolean(signal));
+
+  if (signals.length <= 1) {
+    return signals[0];
+  }
+
+  return AbortSignal.any(signals);
+}
+
+function getImageModelCallPreset(config: ImageRuntimeConfig): ImageModelCallPreset {
+  const baseUrl = config.baseUrl.toLowerCase();
+  const modelId = config.modelId.toLowerCase();
+  const providerName = config.providerName.toLowerCase();
+  const haystack = `${providerName} ${baseUrl} ${modelId}`;
+
+  if (/(doubao|豆包|seedream|seededit|volcengine|volces|byteplus|ark\.cn-|火山|火山方舟)/.test(haystack)) {
+    return doubaoImageCallPreset;
+  }
+
+  if (isGeminiNativeImageConfig(config)) {
+    return getGeminiNativeImageCallPreset(config);
+  }
+
+  if (/(gemini|google|imagen|generativelanguage)/.test(haystack)) {
+    return geminiOpenAICompatibleImageCallPreset;
+  }
+
+  if (isOpenAiImageConfig(config)) {
+    return getOpenAiImageCallPreset(modelId);
+  }
+
+  return genericImageCallPreset;
+}
+
+function isGeminiNativeImageConfig(config: ImageRuntimeConfig) {
+  const baseUrl = config.baseUrl.toLowerCase();
+
+  return /generativelanguage\.googleapis\.com/.test(baseUrl);
+}
+
+function isOpenAiImageConfig(config: ImageRuntimeConfig) {
+  const baseUrl = config.baseUrl.toLowerCase();
+  const modelId = config.modelId.toLowerCase();
+  const providerName = config.providerName.trim().toLowerCase();
+
+  return baseUrl.includes("api.openai.com") || /(^|[-_])gpt-image|dall-?e/.test(modelId) || providerName === "openai";
+}
+
+function getOpenAiImageCallPreset(modelId: string): ImageModelCallPreset {
+  if (modelId.includes("gpt-image-2")) {
+    return {
+      ...genericImageCallPreset,
+      id: "openai",
+      includeGenerateOutputFormat: true,
+      includeResponseFormat: false,
+      maskBoardSize: "3840x2160",
+      referenceEditMode: "openai-edits",
+      sceneFaceSize: "2048x2048",
+      sceneMotherSize: "3840x1920"
+    };
+  }
+
+  if (modelId.includes("dall-e-3")) {
+    return {
+      ...genericImageCallPreset,
+      id: "openai",
+      includeResponseFormat: true,
+      maskBoardSize: "1792x1024",
+      referenceEditMode: "openai-edits",
+      sceneFaceSize: "1024x1024",
+      sceneMotherSize: "1792x1024"
+    };
+  }
+
+  return {
+    ...genericImageCallPreset,
+    id: "openai",
+    includeGenerateOutputFormat: true,
+    includeHighFidelityEditOptions: !modelId.includes("gpt-image-2"),
+    includeResponseFormat: false,
+    maskBoardSize: "1536x1024",
+    referenceEditMode: "openai-edits",
+    sceneFaceSize: "1024x1024",
+    sceneMotherSize: "1536x1024"
+  };
+}
+
+function getGeminiNativeImageCallPreset(config: ImageRuntimeConfig): ImageModelCallPreset {
+  const supportsExplicit4K = isGeminiNativeExplicitImageSizeSupported(config.modelId);
+  const geminiOptions = supportsExplicit4K
+    ? geminiDefaultImageOptions
+    : {
+        maskBoard: { aspectRatio: "16:9" },
+        sceneFace: { aspectRatio: "1:1" },
+        sceneMother: { aspectRatio: "21:9" }
+      };
+
+  return {
+    ...genericImageCallPreset,
+    id: "gemini",
+    geminiOptions,
+    includeResponseFormat: false,
+    maskBoardSize: supportsExplicit4K ? "4K 16:9" : "16:9",
+    referenceEditMode: "generation-image-field",
+    sceneFaceSize: supportsExplicit4K ? "4K 1:1" : "1:1",
+    sceneMotherSize: supportsExplicit4K ? "4K 21:9" : "21:9",
+    transport: "gemini-native"
+  };
+}
+
+function isGeminiNativeExplicitImageSizeSupported(modelId: string) {
+  const normalized = modelId.toLowerCase();
+
+  return /gemini-(?:3|[4-9])/.test(normalized) || /imagen-(?:4|[5-9])/.test(normalized);
+}
+
 export async function generateDefaultMaskBoardImage(prompt: string, userId: string, observationContext?: AiObservationContext) {
   const config = await getDefaultImageRuntimeConfig(userId);
+  const callPreset = getImageModelCallPreset(config);
+  const promptWithTarget = appendMaskBoardTargetPrompt(prompt);
   const context: AiObservationContext = {
     ...observationContext,
     feature: observationContext?.feature ?? "image.mask-board",
-    input: { prompt, size: "1792x1024" },
+    input: { prompt: promptWithTarget, targetResolution: maskBoardTargetResolution },
     modelId: config.modelId,
     providerName: config.providerName,
     userId: observationContext?.userId ?? userId
   };
 
   return withAiObservation(context.traceName ?? context.feature, context, async (span) => {
-    const client = new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseUrl
-    });
+    const client = createImageOpenAiClient(config);
 
     updateAiObservation(span, {
-      input: { prompt, size: "1792x1024" },
+      input: { prompt: promptWithTarget, targetResolution: maskBoardTargetResolution },
       metadata: {
         baseUrl: config.baseUrl,
+        imageCallPreset: callPreset.id,
         modelId: config.modelId,
-        providerName: config.providerName
+        requestSize: callPreset.maskBoardSize,
+        providerName: config.providerName,
+        targetResolution: maskBoardTargetResolution
       }
     });
 
-    const image = (await client.images.generate({
-      model: config.modelId,
-      n: 1,
-      prompt,
-      response_format: "b64_json",
-      size: "1792x1024"
-    } as Parameters<typeof client.images.generate>[0])) as { data?: Array<{ b64_json?: string; url?: string }> };
-    const firstImage = image.data?.[0];
+    const result = await requestGeneratedImage(client, config, callPreset, {
+      emptyError: "MASK_BOARD_IMAGE_EMPTY",
+      fetchFailedError: "MASK_BOARD_IMAGE_FETCH_FAILED",
+      fileName: "mask-board.png",
+      kind: "maskBoard",
+      prompt: promptWithTarget,
+      size: callPreset.maskBoardSize
+    });
+    const normalized = await normalizeMaskBoardImageResult(result);
 
-    if (firstImage?.b64_json) {
-      const result = {
-        contentType: "image/png",
-        dataUrl: `data:image/png;base64,${firstImage.b64_json}`,
-        fileName: "mask-board.png"
-      };
-
-      updateAiObservation(span, {
-        metadata: {
-          modelId: config.modelId,
-          outputKind: "b64_json",
-          providerName: config.providerName
-        },
-        output: {
-          contentType: result.contentType,
-          fileName: result.fileName,
-          hasImage: true
-        }
-      });
-
-      return result;
-    }
-
-    if (firstImage?.url) {
-      const response = await fetch(firstImage.url);
-
-      if (!response.ok) {
-        throw new Error("MASK_BOARD_IMAGE_FETCH_FAILED");
+    updateAiObservation(span, {
+      metadata: {
+        modelId: config.modelId,
+        outputKind: result.outputKind,
+        providerName: config.providerName
+      },
+      output: {
+        contentType: normalized.contentType,
+        fileName: normalized.fileName,
+        hasImage: true
       }
+    });
 
-      const contentType = response.headers.get("content-type")?.split(";")[0] || "image/png";
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const extension = contentType === "image/webp" ? "webp" : contentType === "image/jpeg" ? "jpg" : "png";
-      const result = {
-        contentType,
-        dataUrl: `data:${contentType};base64,${buffer.toString("base64")}`,
-        fileName: `mask-board.${extension}`
-      };
-
-      updateAiObservation(span, {
-        metadata: {
-          modelId: config.modelId,
-          outputKind: "url",
-          providerName: config.providerName
-        },
-        output: {
-          contentType: result.contentType,
-          fileName: result.fileName,
-          hasImage: true
-        }
-      });
-
-      return result;
-    }
-
-    throw new Error("MASK_BOARD_IMAGE_EMPTY");
+    return normalized;
   });
 }
 
 export async function generateDefaultScenePanorama(
   input: ScenePanoramaGenerationInput,
   userId: string,
-  observationContext?: AiObservationContext
+  observationContext?: AiObservationContext,
+  options?: ScenePanoramaGenerationOptions
+): Promise<ScenePanoramaGenerationResult> {
+  return generateScenePanoramaInternal(input, userId, undefined, observationContext, options);
+}
+
+export async function streamDefaultScenePanorama(
+  input: ScenePanoramaGenerationInput,
+  userId: string,
+  onEvent: ScenePanoramaStreamCallback,
+  observationContext?: AiObservationContext,
+  options?: ScenePanoramaGenerationOptions
+): Promise<ScenePanoramaGenerationResult> {
+  return generateScenePanoramaInternal(input, userId, onEvent, observationContext, options);
+}
+
+async function generateScenePanoramaInternal(
+  input: ScenePanoramaGenerationInput,
+  userId: string,
+  onEvent?: ScenePanoramaStreamCallback,
+  observationContext?: AiObservationContext,
+  options?: ScenePanoramaGenerationOptions
 ): Promise<ScenePanoramaGenerationResult> {
   const config = await getDefaultImageRuntimeConfig(userId);
+  const maxRedrawAttempts = normalizeScenePanoramaMaxRedrawAttempts(options?.maxRedrawAttempts);
   const context: AiObservationContext = {
     ...observationContext,
     feature: observationContext?.feature ?? "scene.panorama.generate",
@@ -171,139 +437,525 @@ export async function generateDefaultScenePanorama(
   };
 
   return withAiObservation(context.traceName ?? context.feature, context, async (span) => {
-    const client = new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseUrl
-    });
-    const motherPrompt = buildScenePanoramaMotherPrompt(input);
+    const client = createImageOpenAiClient(config);
+    const callPreset = getImageModelCallPreset(config);
+    const emit = (event: ScenePanoramaStreamEvent) => emitScenePanoramaStreamEvent(onEvent, event);
 
-    updateAiObservation(span, {
-      input: {
-        ...input,
-        motherSize: panoramaMotherSize
-      },
-      metadata: {
-        baseUrl: config.baseUrl,
-        faceSize: panoramaFaceSize,
-        modelId: config.modelId,
-        providerName: config.providerName
+    const runWithSizeProfile = async (sizeProfile: ScenePanoramaSizeProfile) => {
+      const motherPrompt = buildScenePanoramaMotherPrompt(input, sizeProfile);
+
+      await emit({
+        type: "progress",
+        messageKey: "sceneForm.panoramaProgressMother",
+        progress: 8,
+        stage: "mother-generating"
+      });
+      updateAiObservation(span, {
+        input: {
+          ...input,
+          faceEditSize: sizeProfile.faceEditSize,
+          motherSize: sizeProfile.motherSize,
+          sizeProfile: sizeProfile.id
+        },
+        metadata: {
+          baseUrl: config.baseUrl,
+          faceSize: sizeProfile.faceSize,
+          imageCallPreset: callPreset.id,
+          maxRedrawAttempts,
+          modelId: config.modelId,
+          normalizedHeight: sizeProfile.normalizedHeight,
+          normalizedWidth: sizeProfile.normalizedWidth,
+          providerName: config.providerName,
+          requestFaceSize: callPreset.sceneFaceSize,
+          requestMotherSize: callPreset.sceneMotherSize,
+          sizeProfile: sizeProfile.id
+        }
+      });
+
+      const motherImage = await withAiObservation(
+        "scene.panorama.mother.generate",
+        {
+          feature: "scene.panorama.mother.generate",
+          input: { prompt: motherPrompt, size: callPreset.sceneMotherSize },
+          metadata: {
+            baseUrl: config.baseUrl,
+            imageCallPreset: callPreset.id,
+            modelId: config.modelId,
+            providerName: config.providerName,
+            requestSize: callPreset.sceneMotherSize,
+            sizeProfile: sizeProfile.id
+          },
+          modelId: config.modelId,
+          providerName: config.providerName,
+          traceName: context.traceName ?? context.feature,
+          userId: context.userId
+        },
+        async (motherSpan) => {
+          const image = await generateImageBuffer(client, {
+            callPreset,
+            config,
+            fileName: "scene-panorama-mother.png",
+            kind: "sceneMother",
+            prompt: motherPrompt,
+            size: callPreset.sceneMotherSize
+          });
+
+          updateAiObservation(motherSpan, {
+            output: {
+              contentType: image.contentType,
+              fileName: image.fileName,
+              hasImage: true
+            }
+          });
+
+          return image;
+        }
+      );
+      await emit({
+        type: "mother",
+        image: faceBufferToStreamImage(motherImage)
+      });
+      await emit({
+        type: "progress",
+        messageKey: "sceneForm.panoramaProgressFaces",
+        progress: 24,
+        stage: "faces-generating"
+      });
+      const baseFaces = await splitEquirectangularToCubemap(motherImage.bytes, {
+        faceSize: sizeProfile.faceSize,
+        normalizedHeight: sizeProfile.normalizedHeight,
+        normalizedWidth: sizeProfile.normalizedWidth
+      });
+
+      const repaintResult = await redrawScenePanoramaFacesUntilQualityPasses(
+        client,
+        config,
+        callPreset,
+        baseFaces,
+        input,
+        sizeProfile,
+        emit,
+        context,
+        maxRedrawAttempts
+      );
+      await emit({
+        type: "progress",
+        messageKey: "sceneForm.panoramaProgressColor",
+        progress: 96,
+        stage: "color-harmonizing"
+      });
+      const colorResult = await withAiObservation(
+        "scene.panorama.color.harmonize",
+        {
+          feature: "scene.panorama.color.harmonize",
+          input: {
+            bestAttempt: repaintResult.bestAttempt,
+            faceCount: repaintResult.faces.length
+          },
+          metadata: {
+            bestAttempt: repaintResult.bestAttempt,
+            faceSize: sizeProfile.faceSize,
+            maxRedrawAttempts,
+            sizeProfile: sizeProfile.id
+          },
+          modelId: config.modelId,
+          providerName: config.providerName,
+          traceName: context.traceName ?? context.feature,
+          userId: context.userId
+        },
+        async (colorSpan) => {
+          const harmonized = await harmonizeScenePanoramaFaceColors(baseFaces, repaintResult.faces, {
+            faceSize: sizeProfile.faceSize
+          });
+
+          updateAiObservation(colorSpan, {
+            metadata: {
+              averageReferenceColorDelta: harmonized.report.averageReferenceColorDelta,
+              colorAdjusted: harmonized.report.colorAdjusted,
+              maxFaceColorDelta: harmonized.report.maxFaceColorDelta
+            },
+            output: harmonized.report
+          });
+
+          return harmonized;
+        }
+      );
+
+      for (const face of colorResult.faces) {
+        await emit({
+          type: "face",
+          attempt: repaintResult.bestAttempt,
+          face: face.face,
+          image: faceBufferToScenePanoramaImage(face),
+          phase: "final"
+        });
       }
-    });
 
-    const motherImage = await generateImageBuffer(client, {
-      fileName: "scene-panorama-mother.png",
-      modelId: config.modelId,
-      prompt: motherPrompt,
-      size: panoramaMotherSize
-    });
-    const baseFaces = await splitEquirectangularToCubemap(motherImage.bytes);
+      const faces = faceBuffersToResult(colorResult.faces);
+      const quality = repaintResult.quality;
+      const color = colorResult.report;
 
-    const repaintResult = await redrawScenePanoramaFacesUntilQualityPasses(client, config.modelId, baseFaces, input);
-    const faces = faceBuffersToResult(repaintResult.faces);
-    const quality = repaintResult.quality;
+      updateAiObservation(span, {
+        metadata: {
+          averageEdgeDelta: quality.averageEdgeDelta,
+          averageInnerBandDelta: quality.averageInnerBandDelta,
+          averageReferenceColorDelta: color.averageReferenceColorDelta,
+          bestAttempt: repaintResult.bestAttempt,
+          colorAdjusted: color.colorAdjusted,
+          earlyStopped: repaintResult.earlyStopped,
+          faceCount: scenePanoramaFaces.length,
+          faceEditSize: sizeProfile.faceEditSize,
+          faceSize: sizeProfile.faceSize,
+          largestFaceBytes: quality.largestFaceBytes,
+          maxFaceColorDelta: color.maxFaceColorDelta,
+          maxEdgeDelta: quality.maxEdgeDelta,
+          maxInnerBandDelta: quality.maxInnerBandDelta,
+          mode: "enhanced",
+          motherSize: sizeProfile.motherSize,
+          qualityBestEffort: !repaintResult.qualityPassed,
+          qualityPassed: repaintResult.qualityPassed,
+          qualityRepairRounds: repaintResult.qualityRepairRounds,
+          qualityRetriedFaces: repaintResult.qualityRetriedFaces,
+          repaired: true,
+          sizeProfile: sizeProfile.id,
+          totalBytes: quality.totalBytes
+        },
+        output: {
+          averageEdgeDelta: quality.averageEdgeDelta,
+          averageInnerBandDelta: quality.averageInnerBandDelta,
+          averageReferenceColorDelta: color.averageReferenceColorDelta,
+          bestAttempt: repaintResult.bestAttempt,
+          colorAdjusted: color.colorAdjusted,
+          earlyStopped: repaintResult.earlyStopped,
+          faceCount: scenePanoramaFaces.length,
+          largestFaceBytes: quality.largestFaceBytes,
+          maxFaceColorDelta: color.maxFaceColorDelta,
+          maxEdgeDelta: quality.maxEdgeDelta,
+          maxInnerBandDelta: quality.maxInnerBandDelta,
+          mode: "enhanced",
+          qualityBestEffort: !repaintResult.qualityPassed,
+          qualityPassed: repaintResult.qualityPassed,
+          qualityRepairRounds: repaintResult.qualityRepairRounds,
+          qualityRetriedFaces: repaintResult.qualityRetriedFaces,
+          repaired: true,
+          sizeProfile: sizeProfile.id,
+          totalBytes: quality.totalBytes
+        }
+      });
 
-    updateAiObservation(span, {
-      metadata: {
-        averageEdgeDelta: quality.averageEdgeDelta,
-        averageInnerBandDelta: quality.averageInnerBandDelta,
-        faceCount: scenePanoramaFaces.length,
-        largestFaceBytes: quality.largestFaceBytes,
-        maxEdgeDelta: quality.maxEdgeDelta,
-        maxInnerBandDelta: quality.maxInnerBandDelta,
+      const result = {
+        bestAttempt: repaintResult.bestAttempt,
+        color,
+        earlyStopped: repaintResult.earlyStopped,
+        faces,
         mode: "enhanced",
+        quality,
         qualityBestEffort: !repaintResult.qualityPassed,
         qualityPassed: repaintResult.qualityPassed,
-        qualityRepairRounds: repaintResult.qualityRepairRounds,
-        qualityRetriedFaces: repaintResult.qualityRetriedFaces,
         repaired: true,
-        totalBytes: quality.totalBytes
-      },
-      output: {
-        averageEdgeDelta: quality.averageEdgeDelta,
-        averageInnerBandDelta: quality.averageInnerBandDelta,
-        faceCount: scenePanoramaFaces.length,
-        largestFaceBytes: quality.largestFaceBytes,
-        maxEdgeDelta: quality.maxEdgeDelta,
-        maxInnerBandDelta: quality.maxInnerBandDelta,
-        mode: "enhanced",
-        qualityBestEffort: !repaintResult.qualityPassed,
-        qualityPassed: repaintResult.qualityPassed,
-        qualityRepairRounds: repaintResult.qualityRepairRounds,
-        qualityRetriedFaces: repaintResult.qualityRetriedFaces,
-        repaired: true,
-        totalBytes: quality.totalBytes
-      }
-    });
+        sizeProfile: sizeProfile.id
+      } satisfies ScenePanoramaGenerationResult;
 
-    return {
-      faces,
-      mode: "enhanced",
-      quality,
-      qualityBestEffort: !repaintResult.qualityPassed,
-      qualityPassed: repaintResult.qualityPassed,
-      repaired: true
+      await emit({
+        type: "done",
+        bestAttempt: result.bestAttempt,
+        color: result.color,
+        earlyStopped: result.earlyStopped,
+        mode: result.mode,
+        quality: result.quality,
+        qualityBestEffort: result.qualityBestEffort,
+        qualityPassed: result.qualityPassed,
+        repaired: result.repaired,
+        sizeProfile: result.sizeProfile
+      });
+      await emit({
+        type: "progress",
+        messageKey: "sceneForm.panoramaProgressDone",
+        progress: 100,
+        stage: "done"
+      });
+
+      return result;
     };
+
+    return runWithSizeProfile(scenePanoramaDefaultSizeProfile);
   });
 }
 
 async function generateImageBuffer(
   client: OpenAI,
   {
+    callPreset,
+    config,
     fileName,
-    modelId,
+    kind,
     prompt,
     size
   }: {
+    callPreset: ImageModelCallPreset;
+    config: ImageRuntimeConfig;
     fileName: string;
-    modelId: string;
+    kind: ImageRequestKind;
     prompt: string;
     size: string;
   }
 ): Promise<FaceBuffer> {
-  const image = (await client.images.generate({
+  const image = await requestGeneratedImage(client, config, callPreset, {
+    emptyError: "SCENE_PANORAMA_IMAGE_EMPTY",
+    fetchFailedError: "SCENE_PANORAMA_IMAGE_FETCH_FAILED",
+    fileName,
+    kind,
+    prompt,
+    size
+  });
+
+  return {
+    bytes: image.bytes,
+    contentType: image.contentType,
+    face: "front",
+    fileName: image.fileName
+  };
+}
+
+async function requestGeneratedImage(
+  client: OpenAI,
+  config: ImageRuntimeConfig,
+  callPreset: ImageModelCallPreset,
+  {
+    emptyError,
+    fetchFailedError,
+    fileName,
+    image,
+    kind,
+    prompt,
+    size
+  }: {
+    emptyError: string;
+    fetchFailedError: string;
+    fileName: string;
+    image?: FaceBuffer;
+    kind: ImageRequestKind;
+    prompt: string;
+    size: string;
+  }
+) {
+  if (callPreset.transport === "gemini-native") {
+    return requestGeminiNativeImage(config, prompt, fileName, callPreset.geminiOptions[kind], emptyError, image);
+  }
+
+  const payload = buildOpenAICompatibleGeneratePayload(config.modelId, prompt, size, callPreset);
+
+  if (image) {
+    payload.image = faceBufferToDataUrl(image);
+  }
+
+  const response = (await client.images.generate(
+    payload as unknown as Parameters<typeof client.images.generate>[0]
+  )) as { data?: Array<{ b64_json?: string; url?: string }> };
+
+  return extractGeneratedImageResult(response, fileName, fetchFailedError, emptyError);
+}
+
+function buildOpenAICompatibleGeneratePayload(
+  modelId: string,
+  prompt: string,
+  size: string,
+  callPreset: ImageModelCallPreset
+) {
+  const payload: Record<string, unknown> = {
     model: modelId,
     n: 1,
-    output_format: "png",
     prompt,
-    response_format: "b64_json",
     size
-  } as Parameters<typeof client.images.generate>[0])) as { data?: Array<{ b64_json?: string; url?: string }> };
+  };
 
-  return extractImageBuffer(client, image, fileName, "front");
+  if (callPreset.includeResponseFormat) {
+    payload.response_format = "b64_json";
+  }
+
+  if (callPreset.includeGenerateOutputFormat) {
+    payload.output_format = "png";
+  }
+
+  return payload;
+}
+
+async function requestGeminiNativeImage(
+  config: ImageRuntimeConfig,
+  prompt: string,
+  fileName: string,
+  options: GeminiImageRequestOptions,
+  emptyError: string,
+  image?: FaceBuffer
+): Promise<GeneratedImageBuffer> {
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+
+  if (image) {
+    parts.push({
+      inline_data: {
+        data: image.bytes.toString("base64"),
+        mime_type: image.contentType
+      }
+    });
+  }
+
+  const generationConfig: Record<string, unknown> = {
+    responseModalities: ["IMAGE"],
+    responseFormat: {
+      image: {
+        aspectRatio: options.aspectRatio,
+        ...(options.imageSize ? { imageSize: options.imageSize } : {})
+      }
+    }
+  };
+  const response = await fetch(buildGeminiGenerateContentUrl(config.baseUrl, config.modelId), {
+    body: JSON.stringify({
+      contents: [
+        {
+          parts,
+          role: "user"
+        }
+      ],
+      generationConfig
+    }),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": config.apiKey
+    },
+    method: "POST"
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`GEMINI_IMAGE_GENERATION_FAILED_${response.status}: ${truncateErrorMessage(text)}`);
+  }
+
+  const body = JSON.parse(text) as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { data?: string; mimeType?: string };
+          inline_data?: { data?: string; mime_type?: string };
+        }>;
+      };
+    }>;
+  };
+  const imagePart = body.candidates
+    ?.flatMap((candidate) => candidate.content?.parts ?? [])
+    .find((part) => part.inlineData?.data || part.inline_data?.data);
+  const inlineData = imagePart?.inlineData
+    ? { data: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType }
+    : imagePart?.inline_data
+      ? { data: imagePart.inline_data.data, mimeType: imagePart.inline_data.mime_type }
+      : null;
+  const data = inlineData?.data;
+
+  if (!data) {
+    throw new Error(emptyError);
+  }
+
+  const contentType = inlineData?.mimeType ?? "image/png";
+  const extension = contentType === "image/webp" ? "webp" : contentType === "image/jpeg" ? "jpg" : "png";
+
+  return {
+    bytes: Buffer.from(data, "base64"),
+    contentType,
+    fileName: fileName.replace(/\.[a-z0-9]+$/i, `.${extension}`),
+    outputKind: "gemini-inline"
+  };
+}
+
+function buildGeminiGenerateContentUrl(baseUrl: string, modelId: string) {
+  const trimmedBaseUrl = baseUrl.replace(/\/+$/, "").replace(/\/openai$/i, "");
+  const modelPath = modelId.includes("/") ? modelId : `models/${modelId}`;
+
+  return `${trimmedBaseUrl}/${modelPath}:generateContent`;
+}
+
+function faceBufferToDataUrl(image: FaceBuffer) {
+  return `data:${image.contentType};base64,${image.bytes.toString("base64")}`;
+}
+
+function faceBufferToStreamImage(image: Pick<FaceBuffer, "bytes" | "contentType" | "fileName">): ScenePanoramaStreamImage {
+  return {
+    contentType: image.contentType,
+    dataUrl: `data:${image.contentType};base64,${image.bytes.toString("base64")}`,
+    fileName: image.fileName
+  };
+}
+
+function faceBufferToScenePanoramaImage(image: FaceBuffer): ScenePanoramaFaceImage {
+  return {
+    ...faceBufferToStreamImage(image),
+    face: image.face
+  };
+}
+
+async function emitScenePanoramaStreamEvent(onEvent: ScenePanoramaStreamCallback | undefined, event: ScenePanoramaStreamEvent) {
+  if (onEvent) {
+    await onEvent(event);
+  }
+}
+
+export function normalizeScenePanoramaMaxRedrawAttempts(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
+
+  if (!Number.isFinite(parsed)) {
+    return defaultScenePanoramaMaxRedrawAttempts;
+  }
+
+  return Math.min(maxScenePanoramaMaxRedrawAttempts, Math.max(minScenePanoramaMaxRedrawAttempts, Math.round(parsed)));
+}
+
+function truncateErrorMessage(message: string) {
+  return message.length > 500 ? `${message.slice(0, 500)}...` : message;
 }
 
 async function editImageBuffer(
   client: OpenAI,
   {
+    callPreset,
+    config,
     fileName,
     image,
-    modelId,
     prompt
   }: {
+    callPreset: ImageModelCallPreset;
+    config: ImageRuntimeConfig;
     fileName: string;
     image: FaceBuffer;
-    modelId: string;
     prompt: string;
   }
 ): Promise<FaceBuffer> {
+  if (callPreset.transport === "gemini-native" || callPreset.referenceEditMode === "generation-image-field") {
+    return requestReferenceGenerateImage(client, config, callPreset, fileName, image, prompt);
+  }
+
   const imageFile = await toFile(image.bytes, image.fileName, { type: image.contentType });
   let edited: { data?: Array<{ b64_json?: string; url?: string }> };
 
   try {
     edited = await requestImageEdit(client, {
+      callPreset,
       imageFile,
-      modelId,
+      modelId: config.modelId,
       prompt,
       useAdvancedOptions: true
     });
   } catch (error) {
+    if (callPreset.referenceEditMode === "auto" && isLikelyImageEditUnsupportedError(error)) {
+      return requestReferenceGenerateImage(client, config, callPreset, fileName, image, prompt);
+    }
+
     if (!isLikelyImageEditOptionUnsupportedError(error)) {
       throw error;
     }
 
     edited = await requestImageEdit(client, {
+      callPreset,
       imageFile,
-      modelId,
+      modelId: config.modelId,
       prompt,
       useAdvancedOptions: false
     });
@@ -316,34 +968,69 @@ async function editImageBuffer(
   };
 }
 
+async function requestReferenceGenerateImage(
+  client: OpenAI,
+  config: ImageRuntimeConfig,
+  callPreset: ImageModelCallPreset,
+  fileName: string,
+  image: FaceBuffer,
+  prompt: string
+): Promise<FaceBuffer> {
+  const generated = await requestGeneratedImage(client, config, callPreset, {
+    emptyError: "SCENE_PANORAMA_IMAGE_EMPTY",
+    fetchFailedError: "SCENE_PANORAMA_IMAGE_FETCH_FAILED",
+    fileName,
+    image,
+    kind: "sceneFace",
+    prompt,
+    size: callPreset.sceneFaceSize
+  });
+
+  return {
+    bytes: generated.bytes,
+    contentType: generated.contentType,
+    face: image.face,
+    fileName: generated.fileName
+  };
+}
+
 async function requestImageEdit(
   client: OpenAI,
   {
+    callPreset,
     imageFile,
     modelId,
     prompt,
     useAdvancedOptions
   }: {
+    callPreset: ImageModelCallPreset;
     imageFile: File;
     modelId: string;
     prompt: string;
     useAdvancedOptions: boolean;
   }
 ) {
-  return (await client.images.edit({
+  const payload: Record<string, unknown> = {
     image: imageFile,
     model: modelId,
     n: 1,
     prompt,
-    size: "1024x1024",
-    ...(useAdvancedOptions
-      ? {
-          input_fidelity: "high",
-          output_format: "png",
-          quality: "high"
-        }
-      : {})
-  } as Parameters<typeof client.images.edit>[0])) as { data?: Array<{ b64_json?: string; url?: string }> };
+    size: callPreset.sceneFaceSize
+  };
+
+  if (callPreset.includeResponseFormat) {
+    payload.response_format = "b64_json";
+  }
+
+  if (useAdvancedOptions && callPreset.includeHighFidelityEditOptions) {
+    payload.input_fidelity = "high";
+    payload.output_format = "png";
+    payload.quality = "high";
+  }
+
+  return (await client.images.edit(payload as unknown as Parameters<typeof client.images.edit>[0])) as {
+    data?: Array<{ b64_json?: string; url?: string }>;
+  };
 }
 
 async function extractImageBuffer(
@@ -352,14 +1039,35 @@ async function extractImageBuffer(
   fileName: string,
   face: ScenePanoramaFace
 ): Promise<FaceBuffer> {
+  const image = await extractGeneratedImageResult(
+    response,
+    fileName,
+    "SCENE_PANORAMA_IMAGE_FETCH_FAILED",
+    "SCENE_PANORAMA_IMAGE_EMPTY"
+  );
+
+  return {
+    bytes: image.bytes,
+    contentType: image.contentType,
+    face,
+    fileName: image.fileName
+  };
+}
+
+async function extractGeneratedImageResult(
+  response: { data?: Array<{ b64_json?: string; url?: string }> },
+  fileName: string,
+  fetchFailedError: string,
+  emptyError: string
+): Promise<GeneratedImageBuffer> {
   const firstImage = response.data?.[0];
 
   if (firstImage?.b64_json) {
     return {
       bytes: Buffer.from(firstImage.b64_json, "base64"),
       contentType: "image/png",
-      face,
-      fileName
+      fileName,
+      outputKind: "base64"
     };
   }
 
@@ -367,7 +1075,7 @@ async function extractImageBuffer(
     const fetched = await fetch(firstImage.url);
 
     if (!fetched.ok) {
-      throw new Error("SCENE_PANORAMA_IMAGE_FETCH_FAILED");
+      throw new Error(fetchFailedError);
     }
 
     const contentType = fetched.headers.get("content-type")?.split(";")[0] || "image/png";
@@ -376,68 +1084,204 @@ async function extractImageBuffer(
     return {
       bytes: Buffer.from(await fetched.arrayBuffer()),
       contentType,
-      face,
-      fileName: fileName.replace(/\.[a-z0-9]+$/i, `.${extension}`)
+      fileName: fileName.replace(/\.[a-z0-9]+$/i, `.${extension}`),
+      outputKind: "url"
     };
   }
 
-  throw new Error("SCENE_PANORAMA_IMAGE_EMPTY");
+  throw new Error(emptyError);
+}
+
+async function normalizeMaskBoardImageResult(image: GeneratedImageBuffer) {
+  const { height, width } = parseImageSize(maskBoardTargetResolution);
+  const bytes = await sharp(image.bytes)
+    .resize(width, height, {
+      background: { alpha: 1, b: 18, g: 15, r: 11 },
+      fit: "contain"
+    })
+    .png()
+    .toBuffer();
+
+  return {
+    contentType: "image/png",
+    dataUrl: `data:image/png;base64,${bytes.toString("base64")}`,
+    fileName: image.fileName.replace(/\.[a-z0-9]+$/i, ".png")
+  };
+}
+
+function parseImageSize(size: string) {
+  const [width, height] = size.split("x").map((part) => Number.parseInt(part, 10));
+
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`INVALID_IMAGE_SIZE_${size}`);
+  }
+
+  return { height, width };
 }
 
 async function redrawScenePanoramaFacesUntilQualityPasses(
   client: OpenAI,
-  modelId: string,
+  config: ImageRuntimeConfig,
+  callPreset: ImageModelCallPreset,
   referenceFaces: FaceBuffer[],
-  input: ScenePanoramaGenerationInput
+  input: ScenePanoramaGenerationInput,
+  sizeProfile: ScenePanoramaSizeProfile,
+  emit: ScenePanoramaStreamCallback,
+  observationContext: AiObservationContext,
+  maxRedrawAttempts: number
 ): Promise<ScenePanoramaRepaintResult> {
-  let enhancedFaces = await redrawScenePanoramaFaces(client, modelId, referenceFaces, input, 1);
+  let enhancedFaces = await redrawScenePanoramaFaces(
+    client,
+    config,
+    callPreset,
+    referenceFaces,
+    input,
+    sizeProfile,
+    1,
+    emit,
+    observationContext,
+    maxRedrawAttempts
+  );
   const qualityRetriedFaces = new Set<ScenePanoramaFace>();
   let bestResult: ScenePanoramaRepaintResult | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
 
-  for (let attempt = 1; attempt <= maxFaceRedrawAttempts; attempt += 1) {
-    const stabilizedFaces = await stabilizeScenePanoramaFaces(referenceFaces, enhancedFaces);
-    const quality = await analyzeScenePanoramaFaces(stabilizedFaces);
+  for (let attempt = 1; attempt <= maxRedrawAttempts; attempt += 1) {
+    await emit({
+      type: "progress",
+      messageKey: "sceneForm.panoramaProgressQuality",
+      progress: getScenePanoramaProgress(62, 92, attempt, maxRedrawAttempts),
+      stage: "quality-checking"
+    });
+    const { failedFaces, quality, stabilizedFaces } = await withAiObservation(
+      "scene.panorama.quality.check",
+      {
+        feature: "scene.panorama.quality.check",
+        input: { attempt, faceCount: enhancedFaces.length },
+        metadata: {
+          attempt,
+          faceSize: sizeProfile.faceSize,
+          maxRedrawAttempts,
+          sizeProfile: sizeProfile.id
+        },
+        modelId: config.modelId,
+        providerName: config.providerName,
+        traceName: observationContext.traceName ?? observationContext.feature,
+        userId: observationContext.userId
+      },
+      async (qualitySpan) => {
+        const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, enhancedFaces, { faceSize: sizeProfile.faceSize });
+        const report = await analyzeScenePanoramaFaces(stabilized, { faceSize: sizeProfile.faceSize });
+        const failed = isScenePanoramaQualityPassing(report) ? [] : getScenePanoramaQualityFailedFaces(report);
+        const reportScore = getScenePanoramaQualityScore(report);
+        const reportAccepted = failed.length === 0 || reportScore < bestScore;
+
+        updateAiObservation(qualitySpan, {
+          metadata: {
+            attempt,
+            accepted: reportAccepted,
+            averageEdgeDelta: report.averageEdgeDelta,
+            averageInnerBandDelta: report.averageInnerBandDelta,
+            bestAttempt: reportAccepted ? attempt : bestResult?.bestAttempt,
+            bestScore: Number.isFinite(bestScore) ? bestScore : null,
+            failedFaces: failed,
+            maxEdgeDelta: report.maxEdgeDelta,
+            maxInnerBandDelta: report.maxInnerBandDelta,
+            passed: failed.length === 0,
+            score: reportScore
+          },
+          output: {
+            accepted: reportAccepted,
+            bestAttempt: reportAccepted ? attempt : bestResult?.bestAttempt,
+            failedFaces: failed,
+            passed: failed.length === 0,
+            score: reportScore
+          }
+        });
+
+        return {
+          failedFaces: failed,
+          quality: report,
+          stabilizedFaces: stabilized
+        };
+      }
+    );
     const score = getScenePanoramaQualityScore(quality);
+    const passed = failedFaces.length === 0;
+    const candidate: ScenePanoramaRepaintResult = {
+      bestAttempt: attempt,
+      earlyStopped: false,
+      faces: stabilizedFaces,
+      quality,
+      qualityPassed: passed,
+      qualityRepairRounds: attempt - 1,
+      qualityRetriedFaces: Array.from(qualityRetriedFaces),
+      score
+    };
+    const accepted = passed || score < bestScore;
 
-    if (score < bestScore) {
-      bestScore = score;
-      bestResult = {
-        faces: stabilizedFaces,
-        quality,
-        qualityPassed: false,
-        qualityRepairRounds: attempt - 1,
-        qualityRetriedFaces: Array.from(qualityRetriedFaces)
-      };
+    if (accepted) {
+      bestScore = Math.min(bestScore, score);
+      bestResult = candidate;
     }
 
-    if (isScenePanoramaQualityPassing(quality)) {
+    await emit({
+      type: "quality",
+      attempt,
+      accepted,
+      bestAttempt: bestResult?.bestAttempt ?? attempt,
+      failedFaces,
+      passed,
+      quality,
+      score
+    });
+
+    if (passed) {
       return {
-        faces: stabilizedFaces,
-        quality,
-        qualityPassed: true,
-        qualityRepairRounds: attempt - 1,
-        qualityRetriedFaces: Array.from(qualityRetriedFaces)
+        ...candidate,
+        earlyStopped: attempt < maxRedrawAttempts
       };
     }
 
-    if (attempt >= maxFaceRedrawAttempts) {
-      return bestResult ?? {
-        faces: stabilizedFaces,
-        quality,
-        qualityPassed: false,
-        qualityRepairRounds: attempt - 1,
-        qualityRetriedFaces: Array.from(qualityRetriedFaces)
+    if (attempt >= maxRedrawAttempts) {
+      return bestResult ?? candidate;
+    }
+
+    if (!accepted && bestResult && score >= bestScore && attempt > 1) {
+      return {
+        ...bestResult,
+        earlyStopped: true
       };
     }
 
-    const failedFaces = getScenePanoramaQualityFailedFaces(quality);
+    await emit({
+      type: "iterating",
+      attempt: attempt + 1,
+      faces: failedFaces
+    });
+    await emit({
+      type: "progress",
+      messageKey: "sceneForm.panoramaProgressIterating",
+      progress: getScenePanoramaProgress(70, 95, attempt, maxRedrawAttempts),
+      stage: "iterating"
+    });
     const redrawnFaces = await Promise.all(
       failedFaces.map(async (face) => {
         const referenceFace = getFaceBuffer(referenceFaces, face);
         qualityRetriedFaces.add(face);
 
-        return redrawScenePanoramaFaceWithRetry(client, modelId, referenceFace, input, attempt + 1);
+        return redrawScenePanoramaFaceWithRetry(
+          client,
+          config,
+          callPreset,
+          referenceFace,
+          input,
+          sizeProfile,
+          attempt + 1,
+          emit,
+          observationContext,
+          maxRedrawAttempts
+        );
       })
     );
 
@@ -453,33 +1297,105 @@ async function redrawScenePanoramaFacesUntilQualityPasses(
 
 async function redrawScenePanoramaFaces(
   client: OpenAI,
-  modelId: string,
+  config: ImageRuntimeConfig,
+  callPreset: ImageModelCallPreset,
   faces: FaceBuffer[],
   input: ScenePanoramaGenerationInput,
-  firstPromptAttempt = 1
+  sizeProfile: ScenePanoramaSizeProfile,
+  firstPromptAttempt: number,
+  emit: ScenePanoramaStreamCallback,
+  observationContext: AiObservationContext,
+  maxRedrawAttempts: number
 ) {
-  return Promise.all(faces.map((face) => redrawScenePanoramaFaceWithRetry(client, modelId, face, input, firstPromptAttempt)));
+  return Promise.all(
+    faces.map((face) =>
+      redrawScenePanoramaFaceWithRetry(
+        client,
+        config,
+        callPreset,
+        face,
+        input,
+        sizeProfile,
+        firstPromptAttempt,
+        emit,
+        observationContext,
+        maxRedrawAttempts
+      )
+    )
+  );
 }
 
 async function redrawScenePanoramaFaceWithRetry(
   client: OpenAI,
-  modelId: string,
+  config: ImageRuntimeConfig,
+  callPreset: ImageModelCallPreset,
   face: FaceBuffer,
   input: ScenePanoramaGenerationInput,
-  firstPromptAttempt = 1
+  sizeProfile: ScenePanoramaSizeProfile,
+  firstPromptAttempt: number,
+  emit: ScenePanoramaStreamCallback,
+  observationContext: AiObservationContext,
+  maxRedrawAttempts: number
 ) {
   let lastError: unknown = null;
 
-  for (let attempt = firstPromptAttempt; attempt <= maxFaceRedrawAttempts; attempt += 1) {
+  for (let attempt = firstPromptAttempt; attempt <= maxRedrawAttempts; attempt += 1) {
     const fileName = `scene-panorama-${face.face}.png`;
 
     try {
-      return await editImageBuffer(client, {
-        fileName,
-        image: face,
-        modelId,
-        prompt: buildScenePanoramaFacePrompt(input, face.face, attempt)
+      const prompt = buildScenePanoramaFacePrompt(input, face.face, attempt, sizeProfile);
+      const redrawn = await withAiObservation(
+        `scene.panorama.face.${face.face}.generate`,
+        {
+          feature: "scene.panorama.face.generate",
+          input: { attempt, face: face.face, prompt, size: callPreset.sceneFaceSize },
+          metadata: {
+            attempt,
+            baseUrl: config.baseUrl,
+            face: face.face,
+            imageCallPreset: callPreset.id,
+            maxRedrawAttempts,
+            modelId: config.modelId,
+            providerName: config.providerName,
+            requestSize: callPreset.sceneFaceSize,
+            sizeProfile: sizeProfile.id
+          },
+          modelId: config.modelId,
+          providerName: config.providerName,
+          traceName: observationContext.traceName ?? observationContext.feature,
+          userId: observationContext.userId
+        },
+        async (faceSpan) => {
+          const image = await editImageBuffer(client, {
+            callPreset,
+            config,
+            fileName,
+            image: face,
+            prompt
+          });
+
+          updateAiObservation(faceSpan, {
+            output: {
+              contentType: image.contentType,
+              face: image.face,
+              fileName: image.fileName,
+              hasImage: true
+            }
+          });
+
+          return image;
+        }
+      );
+
+      await emit({
+        type: "face",
+        attempt,
+        face: redrawn.face,
+        image: faceBufferToScenePanoramaImage(redrawn),
+        phase: "preview"
       });
+
+      return redrawn;
     } catch (error) {
       lastError = error;
 
@@ -535,6 +1451,12 @@ function getScenePanoramaQualityScore(quality: ScenePanoramaQualityReport) {
   return quality.maxEdgeDelta / maxAllowedScenePanoramaEdgeDelta + quality.maxInnerBandDelta / maxAllowedScenePanoramaInnerBandDelta;
 }
 
+function getScenePanoramaProgress(start: number, end: number, attempt: number, maxRedrawAttempts: number) {
+  const ratio = maxRedrawAttempts <= 1 ? 1 : (attempt - 1) / Math.max(1, maxRedrawAttempts - 1);
+
+  return Math.round(start + (end - start) * Math.max(0, Math.min(1, ratio)));
+}
+
 function getScenePanoramaQualityFailedFaces(quality: ScenePanoramaQualityReport) {
   const faces = new Set<ScenePanoramaFace>();
 
@@ -554,13 +1476,32 @@ function getScenePanoramaQualityFailedFaces(quality: ScenePanoramaQualityReport)
   return Array.from(faces.size > 0 ? faces : new Set(scenePanoramaFaces));
 }
 
-function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInput) {
+function appendMaskBoardTargetPrompt(prompt: string) {
+  const target = hasCjkText(prompt)
+    ? [
+        `目标输出：4K 16:9 横版角色设定板，${maskBoardTargetResolution}。`,
+        "不要在画面中写尺寸说明文字，不要水印，不要 UI 操作控件。"
+      ]
+    : [
+        `Target output: 4K 16:9 horizontal character setting board, ${maskBoardTargetResolution}.`,
+        "Do not add text explaining the size, watermarks, or UI controls."
+      ];
+
+  return [prompt, ...target].join("\n");
+}
+
+function hasCjkText(value: string) {
+  return /[\u3400-\u9fff]/.test(value);
+}
+
+function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInput, sizeProfile: ScenePanoramaSizeProfile) {
   const style = getSceneStylePrompt(input.style, input.locale);
   const drawingStyle = getScenePanoramaDrawingStylePrompt(input.panoramaDrawingStyle, input.locale);
 
   if (input.locale === "en-US") {
     return [
       "Create one seamless 360-degree equirectangular panorama master image for an interactive fiction scene.",
+      `Target output: 4K equirectangular panorama, ${sizeProfile.motherSize}, 2:1 aspect ratio. Do not add text explaining the size.`,
       "The image must represent a complete interior or exterior space that can wrap horizontally.",
       "The left and right edges must join perfectly as one continuous world; avoid objects, light bands, or perspective lines that break at the wrap seam.",
       "Use one global exposure, white balance, color grading, lighting direction, and material language across the entire image.",
@@ -580,6 +1521,7 @@ function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInput) {
 
   return [
     "生成一张用于交互小说场景的 360 度等距柱状全景母图。",
+    `目标输出：4K 等距柱状全景母图，${sizeProfile.motherSize}，2:1 画幅；不要在画面中写尺寸说明文字。`,
     "画面必须表现一个可以水平环绕的完整室内或室外空间。",
     "左右边缘必须能无缝闭合成同一个连续世界，避免物体、光带、透视线在环绕接缝处断裂。",
     "整张图必须使用统一曝光、统一白平衡、统一调色、统一光照方向和统一材质语言。",
@@ -597,7 +1539,12 @@ function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInput) {
   ].join("\n");
 }
 
-function buildScenePanoramaFacePrompt(input: ScenePanoramaGenerationInput, face: ScenePanoramaFace, attempt: number) {
+function buildScenePanoramaFacePrompt(
+  input: ScenePanoramaGenerationInput,
+  face: ScenePanoramaFace,
+  attempt: number,
+  sizeProfile: ScenePanoramaSizeProfile
+) {
   const direction = getScenePanoramaFaceDescription(face, input.locale);
   const adjacency = getScenePanoramaFaceAdjacencyDescription(face, input.locale);
   const retryInstruction = getScenePanoramaFaceRetryInstruction(attempt, input.locale);
@@ -607,6 +1554,7 @@ function buildScenePanoramaFacePrompt(input: ScenePanoramaGenerationInput, face:
   if (input.locale === "en-US") {
     return [
       "Perform pixel-faithful image upscaling, restoration, and enhancement for this cubemap face.",
+      `Target output: 4K square cubemap face, ${sizeProfile.faceEditSize}. Do not add text explaining the size.`,
       "Use the input image as a strict spatial reference, not as a loose concept sketch.",
       "Keep the exact composition, camera position, field of view, perspective, crop, rotation, object placement, object scale, and horizon level.",
       "Do not add objects, remove objects, move objects, resize objects, rotate objects, repaint the scene as a new illustration, or reinterpret the space.",
@@ -629,6 +1577,7 @@ function buildScenePanoramaFacePrompt(input: ScenePanoramaGenerationInput, face:
 
   return [
     "对这张六面体单面图做像素级忠实升级、高清恢复和细节增强。",
+    `目标输出：4K 正方形六面体单面图，${sizeProfile.faceEditSize}；不要在画面中写尺寸说明文字。`,
     "输入图是严格空间参考，不是宽松概念草图。",
     "必须保持完全相同的构图、机位、视场角、透视、裁切、旋转、物体位置、物体比例和地平线高度。",
     "不要新增物体、删除物体、移动物体、缩放物体、旋转物体、把画面重画成新插画，或重新理解空间。",
