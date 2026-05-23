@@ -222,6 +222,8 @@ export const minScenePanoramaMaxRedrawAttempts = 1;
 const maxAllowedScenePanoramaEdgeDelta = 18;
 const maxAllowedScenePanoramaInnerBandDelta = 28;
 const maxScenePanoramaFinalFaceBytes = 10 * 1024 * 1024;
+const maxScenePanoramaFaceRequestAttempts = 3;
+const scenePanoramaFaceRetryBaseDelayMs = 600;
 
 async function createImageOpenAiClient(config: ImageRuntimeConfig) {
   await configureServerOutboundProxy();
@@ -1599,13 +1601,18 @@ async function redrawScenePanoramaFaceWithRetry(
           userId: observationContext.userId
         },
         async (faceSpan) => {
-          const image = await editImageBuffer(client, {
-            callPreset,
-            config,
-            fileName,
-            image: face,
-            prompt
-          });
+          const image = await editImageBufferWithScenePanoramaFaceRequestRetry(
+            client,
+            {
+              callPreset,
+              config,
+              fileName,
+              image: face,
+              prompt
+            },
+            faceSpan,
+            attempt
+          );
 
           updateAiObservation(faceSpan, {
             output: {
@@ -1639,6 +1646,57 @@ async function redrawScenePanoramaFaceWithRetry(
   }
 
   throw lastError ?? new Error(`SCENE_PANORAMA_FACE_REDRAW_FAILED_${face.face}`);
+}
+
+async function editImageBufferWithScenePanoramaFaceRequestRetry(
+  client: OpenAI,
+  request: {
+    callPreset: ImageModelCallPreset;
+    config: ImageRuntimeConfig;
+    fileName: string;
+    image: FaceBuffer;
+    prompt: string;
+  },
+  span: Parameters<typeof updateAiObservation>[0],
+  promptAttempt: number
+) {
+  let lastError: unknown = null;
+
+  for (let requestAttempt = 1; requestAttempt <= maxScenePanoramaFaceRequestAttempts; requestAttempt += 1) {
+    try {
+      return await editImageBuffer(client, request);
+    } catch (error) {
+      lastError = error;
+
+      if (
+        requestAttempt >= maxScenePanoramaFaceRequestAttempts ||
+        !isRetriableScenePanoramaFaceGenerationError(error)
+      ) {
+        throw error;
+      }
+
+      const retryDelayMs = getScenePanoramaFaceRequestRetryDelayMs(requestAttempt);
+
+      updateAiObservation(span, {
+        level: "WARNING",
+        metadata: {
+          face: request.image.face,
+          faceRequestAttempt: requestAttempt,
+          faceRequestMaxAttempts: maxScenePanoramaFaceRequestAttempts,
+          nextFaceRequestAttempt: requestAttempt + 1,
+          promptAttempt,
+          retryDelayMs,
+          retryError: truncateErrorMessage(getErrorMessage(error))
+        }
+      });
+
+      if (retryDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+  }
+
+  throw lastError ?? new Error(`SCENE_PANORAMA_FACE_REDRAW_FAILED_${request.image.face}`);
 }
 
 function getFaceBuffer(faces: FaceBuffer[], face: ScenePanoramaFace) {
@@ -2033,6 +2091,67 @@ function isLikelyImageEditOptionUnsupportedError(error: unknown) {
       message.includes("unsupported parameter")
     )
   );
+}
+
+function isRetriableScenePanoramaFaceGenerationError(error: unknown) {
+  if (isLikelyImageEditUnsupportedError(error) || isLikelyImageEditOptionUnsupportedError(error)) {
+    return false;
+  }
+
+  const status = getErrorStatus(error);
+  const message = getErrorMessage(error).toLowerCase();
+
+  if (typeof status === "number") {
+    if (status === 400 || status === 401 || status === 403 || status === 404) {
+      return false;
+    }
+
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+
+  return (
+    message.includes("scene_panorama_image_empty") ||
+    message.includes("scene_panorama_image_fetch_failed") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("network") ||
+    message.includes("fetch failed") ||
+    message.includes("socket") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("temporarily") ||
+    message.includes("try again") ||
+    message.includes("rate limit") ||
+    message.includes("overloaded") ||
+    message.includes("bad gateway") ||
+    message.includes("gateway timeout") ||
+    message.includes("internal server error") ||
+    message.includes("gemini_image_generation_failed_5")
+  );
+}
+
+function getScenePanoramaFaceRequestRetryDelayMs(requestAttempt: number) {
+  if (process.env.NODE_ENV === "test") {
+    return 0;
+  }
+
+  return Math.min(2500, scenePanoramaFaceRetryBaseDelayMs * 2 ** Math.max(0, requestAttempt - 1));
+}
+
+function getErrorStatus(error: unknown) {
+  const status = typeof error === "object" && error && "status" in error ? (error as { status?: unknown }).status : null;
+
+  if (typeof status === "number") {
+    return status;
+  }
+
+  if (typeof status === "string") {
+    const parsed = Number.parseInt(status, 10);
+
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }
 
 function getErrorMessage(error: unknown) {

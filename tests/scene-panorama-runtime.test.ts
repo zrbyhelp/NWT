@@ -231,6 +231,45 @@ describe("scene panorama runtime", () => {
     expect(events.filter((event) => event.type === "face" && event.phase === "final")).toHaveLength(6);
   });
 
+  it("retries transient face generation failures before failing the panorama stream", async () => {
+    const enhancedBytes = await createSolidPng(16, 16, [180, 120, 96]);
+    const events: Array<{ type: string; phase?: string }> = [];
+    let editCalls = 0;
+
+    runtimeMocks.edit.mockImplementation(async () => {
+      editCalls += 1;
+
+      if (editCalls === 1) {
+        throw Object.assign(new Error("upstream bad gateway"), { status: 502 });
+      }
+
+      return {
+        data: [{ b64_json: enhancedBytes.toString("base64") }]
+      };
+    });
+
+    const result = await streamDefaultScenePanorama(createGenerationInput(), "reader-id", (event) => {
+      events.push(event);
+    });
+
+    expect(result.mode).toBe("enhanced");
+    expect(runtimeMocks.edit).toHaveBeenCalledTimes(7);
+    expect(events.filter((event) => event.type === "face" && event.phase === "preview")).toHaveLength(6);
+    expect(events.find((event) => event.type === "done")).toBeTruthy();
+    expect(runtimeMocks.updateAiObservation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        level: "WARNING",
+        metadata: expect.objectContaining({
+          face: "front",
+          faceRequestAttempt: 1,
+          nextFaceRequestAttempt: 2,
+          retryError: "upstream bad gateway"
+        })
+      })
+    );
+  });
+
   it("keeps the panorama when color harmonization fails", async () => {
     const enhancedBytes = await createSolidPng(16, 16, [180, 120, 96]);
     const events: Array<{ type: string; phase?: string; colorStatus?: string }> = [];
