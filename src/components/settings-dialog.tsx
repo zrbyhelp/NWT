@@ -16,6 +16,7 @@ import {
   Moon,
   Monitor,
   Network,
+  Box,
   Palette,
   Settings,
   ShieldCheck,
@@ -69,7 +70,8 @@ type PaletteId = (typeof colorThemes)[number]["id"];
 type TypographyId = (typeof typographyPresets)[number]["id"];
 type SettingsTab = "general" | "account" | "admin" | "appearance" | "about";
 type AiSettingsTab = "providers" | "llm" | "vectors" | "images";
-type AnySettingsTab = SettingsTab | AiSettingsTab;
+type MeshSettingsTab = "instantMesh";
+type AnySettingsTab = SettingsTab | AiSettingsTab | MeshSettingsTab;
 
 export function SettingsDialog({
   onLoginClick,
@@ -111,6 +113,7 @@ export function SettingsDialog({
     { id: "llm", icon: Bot },
     { id: "vectors", icon: DatabaseZap },
     { id: "images", icon: ImageIcon },
+    { id: "instantMesh", icon: Box },
     { id: "about", icon: Info }
   ];
 
@@ -628,7 +631,7 @@ export function SettingsDialog({
                   </div>
                 ) : null}
 
-                {activeTab === "providers" || activeTab === "llm" || activeTab === "vectors" || activeTab === "images" ? (
+                {activeTab === "providers" || activeTab === "llm" || activeTab === "vectors" || activeTab === "images" || activeTab === "instantMesh" ? (
                   <AiConfigManager mode={activeTab} />
                 ) : null}
 

@@ -3,20 +3,28 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zhMessages from "../messages/zh-CN.json";
 import {
+  assistHomeItemDraft,
   assistHomeMaskDraft,
   assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
+  createHomeItemMaterial,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
   deleteHomeMaterial,
+  generateHomeItemBoard,
+  generateHomeItemModelInputImage,
   generateHomeMaskBoard,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
+  updateHomeItemMaterial,
   updateHomeMaskMaterial,
   uploadHomeScenePanoramaFace,
   uploadHomeScenePanoramaMother
 } from "@/app/[locale]/actions";
-import { HomeWorkspace } from "@/components/home-workspace";
+import {
+  HomeWorkspace,
+  clampScenePanoramaView
+} from "@/components/home-workspace";
 import type { WorkspaceConversation, WorkspaceData, WorkspaceMaterial, WorkspaceScript } from "@/lib/home-workspace";
 
 vi.mock("next-intl", () => ({
@@ -45,15 +53,19 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/app/[locale]/actions", () => ({
+  assistHomeItemDraft: vi.fn(),
   assistHomeMaskDraft: vi.fn(),
   assistHomeSceneDraft: vi.fn(),
   assistHomeSceneDraftWithImages: vi.fn(),
   cleanupHomeUploadedMaterialImages: vi.fn(),
   createHomeConversation: vi.fn(),
+  createHomeItemMaterial: vi.fn(),
   createHomeMaskMaterial: vi.fn(),
   createHomeSceneMaterial: vi.fn(),
   deleteHomeConversation: vi.fn(),
   deleteHomeMaterial: vi.fn(),
+  generateHomeItemBoard: vi.fn(),
+  generateHomeItemModelInputImage: vi.fn(),
   generateHomeMaskBoard: vi.fn(),
   generateHomeSceneBlockPanorama: vi.fn(),
   joinHomeMaterial: vi.fn(),
@@ -61,6 +73,7 @@ vi.mock("@/app/[locale]/actions", () => ({
   logoutHomeAccount: vi.fn(),
   registerHomeAccount: vi.fn(),
   setHomeMaterialCommunitySharing: vi.fn(),
+  updateHomeItemMaterial: vi.fn(),
   updateHomeMaskMaterial: vi.fn(),
   updateHomeSceneMaterial: vi.fn(),
   uploadHomeScenePanoramaFace: vi.fn(),
@@ -106,6 +119,14 @@ describe("HomeWorkspace script manager", () => {
     URL.createObjectURL = vi.fn(() => "blob:mask-board");
     URL.revokeObjectURL = vi.fn();
     HTMLAnchorElement.prototype.click = vi.fn();
+  });
+
+  it("clamps panorama viewer controls to stable ranges", () => {
+    expect(clampScenePanoramaView({ fov: 120, lat: -120, lon: 200 })).toEqual({
+      fov: 95,
+      lat: -85,
+      lon: -160
+    });
   });
 
   it("opens my scripts by default and can switch to community scripts", () => {
@@ -465,6 +486,126 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.getByRole("button", { name: "已加入" })).toBeDisabled();
   }, 30000);
 
+  it("creates an item with AI fields, one model input image, and an InstantMesh model", async () => {
+    vi.mocked(assistHomeItemDraft).mockResolvedValue({
+      message: "已补全物品。",
+      patch: {
+        colors: ["青色", "银白"],
+        description: "半透明的便携扫描装置，边缘有细密发光刻线。",
+        functions: ["扫描", "记录"],
+        itemCategory: "设备",
+        keywords: ["扫描仪", "赛博"],
+        materials: ["半透明树脂", "金属"],
+        scaleHint: "约 18cm，接近手持终端",
+        style: "sciFi",
+        traits: ["半透明外壳"],
+        uses: ["医疗检查"]
+      }
+    });
+    vi.mocked(generateHomeItemBoard).mockResolvedValue({
+      contentType: "image/png",
+      dataUrl: "data:image/png;base64,aXRlbS1ib2FyZA==",
+      fileName: "item-board.png"
+    });
+    vi.mocked(generateHomeItemModelInputImage).mockResolvedValue({ image: createItemModelInputImage() });
+    vi.mocked(createHomeItemMaterial).mockResolvedValue(createdScannerItemMaterial);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url === "/api/materials/item-model/stream") {
+          return new Response(createEventStreamBody([
+            { type: "progress", progress: 20, stage: "submitted", messageKey: "itemForm.modelProgressSubmitted" },
+            {
+              type: "done",
+              byteSize: 12,
+              contentType: "model/gltf-binary",
+              fileName: "scanner.glb",
+              url: "https://cdn.example.com/models/scanner.glb"
+            }
+          ], new TextEncoder()), {
+            headers: {
+              "Content-Type": "text/event-stream"
+            }
+          });
+        }
+
+        return new Response(null, { status: 404 });
+      })
+    );
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "物品" }));
+
+    expect(screen.getByRole("heading", { name: "新建物品" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "AI 辅助" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "物品设定板" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "AI 模型输入图" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "InstantMesh GLB" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("输入物品名称"), { target: { value: "灵犀扫描器" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：把它改成赛博医疗道具，强调半透明材质和扫描功能"), {
+      target: { value: "补全成赛博医疗扫描器" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送物品 AI 辅助消息" }));
+
+    await waitFor(() => {
+      expect(assistHomeItemDraft).toHaveBeenCalled();
+      expect(screen.getByLabelText("描述")).toHaveValue("半透明的便携扫描装置，边缘有细密发光刻线。");
+    });
+    expect(screen.getByText("半透明外壳")).toBeInTheDocument();
+    expect(screen.getByText("医疗检查")).toBeInTheDocument();
+    expect(screen.getByLabelText("内容风格")).toHaveValue("sciFi");
+
+    fireEvent.click(screen.getByRole("button", { name: "生成设定板" }));
+
+    await waitFor(() => {
+      expect(generateHomeItemBoard).toHaveBeenCalledWith(expect.objectContaining({ name: "灵犀扫描器" }), "zh-CN");
+      expect(toast.success).toHaveBeenCalledWith("物品设定板已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成输入图" }));
+
+    await waitFor(() => {
+      expect(generateHomeItemModelInputImage).toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledWith("物品模型输入图已生成。");
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("JSON 或接口约定文本，可留空"), { target: { value: "{\"quality\":\"draft\"}" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成模型" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/materials/item-model/stream", expect.objectContaining({ method: "POST" }));
+      expect(toast.success).toHaveBeenCalledWith("3D 模型已生成。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "保存物品" }));
+
+    await waitFor(() => {
+      expect(createHomeItemMaterial).toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledWith("物品已创建并加入我的素材。");
+    });
+    const formData = vi.mocked(createHomeItemMaterial).mock.calls[0][0];
+    const savedDraft = JSON.parse(String(formData.get("draft")));
+
+    expect(savedDraft).toMatchObject({
+      itemCategory: "设备",
+      model3d: {
+        source: "instantmesh",
+        url: "https://cdn.example.com/models/scanner.glb"
+      },
+      scaleHint: "约 18cm，接近手持终端"
+    });
+    expect(formData.get("modelInputImage")).toBeInstanceOf(File);
+    expect(formData.get("frontImage")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "新建物品" })).not.toBeInTheDocument();
+    expect(screen.getByText("灵犀扫描器")).toBeInTheDocument();
+  }, 30000);
+
   it("keeps scene panorama generation type in the form and uploads faces on save", async () => {
     const fetchMock = mockScenePanoramaFetch(createSceneStreamFaces());
 
@@ -540,6 +681,8 @@ describe("HomeWorkspace script manager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "放大全景预览" }));
     expect(screen.getByRole("heading", { name: "全景预览" })).toBeInTheDocument();
+    expect(screen.getAllByText("全景母图").length).toBeGreaterThan(0);
+    expect(screen.getByText("六面图全景")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "关闭全景预览" }));
 
     fireEvent.click(screen.getByRole("button", { name: "保存场景" }));
@@ -573,6 +716,59 @@ describe("HomeWorkspace script manager", () => {
         })
       ]
     });
+  });
+
+  it("uses the first block scene image in the scene detail header", () => {
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看社区版本" }));
+    fireEvent.click(screen.getByRole("button", { name: /废弃研究所/ }));
+
+    const sceneHeaderImage = screen.getByRole("button", { name: "放大素材图片" }).querySelector("img");
+    expect(sceneHeaderImage).toHaveAttribute("src", "https://cdn.example.com/scene/main-mother.png");
+    fireEvent.click(screen.getByRole("button", { name: "放大素材图片" }));
+    expect(screen.getByAltText("素材图片预览")).toHaveAttribute("src", "https://cdn.example.com/scene/main-mother.png");
+    fireEvent.click(screen.getByRole("button", { name: "关闭素材图片预览" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "放大全景预览" }));
+
+    expect(screen.getByRole("heading", { name: "全景预览" })).toBeInTheDocument();
+    expect(screen.queryByText("六面图全景")).not.toBeInTheDocument();
+    expect(screen.queryByText("全景母图")).not.toBeInTheDocument();
+  });
+
+  it("keeps the best-scored mother when quality fails and still lets cubemap generation continue", async () => {
+    const fetchMock = mockScenePanoramaFetch(
+      createSceneStreamFaces(),
+      createScenePanoramaStreamEvents(createSceneStreamFaces()),
+      createScenePanoramaMotherStreamEvents(false)
+    );
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "场景" }));
+    fireEvent.change(screen.getByLabelText("场景名称"), { target: { value: "废弃研究所" } });
+    fireEvent.change(screen.getByLabelText("场景说明"), { target: { value: "一座被雨水和藤蔓侵蚀的旧研究所。" } });
+    fireEvent.change(screen.getByLabelText("区块名称"), { target: { value: "主厅" } });
+    fireEvent.change(screen.getByLabelText("区块说明"), { target: { value: "坍塌的接待区，玻璃幕墙漏入冷光。" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成母图" }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("全景母图环绕质检未通过，请调整描述或参考图后重新生成。");
+      expect(screen.getByText("全景母图")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成六面图" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/materials/scene-panorama/stream", expect.any(Object));
+      expect(toast.success).toHaveBeenCalledWith("区块全景已生成。");
+    });
+    expect(toast.error).not.toHaveBeenCalledWith("请先生成全景母图，再生成六面图。");
   });
 
   it("shows a concrete scene record save error after cubemap upload succeeds", async () => {
@@ -793,6 +989,61 @@ const joinedNightInkMaterial: WorkspaceMaterial = {
   librarySource: "COMMUNITY_ADDED"
 };
 
+const createdScannerItemMaterial: WorkspaceMaterial = {
+  id: "scanner-item",
+  slug: "item-scanner",
+  category: "item",
+  style: "sciFi",
+  title: "灵犀扫描器",
+  description: "半透明的便携扫描装置，边缘有细密发光刻线。",
+  previewUrl: "https://cdn.example.com/items/scanner-board.png",
+  communityVisible: false,
+  metadata: {
+    kind: "item",
+    version: 2,
+    name: "灵犀扫描器",
+    itemCategory: "设备",
+    description: "半透明的便携扫描装置，边缘有细密发光刻线。",
+    traits: ["半透明外壳"],
+    uses: ["医疗检查"],
+    functions: ["扫描", "记录"],
+    materials: ["半透明树脂", "金属"],
+    colors: ["青色", "银白"],
+    styles: [],
+    brand: "",
+    model: "",
+    keywords: ["扫描仪", "赛博"],
+    scaleHint: "约 18cm，接近手持终端",
+    style: "sciFi",
+    boardDrawingStyle: "realistic",
+    boardImage: {
+      source: "generated",
+      url: "https://cdn.example.com/items/scanner-board.png"
+    },
+    modelInputImage: {
+      source: "generated",
+      url: "https://cdn.example.com/items/model-input.png"
+    },
+    viewImages: {
+      front: { source: "generated", url: "https://cdn.example.com/items/front.png" },
+      back: { source: "generated", url: "https://cdn.example.com/items/back.png" },
+      left: { source: "generated", url: "https://cdn.example.com/items/left.png" },
+      right: { source: "generated", url: "https://cdn.example.com/items/right.png" },
+      top: { source: "generated", url: "https://cdn.example.com/items/top.png" },
+      bottom: { source: "generated", url: "https://cdn.example.com/items/bottom.png" }
+    },
+    model3d: {
+      byteSize: 12,
+      contentType: "model/gltf-binary",
+      fileName: "scanner.glb",
+      source: "instantmesh",
+      url: "https://cdn.example.com/models/scanner.glb"
+    }
+  },
+  inLibrary: true,
+  librarySource: "SELF_CREATED"
+};
+
 const createdSilverMaskMaterial: WorkspaceMaterial = {
   id: "silver-mask",
   slug: "mask-silver",
@@ -899,7 +1150,7 @@ const createdSceneMaterial: WorkspaceMaterial = {
   style: "mystery",
   title: "废弃研究所",
   description: "一座被雨水和藤蔓侵蚀的旧研究所。",
-  previewUrl: "https://cdn.example.com/scene/main-front.png",
+  previewUrl: "https://cdn.example.com/scene/first-uploaded-image.png",
   communityVisible: false,
   metadata: {
     kind: "scene",
@@ -922,6 +1173,10 @@ const createdSceneMaterial: WorkspaceMaterial = {
             right: { url: "https://cdn.example.com/scene/main-right.png" },
             top: { url: "https://cdn.example.com/scene/main-top.png" },
             bottom: { url: "https://cdn.example.com/scene/main-bottom.png" }
+          },
+          mother: {
+            source: "generated",
+            url: "https://cdn.example.com/scene/main-mother.png"
           }
         }
       }
@@ -990,11 +1245,19 @@ function createSceneStreamFaces(): Record<TestScenePanoramaFace, TestScenePanora
   };
 }
 
+function createItemModelInputImage() {
+  return {
+    contentType: "image/png",
+    dataUrl: "data:image/png;base64,bW9kZWwtaW5wdXQ=",
+    fileName: "item-model-input.png"
+  };
+}
+
 function mockScenePanoramaFetch(
   faces: Record<TestScenePanoramaFace, TestScenePanoramaFaceImage>,
-  events: Array<Record<string, unknown>> = createScenePanoramaStreamEvents(faces)
+  events: Array<Record<string, unknown>> = createScenePanoramaStreamEvents(faces),
+  motherEvents: Array<Record<string, unknown>> = createScenePanoramaMotherStreamEvents()
 ) {
-  const motherEvents = createScenePanoramaMotherStreamEvents();
   const encoder = new TextEncoder();
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
@@ -1042,15 +1305,42 @@ function createEventStreamBody(events: Array<Record<string, unknown>>, encoder: 
   });
 }
 
-function createScenePanoramaMotherStreamEvents() {
+function createScenePanoramaMotherStreamEvents(passed = true) {
   const image = { contentType: "image/png", dataUrl: "data:image/png;base64,bW90aGVy", fileName: "mother.png" };
+  const quality = createTestMotherQuality(passed);
 
   return [
     { type: "progress", progress: 8, stage: "mother-generating", messageKey: "sceneForm.panoramaProgressMother" },
     { type: "mother", image },
-    { type: "motherDone", image, sizeProfile: "4k" },
-    { type: "progress", progress: 100, stage: "mother-ready", messageKey: "sceneForm.panoramaProgressMotherReady" }
+    { type: "motherQuality", attempt: 1, passed, quality, score: quality.score },
+    { type: "motherDone", attempt: 1, image, quality, qualityPassed: passed, sizeProfile: "4k" },
+    {
+      type: "progress",
+      progress: 100,
+      stage: passed ? "mother-ready" : "mother-quality-failed",
+      messageKey: passed ? "sceneForm.panoramaProgressMotherReady" : "sceneForm.panoramaProgressMotherQualityFailed"
+    }
   ];
+}
+
+function createTestMotherQuality(passed: boolean) {
+  return {
+    bandDelta: passed ? 4 : 64,
+    edgeDelta: passed ? 4 : 72,
+    horizonPeakShiftRatio: passed ? 0.01 : 0.12,
+    issues: [],
+    lumaDelta: passed ? 3 : 40,
+    passed,
+    score: passed ? 0.6 : 8,
+    seamComplexityRatio: passed ? 1.1 : 2.4,
+    thresholds: {
+      bandDelta: 28,
+      edgeDelta: 18,
+      horizonPeakShiftRatio: 0.06,
+      lumaDelta: 18,
+      seamComplexityRatio: 1.8
+    }
+  };
 }
 
 function createScenePanoramaStreamEvents(faces: Record<TestScenePanoramaFace, TestScenePanoramaFaceImage>) {

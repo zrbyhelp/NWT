@@ -1,0 +1,399 @@
+import type {
+  ScenePanoramaFace,
+  ScenePanoramaGenerationResult,
+  ScenePanoramaMotherGenerationResult,
+  ScenePanoramaStreamCallback
+} from "@/lib/ai/image-runtime";
+import type { AuthViewer } from "@/lib/auth-types";
+
+export type WorkspaceScript = {
+  id: string;
+  slug: string;
+  category: "featured" | "world" | "roleplay" | "writing" | "analysis";
+  title: string;
+  description: string;
+  welcome: string;
+  inLibrary: boolean;
+  librarySource?: WorkspaceScriptLibrarySource;
+};
+
+export type WorkspaceScriptLibrarySource = "SELF_CREATED" | "COMMUNITY_ADDED";
+
+export type WorkspaceMaterialCategory = "mask" | "map" | "item" | "creature" | "scene";
+
+export type WorkspaceMaterialStyle =
+  | "realistic"
+  | "fantasy"
+  | "sciFi"
+  | "mystery"
+  | "cyberpunk"
+  | "classical"
+  | "apocalyptic";
+
+export type WorkspaceMaterialLibrarySource = WorkspaceScriptLibrarySource;
+
+export type WorkspaceMaterial = {
+  id: string;
+  slug: string;
+  category: WorkspaceMaterialCategory;
+  style: WorkspaceMaterialStyle;
+  title: string;
+  description: string;
+  previewUrl: string | null;
+  metadata?: WorkspaceMaterialMetadata | null;
+  communityVisible: boolean;
+  inLibrary: boolean;
+  librarySource?: WorkspaceMaterialLibrarySource;
+};
+
+export type MaskDraftPatch = {
+  name?: string;
+  intro?: string;
+  features?: string;
+  style?: WorkspaceMaterialStyle;
+  body?: Partial<Record<WorkspaceMaskBodyFieldId, string>>;
+  colors?: Partial<Record<WorkspaceMaskColorFieldId, string>>;
+  voice?: Partial<Record<WorkspaceMaskVoiceFieldId, number>>;
+  personality?: Partial<Record<WorkspaceMaskPersonalityFieldId, number>>;
+};
+
+export type MaskAiAssistResult = {
+  message: string;
+  patch: MaskDraftPatch;
+};
+
+export type MaskBoardGenerationResult = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+};
+
+export type ItemViewFace = ScenePanoramaFace;
+
+export type ItemViewImageResult = {
+  contentType: string;
+  dataUrl: string;
+  face: ItemViewFace;
+  fileName: string;
+};
+
+export type ItemBoardGenerationResult = MaskBoardGenerationResult;
+
+export type ItemModelInputImageResult = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+};
+
+export type ItemViewsGenerationResult = {
+  images: Record<ItemViewFace, ItemViewImageResult>;
+};
+
+export type ItemModelInputImageGenerationResult = {
+  image: ItemModelInputImageResult;
+};
+
+export type MaskMaterialCreateInput = {
+  name: string;
+  intro: string;
+  features: string;
+  style: WorkspaceMaterialStyle;
+  body: Record<WorkspaceMaskBodyFieldId, string>;
+  colors: Record<WorkspaceMaskColorFieldId, string>;
+  voice: Record<WorkspaceMaskVoiceFieldId, number>;
+  personality: Record<WorkspaceMaskPersonalityFieldId, number>;
+  boardDrawingStyle?: WorkspaceMaskBoardDrawingStyle;
+  boardImageSource?: "uploaded" | "generated" | null;
+};
+
+export type SceneMaterialCreateInput = {
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  panoramaDrawingStyle?: WorkspaceScenePanoramaDrawingStyle;
+  blocks: SceneMaterialBlockInput[];
+};
+
+export type ItemMaterialCreateInput = {
+  name: string;
+  itemCategory: string;
+  description: string;
+  traits: string[];
+  uses: string[];
+  functions: string[];
+  materials: string[];
+  colors: string[];
+  styles: string[];
+  brand: string;
+  model: string;
+  keywords: string[];
+  scaleHint: string;
+  style: WorkspaceMaterialStyle;
+  boardDrawingStyle?: WorkspaceMaskBoardDrawingStyle;
+  boardImageSource?: "uploaded" | "generated" | null;
+  modelInputImage?: { source: "generated" | "uploaded"; url?: string } | null;
+  viewImages?: Partial<Record<ItemViewFace, { source: "generated" | "uploaded"; url?: string }>>;
+  model3d?: {
+    byteSize?: number;
+    contentType?: string;
+    fileName?: string;
+    source: "instantmesh" | "uploaded";
+    url: string;
+  } | null;
+};
+
+export type ItemDraftPatch = Partial<Pick<
+  ItemMaterialCreateInput,
+  | "brand"
+  | "colors"
+  | "description"
+  | "functions"
+  | "itemCategory"
+  | "keywords"
+  | "materials"
+  | "model"
+  | "name"
+  | "scaleHint"
+  | "styles"
+  | "style"
+  | "traits"
+  | "uses"
+>>;
+
+export type ItemAiAssistResult = {
+  message: string;
+  patch: ItemDraftPatch;
+};
+
+export type SceneMaterialBlockInput = {
+  id: string;
+  name: string;
+  description: string;
+  scalePreset?: WorkspaceSceneScalePreset;
+  panorama: SceneMaterialPanoramaInput | null;
+};
+
+export type SceneMaterialPanoramaInput = {
+  faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
+  faces?: Partial<Record<ScenePanoramaFace, string>>;
+  mother?: {
+    source: "generated" | "uploaded";
+    url: string;
+  } | null;
+};
+
+export type SceneDraftPatch = {
+  name?: string;
+  description?: string;
+  style?: WorkspaceMaterialStyle;
+  addBlocks?: Array<{
+    id?: string;
+    name: string;
+    description: string;
+    scalePreset?: WorkspaceSceneScalePreset;
+  }>;
+  updateBlocks?: Array<{
+    id: string;
+    name?: string;
+    description?: string;
+    scalePreset?: WorkspaceSceneScalePreset;
+  }>;
+  removeBlockIds?: string[];
+};
+
+export type SceneAiAssistResult = {
+  message: string;
+  patch: SceneDraftPatch;
+};
+
+export type SceneAssistReferenceImage = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+  byteSize: number;
+};
+
+export type ScenePanoramaGenerationState = ScenePanoramaGenerationResult;
+export type ScenePanoramaMotherGenerationState = ScenePanoramaMotherGenerationResult;
+export type ScenePanoramaStreamHandler = ScenePanoramaStreamCallback;
+
+export type WorkspaceMaskBoardDrawingStyle =
+  | "photo"
+  | "realistic"
+  | "anime"
+  | "painterly"
+  | "cel"
+  | "guofeng"
+  | "comic"
+  | "concept";
+export type WorkspaceScenePanoramaDrawingStyle = WorkspaceMaskBoardDrawingStyle;
+export type WorkspaceSceneScalePreset = "closeUp" | "near" | "mid" | "wide" | "aerial";
+
+export type WorkspaceMaskBodyFieldId =
+  | "hairStyle"
+  | "browShape"
+  | "faceShape"
+  | "eyeShape"
+  | "noseType"
+  | "mouthShape"
+  | "earShape"
+  | "height"
+  | "weight"
+  | "gender"
+  | "ageStage"
+  | "bodyType";
+
+export type WorkspaceMaskColorFieldId = "hairColor" | "eyeColor" | "browColor" | "skinColor";
+export type WorkspaceMaskBoardImageSource = "uploaded" | "generated";
+export type WorkspaceMaskVoiceFieldId =
+  | "pitch"
+  | "speechSpeed"
+  | "volume"
+  | "intonation"
+  | "emotionExposure"
+  | "nasalResonance"
+  | "breathiness";
+export type WorkspaceMaskPersonalityFieldId =
+  | "extroversion"
+  | "dominance"
+  | "rationality"
+  | "emotionalStability"
+  | "confidence"
+  | "affinity"
+  | "sharingDesire"
+  | "humor"
+  | "aggression"
+  | "politeness"
+  | "coquetry"
+  | "sensitivity"
+  | "possessiveness"
+  | "dependency"
+  | "proactiveCare"
+  | "boundaries"
+  | "loyalty"
+  | "action"
+  | "curiosity"
+  | "performative";
+
+export type WorkspaceMaskMaterialMetadata = {
+  kind: "mask";
+  version: 1;
+  name: string;
+  intro: string;
+  features: string;
+  style: WorkspaceMaterialStyle;
+  body: Record<WorkspaceMaskBodyFieldId, string>;
+  colors: Record<WorkspaceMaskColorFieldId, string>;
+  voice: Record<WorkspaceMaskVoiceFieldId, number>;
+  personality: Record<WorkspaceMaskPersonalityFieldId, number>;
+  boardDrawingStyle: WorkspaceMaskBoardDrawingStyle;
+  boardImage: {
+    source: WorkspaceMaskBoardImageSource;
+    url: string;
+  } | null;
+};
+
+export type WorkspaceItemMaterialMetadata = {
+  kind: "item";
+  version: 1 | 2;
+  name: string;
+  itemCategory: string;
+  description: string;
+  traits: string[];
+  uses: string[];
+  functions: string[];
+  materials: string[];
+  colors: string[];
+  styles: string[];
+  brand: string;
+  model: string;
+  keywords: string[];
+  scaleHint: string;
+  style: WorkspaceMaterialStyle;
+  boardDrawingStyle: WorkspaceMaskBoardDrawingStyle;
+  boardImage: {
+    source: WorkspaceMaskBoardImageSource;
+    url: string;
+  } | null;
+  modelInputImage?: {
+    source: WorkspaceMaskBoardImageSource;
+    url: string;
+  } | null;
+  viewImages?: Partial<Record<ItemViewFace, {
+    source: WorkspaceMaskBoardImageSource;
+    url: string;
+  }>>;
+  model3d: {
+    byteSize?: number;
+    contentType?: string;
+    fileName?: string;
+    source: "instantmesh" | "uploaded";
+    url: string;
+  } | null;
+};
+
+export type WorkspaceSceneMaterialMetadata = {
+  kind: "scene";
+  version: 1 | 2;
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  panoramaDrawingStyle: WorkspaceScenePanoramaDrawingStyle;
+  blocks: Array<{
+    id: string;
+    name: string;
+    description: string;
+    scaleMeters?: number;
+    scalePreset?: WorkspaceSceneScalePreset;
+    panorama: {
+      faceSource: "uploaded" | "generated" | "direct-cut" | "reference-repaint";
+      faces?: Partial<Record<ScenePanoramaFace, { url: string }>>;
+      mother?: {
+        source: "generated" | "uploaded";
+        url: string;
+      } | null;
+    } | null;
+  }>;
+};
+
+export type WorkspaceMaterialMetadata = WorkspaceMaskMaterialMetadata | WorkspaceItemMaterialMetadata | WorkspaceSceneMaterialMetadata | Record<string, unknown>;
+
+export type MaskMaterialBoardImageMode = "keep" | "replace" | "clear";
+export type ItemMaterialImageMode = MaskMaterialBoardImageMode;
+
+export type WorkspaceMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  tokenUsageEstimated: boolean;
+  createdAt: string;
+};
+
+export type WorkspaceTokenUsage = {
+  upstream: number;
+  downstream: number;
+  estimated: boolean;
+};
+
+export type WorkspaceConversation = {
+  id: string;
+  title: string;
+  scriptTitle: string;
+  scriptWelcome: string;
+  updatedAt: string;
+  lastMessage: string;
+  tokenUsage: WorkspaceTokenUsage;
+  messages: WorkspaceMessage[];
+};
+
+export type WorkspaceData = {
+  viewer: AuthViewer | null;
+  myScripts: WorkspaceScript[];
+  communityScripts: WorkspaceScript[];
+  myMaterials: WorkspaceMaterial[];
+  communityMaterials: WorkspaceMaterial[];
+  conversations: WorkspaceConversation[];
+  persistenceAvailable: boolean;
+};

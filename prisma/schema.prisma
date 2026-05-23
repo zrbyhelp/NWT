@@ -50,6 +50,7 @@ model AppUser {
   conversations Conversation[]
   authSessions  AuthSession[]
   aiProviders   AiProvider[]
+  instantMeshConfigs InstantMeshConfig[]
 }
 
 model AuthSession {
@@ -227,6 +228,26 @@ model ImageModel {
   @@unique([providerId, modelId])
   @@index([providerId])
   @@index([enabled, isDefault])
+}
+
+model InstantMeshConfig {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  baseUrl            String
+  encryptedApiKey    String?  @db.Text
+  submitPath         String   @default("/api/instantmesh/tasks")
+  statusPathTemplate String   @default("/api/instantmesh/tasks/{taskId}")
+  pollIntervalMs     Int      @default(1500)
+  timeoutSeconds     Int      @default(900)
+  enabled            Boolean  @default(true)
+  isDefault          Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId, enabled, isDefault])
+  @@index([userId, createdAt])
 }
 
 model SystemSetting {

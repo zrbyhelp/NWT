@@ -13,9 +13,26 @@ export type ScenePanoramaPostprocessImage = {
 
 export type ScenePanoramaPostprocessEdge = "top" | "right" | "bottom" | "left";
 
+export type ScenePanoramaQualityIssueKind = "color" | "geometry";
+
+export type ScenePanoramaQualityIssue = {
+  delta: number;
+  edgeDelta: number;
+  firstEdge: ScenePanoramaPostprocessEdge;
+  firstFace: ScenePanoramaPostprocessFace;
+  innerBandDelta: number;
+  kind: ScenePanoramaQualityIssueKind;
+  lumaDelta: number;
+  reversed: boolean;
+  secondEdge: ScenePanoramaPostprocessEdge;
+  secondFace: ScenePanoramaPostprocessFace;
+  structureDelta: number;
+};
+
 export type ScenePanoramaQualityReport = {
   averageEdgeDelta: number;
   averageInnerBandDelta: number;
+  averageStructureDelta: number;
   edgeDeltas: Array<{
     delta: number;
     firstEdge: ScenePanoramaPostprocessEdge;
@@ -37,7 +54,46 @@ export type ScenePanoramaQualityReport = {
   largestFaceBytes: number;
   maxEdgeDelta: number;
   maxInnerBandDelta: number;
+  maxStructureDelta: number;
+  issues: ScenePanoramaQualityIssue[];
+  structureDeltas: Array<{
+    delta: number;
+    firstEdge: ScenePanoramaPostprocessEdge;
+    firstFace: ScenePanoramaPostprocessFace;
+    reversed: boolean;
+    secondEdge: ScenePanoramaPostprocessEdge;
+    secondFace: ScenePanoramaPostprocessFace;
+  }>;
   totalBytes: number;
+};
+
+export type ScenePanoramaMotherQualityIssue =
+  | "wrap-edge-color"
+  | "wrap-band-color"
+  | "wrap-luma"
+  | "horizon-shift"
+  | "seam-complexity";
+
+export type ScenePanoramaMotherQualityReport = {
+  bandDelta: number;
+  edgeDelta: number;
+  horizonPeakShiftRatio: number;
+  issues: Array<{
+    kind: ScenePanoramaMotherQualityIssue;
+    threshold: number;
+    value: number;
+  }>;
+  lumaDelta: number;
+  passed: boolean;
+  score: number;
+  seamComplexityRatio: number;
+  thresholds: {
+    bandDelta: number;
+    edgeDelta: number;
+    horizonPeakShiftRatio: number;
+    lumaDelta: number;
+    seamComplexityRatio: number;
+  };
 };
 
 export type ScenePanoramaColorReport = {
@@ -46,7 +102,11 @@ export type ScenePanoramaColorReport = {
   averageReferenceColorDelta: number;
   averageSeamDeltaAfter?: number;
   averageSeamDeltaBefore?: number;
-  colorAlgorithm: "mother-guided-color-transfer-v1" | "whole-face-balanced-v1";
+  colorAlgorithm:
+    | "candidate-preserving-color-match-v2"
+    | "mother-guided-color-transfer-v1"
+    | "mother-guided-low-frequency-seam-v3"
+    | "whole-face-balanced-v1";
   colorAdjusted: boolean;
   colorRejected: boolean;
   faceDeltas: Array<{
@@ -66,6 +126,14 @@ export type ScenePanoramaColorHarmonizationResult = {
   report: ScenePanoramaColorReport;
 };
 
+export type ScenePanoramaColorSeamRepairResult = {
+  applied: boolean;
+  color: ScenePanoramaColorReport;
+  faces: ScenePanoramaPostprocessImage[];
+  qualityAfter: ScenePanoramaQualityReport;
+  qualityBefore: ScenePanoramaQualityReport;
+};
+
 export type ScenePanoramaMotherStabilizationResult = {
   bytes: Buffer;
   contentType: string;
@@ -80,28 +148,37 @@ export type ScenePanoramaPostprocessOptions = {
 };
 
 const defaultFaceSize = 4096;
-const maxGeneratedFaceBytes = 9_500_000;
-const webpQualitySteps = [92, 86, 80, 74, 68, 60, 52, 45, 38, 32] as const;
-const colorAlgorithm = "mother-guided-color-transfer-v1" as const;
+const generatedWebpQuality = 92;
+const motherQualityEdgeDeltaThreshold = 18;
+const motherQualityBandDeltaThreshold = 28;
+const motherQualityLumaDeltaThreshold = 18;
+const motherQualityHorizonPeakShiftRatioThreshold = 0.06;
+const motherQualitySeamComplexityRatioThreshold = 1.8;
+const scenePanoramaQualityEdgeDeltaThreshold = 18;
+const scenePanoramaQualityInnerBandDeltaThreshold = 28;
+const scenePanoramaQualityStructureDeltaThreshold = 16;
+const colorAlgorithm = "mother-guided-low-frequency-seam-v3" as const;
 const colorStatsSize = 160;
-const colorLowFrequencySize = 192;
-const colorLowFrequencyBlur = 2.4;
-const colorLumaDetailStrength = 0.88;
-const colorChromaDetailStrength = 0.12;
-const colorCandidateResidualStrength = 0.08;
 const colorCloseEnoughDelta = 3;
+const colorCloseEnoughMaxDelta = 8;
 const colorGateMinimumImprovement = 1.1;
 const colorGateAllowedFaceRegression = 1.5;
 const colorGateAllowedSeamRegression = 2;
-const colorDetailRatioMin = 0.58;
-const colorDetailRatioMax = 1.55;
-const colorChromaRatioMin = 0.72;
-const colorChromaRatioMax = 1.28;
-const seamBlendStrength = 0.42;
-const seamBlendWidthRatio = 1 / 48;
-const motherWrapBlendStrength = 0.45;
-const motherWrapBlendWidthRatio = 0.045;
-const motherMaxGeneratedBytes = 9_500_000;
+const colorLowFrequencyTransferStrength = 0.76;
+const colorLowFrequencyChromaStrength = 0.62;
+const colorLowFrequencyLumaStrength = 0.78;
+const colorLowFrequencyMaxDelta = 60;
+const colorDetailPreservation = 1.5;
+const colorReferenceEdgeAnchorStrength = 0.74;
+const colorReferenceEdgeAnchorWidthRatio = 0.003;
+const seamBlendStrength = 0.58;
+const seamBlendWidthRatio = 1 / 32;
+const seamSmoothRadiusRatio = 1 / 80;
+const seamCorrectionMax = 34;
+const motherWrapBlendStrength = 0.62;
+const motherWrapBlendWidthRatio = 0.065;
+const motherWrapSmoothRadiusRatio = 1 / 60;
+const motherWrapCorrectionMax = 38;
 const scenePanoramaAdjacentEdges: Array<{
   firstEdge: ScenePanoramaPostprocessEdge;
   firstFace: ScenePanoramaPostprocessFace;
@@ -206,13 +283,20 @@ export async function harmonizeScenePanoramaFaceColors(
     const beforeDelta = measureColorStatsDelta(candidateStats, referenceStats);
     const decodedReference = await decodeFaceToRgba(reference.bytes, faceSize);
     const decodedCandidate = await decodeFaceToRgba(candidate.bytes, faceSize);
-    const transferred = await transferFaceColorFromReference(decodedReference, decodedCandidate, faceSize);
+    const transferred = await transferFaceColorFromReference(
+      decodedReference,
+      decodedCandidate,
+      faceSize,
+      referenceStats,
+      candidateStats
+    );
+    const edgeAnchored = anchorFaceEdgesToReference(decodedReference, transferred, faceSize);
 
     transferredFaces.push({
       ...candidate,
       bytes: Buffer.alloc(0),
       contentType: "image/webp",
-      decoded: transferred,
+      decoded: edgeAnchored,
       fileName: candidate.fileName.replace(/\.[a-z0-9]+$/i, ".webp")
     });
     faceDeltas.push({
@@ -265,7 +349,9 @@ export async function harmonizeScenePanoramaFaceColors(
   if (!shouldApply) {
     const isAlreadyClose =
       averageFaceColorDeltaBefore <= colorCloseEnoughDelta &&
-      maxFaceColorDeltaBefore <= colorCloseEnoughDelta * 1.5;
+      maxFaceColorDeltaBefore <= colorCloseEnoughMaxDelta &&
+      seamQualityBefore.average <= 18 &&
+      seamQualityBefore.max <= 32;
     const fallbackFaceDeltas = faceDeltas.map((item) => ({
       ...item,
       afterDelta: item.beforeDelta
@@ -321,12 +407,79 @@ export async function stabilizeScenePanoramaMotherImage(
   const normalizedHeight = options.normalizedHeight ?? 2048;
   const decoded = await decodeEquirectangularToRgba(image.bytes, normalizedWidth, normalizedHeight);
   const stabilized = stabilizeEquirectangularWrapSeam(decoded);
-  const bytes = await encodeRgbaToWebpWithLimit(stabilized.pixels, stabilized.width, stabilized.height, motherMaxGeneratedBytes);
+  const bytes = await encodeRgbaToWebp(stabilized.pixels, stabilized.width, stabilized.height);
 
   return {
     bytes,
     contentType: "image/webp",
     fileName: image.fileName.replace(/\.[a-z0-9]+$/i, ".webp")
+  };
+}
+
+export async function analyzeScenePanoramaMotherImage(
+  image: Pick<ScenePanoramaPostprocessImage, "bytes" | "contentType" | "fileName">,
+  options: ScenePanoramaPostprocessOptions = {}
+): Promise<ScenePanoramaMotherQualityReport> {
+  const normalizedWidth = options.normalizedWidth ?? 4096;
+  const normalizedHeight = options.normalizedHeight ?? 2048;
+  const decoded = await decodeEquirectangularToRgba(image.bytes, normalizedWidth, normalizedHeight);
+  const edgeDelta = measureHorizontalWrapEdgeDelta(decoded);
+  const bandDelta = measureHorizontalWrapBandDelta(decoded, Math.max(4, Math.round(normalizedWidth * 0.1)));
+  const lumaDelta = measureHorizontalWrapLumaDelta(decoded, Math.max(4, Math.round(normalizedWidth * 0.08)));
+  const horizonPeakShiftRatio = measureHorizontalWrapHorizonShiftRatio(decoded, Math.max(4, Math.round(normalizedWidth * 0.12)));
+  const seamComplexityRatio = measureHorizontalWrapSeamComplexityRatio(decoded, Math.max(4, Math.round(normalizedWidth * 0.08)));
+  const thresholds = {
+    bandDelta: motherQualityBandDeltaThreshold,
+    edgeDelta: motherQualityEdgeDeltaThreshold,
+    horizonPeakShiftRatio: motherQualityHorizonPeakShiftRatioThreshold,
+    lumaDelta: motherQualityLumaDeltaThreshold,
+    seamComplexityRatio: motherQualitySeamComplexityRatioThreshold
+  };
+  const issues: ScenePanoramaMotherQualityReport["issues"] = [];
+
+  if (edgeDelta > thresholds.edgeDelta) {
+    issues.push({ kind: "wrap-edge-color", threshold: thresholds.edgeDelta, value: edgeDelta });
+  }
+
+  if (bandDelta > thresholds.bandDelta) {
+    issues.push({ kind: "wrap-band-color", threshold: thresholds.bandDelta, value: bandDelta });
+  }
+
+  if (lumaDelta > thresholds.lumaDelta) {
+    issues.push({ kind: "wrap-luma", threshold: thresholds.lumaDelta, value: lumaDelta });
+  }
+
+  if (horizonPeakShiftRatio > thresholds.horizonPeakShiftRatio) {
+    issues.push({
+      kind: "horizon-shift",
+      threshold: thresholds.horizonPeakShiftRatio,
+      value: horizonPeakShiftRatio
+    });
+  }
+
+  if (seamComplexityRatio > thresholds.seamComplexityRatio) {
+    issues.push({
+      kind: "seam-complexity",
+      threshold: thresholds.seamComplexityRatio,
+      value: seamComplexityRatio
+    });
+  }
+
+  return {
+    bandDelta,
+    edgeDelta,
+    horizonPeakShiftRatio,
+    issues,
+    lumaDelta,
+    passed: issues.length === 0,
+    score:
+      edgeDelta / thresholds.edgeDelta +
+      bandDelta / thresholds.bandDelta +
+      lumaDelta / thresholds.lumaDelta +
+      horizonPeakShiftRatio / thresholds.horizonPeakShiftRatio +
+      seamComplexityRatio / thresholds.seamComplexityRatio,
+    seamComplexityRatio,
+    thresholds
   };
 }
 
@@ -374,20 +527,64 @@ export async function analyzeScenePanoramaFaces(
       )
     };
   });
+  const structureDeltas = scenePanoramaAdjacentEdges.map((edge) => {
+    const first = getDecodedFaceImage(decodedFaces, edge.firstFace);
+    const second = getDecodedFaceImage(decodedFaces, edge.secondFace);
+
+    return {
+      ...edge,
+      delta: measureFaceStructureDeltaBetween(
+        first,
+        second,
+        edge.firstEdge,
+        edge.secondEdge,
+        edge.reversed,
+        faceSize,
+        innerBandQualityWidth
+      )
+    };
+  });
+  const issues = buildScenePanoramaQualityIssues(edgeDeltas, innerBandDeltas, structureDeltas, decodedFaces, faceSize);
   const totalBytes = Object.values(faceByteSizes).reduce((sum, size) => sum + size, 0);
   const maxEdgeDelta = Math.max(...edgeDeltas.map((edge) => edge.delta));
   const maxInnerBandDelta = Math.max(...innerBandDeltas.map((edge) => edge.delta));
+  const maxStructureDelta = Math.max(...structureDeltas.map((edge) => edge.delta));
 
   return {
     averageEdgeDelta: edgeDeltas.reduce((sum, edge) => sum + edge.delta, 0) / Math.max(1, edgeDeltas.length),
     averageInnerBandDelta: innerBandDeltas.reduce((sum, edge) => sum + edge.delta, 0) / Math.max(1, innerBandDeltas.length),
+    averageStructureDelta: structureDeltas.reduce((sum, edge) => sum + edge.delta, 0) / Math.max(1, structureDeltas.length),
     edgeDeltas,
     faceByteSizes,
     innerBandDeltas,
+    issues,
     largestFaceBytes: Math.max(...Object.values(faceByteSizes)),
     maxEdgeDelta,
     maxInnerBandDelta,
+    maxStructureDelta,
+    structureDeltas,
     totalBytes
+  };
+}
+
+export async function repairScenePanoramaColorSeams(
+  referenceFaces: ScenePanoramaPostprocessImage[],
+  candidateFaces: ScenePanoramaPostprocessImage[],
+  options: ScenePanoramaPostprocessOptions = {}
+): Promise<ScenePanoramaColorSeamRepairResult> {
+  const { faceSize } = resolveScenePanoramaPostprocessOptions(options);
+  const qualityBefore = await analyzeScenePanoramaFaces(candidateFaces, { faceSize });
+  const harmonized = await harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize });
+  const qualityAfter = await analyzeScenePanoramaFaces(harmonized.faces, { faceSize });
+  const beforeScore = getScenePanoramaQualityReportScore(qualityBefore);
+  const afterScore = getScenePanoramaQualityReportScore(qualityAfter);
+
+  return {
+    applied: afterScore < beforeScore || qualityAfter.issues.length === 0,
+    color: harmonized.report,
+    faces: afterScore < beforeScore || qualityAfter.issues.length === 0 ? harmonized.faces : candidateFaces,
+    qualityAfter,
+    qualityBefore
   };
 }
 
@@ -402,6 +599,38 @@ export async function measureFaceEdgeDelta(
   const second = await decodeFaceToRgba(secondBytes, faceSize);
 
   return measureFaceEdgeDeltaBetween(first, second, edge, edge, false, faceSize);
+}
+
+export async function measureFaceReferenceEdgeDelta(
+  referenceBytes: Buffer,
+  candidateBytes: Buffer,
+  edge: ScenePanoramaPostprocessEdge,
+  options: ScenePanoramaPostprocessOptions = {}
+) {
+  const { faceSize, innerBandQualityWidth } = resolveScenePanoramaPostprocessOptions(options);
+  const reference = await decodeFaceToRgba(referenceBytes, faceSize);
+  const candidate = await decodeFaceToRgba(candidateBytes, faceSize);
+  const edgeDelta = measureFaceEdgeDeltaBetween(reference, candidate, edge, edge, false, faceSize);
+  const innerBandDelta = measureFaceInnerBandDeltaBetween(
+    reference,
+    candidate,
+    edge,
+    edge,
+    false,
+    faceSize,
+    innerBandQualityWidth
+  );
+  const structureDelta = measureFaceStructureDeltaBetween(
+    reference,
+    candidate,
+    edge,
+    edge,
+    false,
+    faceSize,
+    innerBandQualityWidth
+  );
+
+  return edgeDelta + innerBandDelta / 2 + structureDelta;
 }
 
 function measureFaceEdgeDeltaBetween(
@@ -426,6 +655,64 @@ function measureFaceEdgeDeltaBetween(
     total += Math.abs(first.pixels[firstIndex + 1] - second.pixels[secondIndex + 1]);
     total += Math.abs(first.pixels[firstIndex + 2] - second.pixels[secondIndex + 2]);
     count += 3;
+  }
+
+  return total / Math.max(1, count);
+}
+
+function measureFaceLumaDeltaBetween(
+  first: RgbaImage,
+  second: RgbaImage,
+  firstEdge: ScenePanoramaPostprocessEdge,
+  secondEdge: ScenePanoramaPostprocessEdge,
+  reverseSecondEdge: boolean,
+  faceSize: number,
+  bandWidth: number
+) {
+  let total = 0;
+  let count = 0;
+
+  for (let depth = 0; depth < bandWidth; depth += 1) {
+    for (let i = 0; i < faceSize; i += 1) {
+      const secondOffset = reverseSecondEdge ? faceSize - 1 - i : i;
+      const [firstX, firstY] = getInnerBandPixelPosition(firstEdge, i, depth, first.width, first.height);
+      const [secondX, secondY] = getInnerBandPixelPosition(secondEdge, secondOffset, depth, second.width, second.height);
+      const firstIndex = (firstY * first.width + firstX) * 4;
+      const secondIndex = (secondY * second.width + secondX) * 4;
+
+      total += Math.abs(
+        measureRgbLuma([first.pixels[firstIndex], first.pixels[firstIndex + 1], first.pixels[firstIndex + 2]]) -
+          measureRgbLuma([second.pixels[secondIndex], second.pixels[secondIndex + 1], second.pixels[secondIndex + 2]])
+      );
+      count += 1;
+    }
+  }
+
+  return total / Math.max(1, count);
+}
+
+function measureFaceStructureDeltaBetween(
+  first: RgbaImage,
+  second: RgbaImage,
+  firstEdge: ScenePanoramaPostprocessEdge,
+  secondEdge: ScenePanoramaPostprocessEdge,
+  reverseSecondEdge: boolean,
+  faceSize: number,
+  bandWidth: number
+) {
+  let total = 0;
+  let count = 0;
+  const maxDepth = Math.max(1, Math.min(bandWidth, faceSize - 2));
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    for (let i = 1; i < faceSize - 1; i += 1) {
+      const secondOffset = reverseSecondEdge ? faceSize - 1 - i : i;
+      const firstGradient = measureInnerBandLumaGradient(first, firstEdge, i, depth);
+      const secondGradient = measureInnerBandLumaGradient(second, secondEdge, secondOffset, depth);
+
+      total += Math.abs(firstGradient - secondGradient);
+      count += 1;
+    }
   }
 
   return total / Math.max(1, count);
@@ -459,6 +746,218 @@ function measureFaceInnerBandDeltaBetween(
   }
 
   return total / Math.max(1, count);
+}
+
+function buildScenePanoramaQualityIssues(
+  edgeDeltas: ScenePanoramaQualityReport["edgeDeltas"],
+  innerBandDeltas: ScenePanoramaQualityReport["innerBandDeltas"],
+  structureDeltas: ScenePanoramaQualityReport["structureDeltas"],
+  decodedFaces: Map<ScenePanoramaPostprocessFace, RgbaImage>,
+  faceSize: number
+) {
+  return edgeDeltas
+    .map((edge): ScenePanoramaQualityIssue | null => {
+      const innerBand = innerBandDeltas.find((item) =>
+        item.firstFace === edge.firstFace &&
+        item.firstEdge === edge.firstEdge &&
+        item.secondFace === edge.secondFace &&
+        item.secondEdge === edge.secondEdge
+      );
+      const structure = structureDeltas.find((item) =>
+        item.firstFace === edge.firstFace &&
+        item.firstEdge === edge.firstEdge &&
+        item.secondFace === edge.secondFace &&
+        item.secondEdge === edge.secondEdge
+      );
+      const first = getDecodedFaceImage(decodedFaces, edge.firstFace);
+      const second = getDecodedFaceImage(decodedFaces, edge.secondFace);
+      const innerBandDelta = innerBand?.delta ?? 0;
+      const structureDelta = structure?.delta ?? 0;
+      const lumaDelta = measureFaceLumaDeltaBetween(
+        first,
+        second,
+        edge.firstEdge,
+        edge.secondEdge,
+        edge.reversed,
+        faceSize,
+        Math.max(4, Math.round(faceSize / 32))
+      );
+      const failed =
+        edge.delta > scenePanoramaQualityEdgeDeltaThreshold ||
+        innerBandDelta > scenePanoramaQualityInnerBandDeltaThreshold ||
+        structureDelta > scenePanoramaQualityStructureDeltaThreshold;
+
+      if (!failed) {
+        return null;
+      }
+
+      return {
+        ...edge,
+        delta: Math.max(edge.delta, innerBandDelta, structureDelta),
+        edgeDelta: edge.delta,
+        innerBandDelta,
+        kind: structureDelta > scenePanoramaQualityStructureDeltaThreshold ? "geometry" : "color",
+        lumaDelta,
+        structureDelta
+      };
+    })
+    .filter((issue): issue is ScenePanoramaQualityIssue => Boolean(issue));
+}
+
+function measureInnerBandLumaGradient(image: RgbaImage, edge: ScenePanoramaPostprocessEdge, offset: number, depth: number) {
+  const [x, y] = getInnerBandPixelPosition(edge, offset, depth, image.width, image.height);
+  const [nextX, nextY] = getInnerBandPixelPosition(
+    edge,
+    Math.min(image.width - 1, offset + 1),
+    Math.min(Math.max(0, Math.min(image.width, image.height) - 1), depth + 1),
+    image.width,
+    image.height
+  );
+  const index = (y * image.width + x) * 4;
+  const nextIndex = (nextY * image.width + nextX) * 4;
+  const luma = measureRgbLuma([image.pixels[index], image.pixels[index + 1], image.pixels[index + 2]]);
+  const nextLuma = measureRgbLuma([image.pixels[nextIndex], image.pixels[nextIndex + 1], image.pixels[nextIndex + 2]]);
+
+  return Math.abs(nextLuma - luma);
+}
+
+function getScenePanoramaQualityReportScore(quality: ScenePanoramaQualityReport) {
+  return (
+    quality.maxEdgeDelta / scenePanoramaQualityEdgeDeltaThreshold +
+    quality.maxInnerBandDelta / scenePanoramaQualityInnerBandDeltaThreshold +
+    quality.maxStructureDelta / scenePanoramaQualityStructureDeltaThreshold
+  );
+}
+
+function measureHorizontalWrapEdgeDelta(image: RgbaImage) {
+  let total = 0;
+  let count = 0;
+
+  for (let y = 0; y < image.height; y += 1) {
+    const leftIndex = y * image.width * 4;
+    const rightIndex = (y * image.width + image.width - 1) * 4;
+
+    for (let channel = 0; channel < 3; channel += 1) {
+      total += Math.abs(image.pixels[leftIndex + channel] - image.pixels[rightIndex + channel]);
+      count += 1;
+    }
+  }
+
+  return total / Math.max(1, count);
+}
+
+function measureHorizontalWrapBandDelta(image: RgbaImage, bandWidth: number) {
+  let total = 0;
+  let count = 0;
+
+  for (let depth = 0; depth < bandWidth; depth += 1) {
+    for (let y = 0; y < image.height; y += 1) {
+      const leftIndex = (y * image.width + depth) * 4;
+      const rightIndex = (y * image.width + image.width - bandWidth + depth) * 4;
+
+      for (let channel = 0; channel < 3; channel += 1) {
+        total += Math.abs(image.pixels[leftIndex + channel] - image.pixels[rightIndex + channel]);
+        count += 1;
+      }
+    }
+  }
+
+  return total / Math.max(1, count);
+}
+
+function measureHorizontalWrapLumaDelta(image: RgbaImage, bandWidth: number) {
+  let total = 0;
+  let count = 0;
+
+  for (let depth = 0; depth < bandWidth; depth += 1) {
+    for (let y = 0; y < image.height; y += 1) {
+      const leftIndex = (y * image.width + depth) * 4;
+      const rightIndex = (y * image.width + image.width - bandWidth + depth) * 4;
+      const leftLuma = measureRgbLuma([image.pixels[leftIndex], image.pixels[leftIndex + 1], image.pixels[leftIndex + 2]]);
+      const rightLuma = measureRgbLuma([image.pixels[rightIndex], image.pixels[rightIndex + 1], image.pixels[rightIndex + 2]]);
+
+      total += Math.abs(leftLuma - rightLuma);
+      count += 1;
+    }
+  }
+
+  return total / Math.max(1, count);
+}
+
+function measureHorizontalWrapHorizonShiftRatio(image: RgbaImage, bandWidth: number) {
+  const leftProfile = measureVerticalGradientProfile(image, 0, bandWidth);
+  const rightProfile = measureVerticalGradientProfile(image, image.width - bandWidth, bandWidth);
+  const leftPeak = getProfilePeakIndex(leftProfile);
+  const rightPeak = getProfilePeakIndex(rightProfile);
+
+  return Math.abs(leftPeak - rightPeak) / Math.max(1, image.height);
+}
+
+function measureHorizontalWrapSeamComplexityRatio(image: RgbaImage, bandWidth: number) {
+  const leftComplexity = measureBandLumaComplexity(image, 0, bandWidth);
+  const rightComplexity = measureBandLumaComplexity(image, image.width - bandWidth, bandWidth);
+  const centerWidth = Math.max(4, Math.min(bandWidth * 2, Math.round(image.width * 0.16)));
+  const centerComplexity = measureBandLumaComplexity(image, Math.round((image.width - centerWidth) / 2), centerWidth);
+
+  return (leftComplexity + rightComplexity) / 2 / Math.max(1, centerComplexity);
+}
+
+function measureVerticalGradientProfile(image: RgbaImage, startX: number, width: number) {
+  const profile = Array.from({ length: image.height - 1 }, () => 0);
+
+  for (let y = 0; y < image.height - 1; y += 1) {
+    let rowTotal = 0;
+
+    for (let x = startX; x < startX + width; x += 1) {
+      const clampedX = Math.max(0, Math.min(image.width - 1, x));
+      const index = (y * image.width + clampedX) * 4;
+      const nextIndex = ((y + 1) * image.width + clampedX) * 4;
+      const luma = measureRgbLuma([image.pixels[index], image.pixels[index + 1], image.pixels[index + 2]]);
+      const nextLuma = measureRgbLuma([image.pixels[nextIndex], image.pixels[nextIndex + 1], image.pixels[nextIndex + 2]]);
+
+      rowTotal += Math.abs(nextLuma - luma);
+    }
+
+    profile[y] = rowTotal / Math.max(1, width);
+  }
+
+  return profile;
+}
+
+function measureBandLumaComplexity(image: RgbaImage, startX: number, width: number) {
+  let total = 0;
+  let count = 0;
+
+  for (let y = 1; y < image.height - 1; y += 1) {
+    for (let x = startX + 1; x < startX + width - 1; x += 1) {
+      const clampedX = Math.max(1, Math.min(image.width - 2, x));
+      const index = (y * image.width + clampedX) * 4;
+      const rightIndex = (y * image.width + clampedX + 1) * 4;
+      const downIndex = ((y + 1) * image.width + clampedX) * 4;
+      const luma = measureRgbLuma([image.pixels[index], image.pixels[index + 1], image.pixels[index + 2]]);
+      const rightLuma = measureRgbLuma([image.pixels[rightIndex], image.pixels[rightIndex + 1], image.pixels[rightIndex + 2]]);
+      const downLuma = measureRgbLuma([image.pixels[downIndex], image.pixels[downIndex + 1], image.pixels[downIndex + 2]]);
+
+      total += Math.abs(rightLuma - luma) + Math.abs(downLuma - luma);
+      count += 2;
+    }
+  }
+
+  return total / Math.max(1, count);
+}
+
+function getProfilePeakIndex(values: number[]) {
+  let peak = 0;
+  let peakValue = Number.NEGATIVE_INFINITY;
+
+  values.forEach((value, index) => {
+    if (value > peakValue) {
+      peak = index;
+      peakValue = value;
+    }
+  });
+
+  return peak;
 }
 
 async function decodeScenePanoramaFaces(faces: ScenePanoramaPostprocessImage[], faceSize: number) {
@@ -497,39 +996,64 @@ function getPostprocessFace(faces: ScenePanoramaPostprocessImage[], face: SceneP
   return image;
 }
 
-async function transferFaceColorFromReference(reference: RgbaImage, candidate: RgbaImage, faceSize: number): Promise<RgbaImage> {
-  const lowSize = Math.min(colorLowFrequencySize, Math.max(32, Math.round(faceSize / 8)));
-  const referenceLow = await createLowFrequencyColorMap(reference, lowSize);
-  const candidateLow = await createLowFrequencyColorMap(candidate, lowSize);
+async function transferFaceColorFromReference(
+  reference: RgbaImage,
+  candidate: RgbaImage,
+  faceSize: number,
+  _referenceStats: ColorStats,
+  _candidateStats: ColorStats
+): Promise<RgbaImage> {
   const output = Buffer.alloc(faceSize * faceSize * 4);
+  const referenceLow = await createLowFrequencyColorField(reference, faceSize);
+  const candidateLow = await createLowFrequencyColorField(candidate, faceSize);
 
   for (let y = 0; y < faceSize; y += 1) {
     for (let x = 0; x < faceSize; x += 1) {
       const index = (y * faceSize + x) * 4;
-      const referencePixel = sampleLowFrequencyPixel(referenceLow, x, y, faceSize, lowSize);
       const candidatePixel = [
         candidate.pixels[index],
         candidate.pixels[index + 1],
         candidate.pixels[index + 2]
       ] as [number, number, number];
-      const candidateLowPixel = sampleLowFrequencyPixel(candidateLow, x, y, faceSize, lowSize);
-      const referenceLuma = Math.max(1, measureRgbLuma(referencePixel));
       const candidateLuma = measureRgbLuma(candidatePixel);
-      const candidateLowLuma = Math.max(8, measureRgbLuma(candidateLowPixel));
-      const detailRatio = clamp(candidateLuma / candidateLowLuma, colorDetailRatioMin, colorDetailRatioMax);
-      const targetLuma = referenceLuma * (1 + (detailRatio - 1) * colorLumaDetailStrength);
-      const lumaScale = targetLuma / referenceLuma;
+      const candidateLowPixel = [
+        candidateLow.pixels[index],
+        candidateLow.pixels[index + 1],
+        candidateLow.pixels[index + 2]
+      ] as [number, number, number];
+      const referenceLowPixel = [
+        referenceLow.pixels[index],
+        referenceLow.pixels[index + 1],
+        referenceLow.pixels[index + 2]
+      ] as [number, number, number];
+      const candidateLowLuma = measureRgbLuma(candidateLowPixel);
+      const referenceLowLuma = measureRgbLuma(referenceLowPixel);
+      const lumaProtect = getExtremeLumaProtection(candidateLuma);
+      const lowLumaDelta = clamp(
+        referenceLowLuma - candidateLowLuma,
+        -colorLowFrequencyMaxDelta,
+        colorLowFrequencyMaxDelta
+      );
 
       for (let channel = 0; channel < 3; channel += 1) {
-        const referenceChannel = referencePixel[channel];
-        const candidateChannel = candidatePixel[channel];
-        const candidateLowChannel = Math.max(8, candidateLowPixel[channel]);
-        const chromaRatio = clamp(candidateChannel / candidateLowChannel, colorChromaRatioMin, colorChromaRatioMax);
-        const chromaGuided = referenceChannel * lumaScale * (1 + (chromaRatio - 1) * colorChromaDetailStrength);
-        const residualGuided = (candidateChannel - candidateLowPixel[channel]) * colorCandidateResidualStrength;
+        const candidateDetail = candidatePixel[channel] - candidateLowPixel[channel];
+        const candidateLowChroma = candidateLowPixel[channel] - candidateLowLuma;
+        const referenceLowChroma = referenceLowPixel[channel] - referenceLowLuma;
+        const chromaDelta = clamp(
+          referenceLowChroma - candidateLowChroma,
+          -colorLowFrequencyMaxDelta,
+          colorLowFrequencyMaxDelta
+        );
+        const targetLow =
+          candidateLowPixel[channel] +
+          lowLumaDelta * colorLowFrequencyLumaStrength +
+          chromaDelta * colorLowFrequencyChromaStrength;
+        const target = targetLow + candidateDetail * colorDetailPreservation;
+        const mixed = candidatePixel[channel] + (target - candidatePixel[channel]) * colorLowFrequencyTransferStrength * lumaProtect;
 
-        output[index + channel] = Math.round(clamp(chromaGuided + residualGuided, 0, 255));
+        output[index + channel] = Math.round(clamp(mixed, 0, 255));
       }
+
       output[index + 3] = candidate.pixels[index + 3] || 255;
     }
   }
@@ -541,41 +1065,62 @@ async function transferFaceColorFromReference(reference: RgbaImage, candidate: R
   };
 }
 
-async function createLowFrequencyColorMap(image: RgbaImage, lowSize: number) {
-  return createSharpRgbaInput(image.pixels, image.width, image.height)
+async function createLowFrequencyColorField(image: RgbaImage, faceSize: number): Promise<RgbaImage> {
+  const lowSize = Math.min(256, Math.max(8, Math.round(faceSize / 32)));
+  const pixels = await createSharpRgbaInput(image.pixels, image.width, image.height)
     .resize(lowSize, lowSize, { fit: "fill", kernel: "lanczos3" })
-    .blur(colorLowFrequencyBlur)
-    .ensureAlpha()
+    .blur(Math.max(1.2, lowSize / 12))
+    .resize(faceSize, faceSize, { fit: "fill", kernel: "lanczos3" })
     .raw()
     .toBuffer();
+
+  return {
+    pixels,
+    height: faceSize,
+    width: faceSize
+  };
 }
 
-function sampleLowFrequencyPixel(
-  pixels: Buffer,
-  x: number,
-  y: number,
-  faceSize: number,
-  lowSize: number
-): [number, number, number] {
-  const lowX = (x + 0.5) * lowSize / faceSize - 0.5;
-  const lowY = (y + 0.5) * lowSize / faceSize - 0.5;
-  const x0 = clamp(Math.floor(lowX), 0, lowSize - 1);
-  const y0 = clamp(Math.floor(lowY), 0, lowSize - 1);
-  const x1 = clamp(x0 + 1, 0, lowSize - 1);
-  const y1 = clamp(y0 + 1, 0, lowSize - 1);
-  const tx = clamp(lowX - x0, 0, 1);
-  const ty = clamp(lowY - y0, 0, 1);
-  const c00 = readRgbPixel(pixels, x0, y0, lowSize);
-  const c10 = readRgbPixel(pixels, x1, y0, lowSize);
-  const c01 = readRgbPixel(pixels, x0, y1, lowSize);
-  const c11 = readRgbPixel(pixels, x1, y1, lowSize);
+function anchorFaceEdgesToReference(reference: RgbaImage, candidate: RgbaImage, faceSize: number): RgbaImage {
+  const output = Buffer.from(candidate.pixels);
+  const anchorWidth = Math.max(1, Math.min(16, Math.round(faceSize * colorReferenceEdgeAnchorWidthRatio)));
+  const edges: ScenePanoramaPostprocessEdge[] = ["top", "right", "bottom", "left"];
 
-  return [0, 1, 2].map((channel) =>
-    c00[channel] * (1 - tx) * (1 - ty) +
-      c10[channel] * tx * (1 - ty) +
-      c01[channel] * (1 - tx) * ty +
-      c11[channel] * tx * ty
-  ) as [number, number, number];
+  edges.forEach((edge) => {
+    for (let depth = 0; depth < anchorWidth; depth += 1) {
+      const depthWeight = colorReferenceEdgeAnchorStrength * Math.pow(1 - depth / Math.max(1, anchorWidth), 2);
+
+      for (let offset = 0; offset < faceSize; offset += 1) {
+        const [x, y] = getInnerBandPixelPosition(edge, offset, depth, faceSize, faceSize);
+        const index = (y * faceSize + x) * 4;
+
+        for (let channel = 0; channel < 3; channel += 1) {
+          const candidateValue = output[index + channel];
+          const referenceValue = reference.pixels[index + channel];
+
+          output[index + channel] = Math.round(clamp(candidateValue + (referenceValue - candidateValue) * depthWeight, 0, 255));
+        }
+      }
+    }
+  });
+
+  return {
+    pixels: output,
+    height: faceSize,
+    width: faceSize
+  };
+}
+
+function getExtremeLumaProtection(luma: number) {
+  if (luma < 18 || luma > 238) {
+    return 0.35;
+  }
+
+  if (luma < 42 || luma > 218) {
+    return 0.68;
+  }
+
+  return 1;
 }
 
 async function equalizeScenePanoramaFaceSeams(
@@ -591,6 +1136,7 @@ async function equalizeScenePanoramaFaceSeams(
   }));
   const decodedByFace = new Map(balancedFaces.map((face) => [face.face, face.decoded]));
   const bandWidth = Math.max(4, Math.round(faceSize * seamBlendWidthRatio));
+  const smoothRadius = Math.max(2, Math.round(faceSize * seamSmoothRadiusRatio));
 
   scenePanoramaAdjacentEdges.forEach((edge) => {
     const first = decodedByFace.get(edge.firstFace);
@@ -602,6 +1148,7 @@ async function equalizeScenePanoramaFaceSeams(
 
     for (let depth = 0; depth < bandWidth; depth += 1) {
       const depthWeight = seamBlendStrength * Math.pow(1 - depth / bandWidth, 2);
+      const deltas = Array.from({ length: faceSize }, () => [0, 0, 0] as [number, number, number]);
 
       for (let offset = 0; offset < faceSize; offset += 1) {
         const secondOffset = edge.reversed ? faceSize - 1 - offset : offset;
@@ -611,12 +1158,30 @@ async function equalizeScenePanoramaFaceSeams(
         const secondIndex = (secondY * faceSize + secondX) * 4;
 
         for (let channel = 0; channel < 3; channel += 1) {
+          deltas[offset][channel] = second.pixels[secondIndex + channel] - first.pixels[firstIndex + channel];
+        }
+      }
+
+      const smoothedDeltas = smoothRgbSeries(deltas, smoothRadius);
+
+      for (let offset = 0; offset < faceSize; offset += 1) {
+        const secondOffset = edge.reversed ? faceSize - 1 - offset : offset;
+        const [firstX, firstY] = getInnerBandPixelPosition(edge.firstEdge, offset, depth, faceSize, faceSize);
+        const [secondX, secondY] = getInnerBandPixelPosition(edge.secondEdge, secondOffset, depth, faceSize, faceSize);
+        const firstIndex = (firstY * faceSize + firstX) * 4;
+        const secondIndex = (secondY * faceSize + secondX) * 4;
+
+        for (let channel = 0; channel < 3; channel += 1) {
+          const correction = clamp(
+            (smoothedDeltas[offset][channel] * depthWeight) / 2,
+            -seamCorrectionMax,
+            seamCorrectionMax
+          );
           const firstValue = first.pixels[firstIndex + channel];
           const secondValue = second.pixels[secondIndex + channel];
-          const target = (firstValue + secondValue) / 2;
 
-          first.pixels[firstIndex + channel] = Math.round(clamp(firstValue + (target - firstValue) * depthWeight, 0, 255));
-          second.pixels[secondIndex + channel] = Math.round(clamp(secondValue + (target - secondValue) * depthWeight, 0, 255));
+          first.pixels[firstIndex + channel] = Math.round(clamp(firstValue + correction, 0, 255));
+          second.pixels[secondIndex + channel] = Math.round(clamp(secondValue - correction, 0, 255));
         }
       }
     }
@@ -656,22 +1221,42 @@ async function decodeEquirectangularToRgba(bytes: Buffer, width: number, height:
 function stabilizeEquirectangularWrapSeam(image: RgbaImage): RgbaImage {
   const output = Buffer.from(image.pixels);
   const bandWidth = Math.max(8, Math.round(image.width * motherWrapBlendWidthRatio));
+  const smoothRadius = Math.max(2, Math.round(image.height * motherWrapSmoothRadiusRatio));
 
-  for (let y = 0; y < image.height; y += 1) {
-    for (let depth = 0; depth < bandWidth; depth += 1) {
-      const weight = motherWrapBlendStrength * Math.pow(1 - depth / bandWidth, 2);
+  for (let depth = 0; depth < bandWidth; depth += 1) {
+    const weight = motherWrapBlendStrength * Math.pow(1 - depth / bandWidth, 2);
+    const deltas = Array.from({ length: image.height }, () => [0, 0, 0] as [number, number, number]);
+
+    for (let y = 0; y < image.height; y += 1) {
       const leftX = depth;
       const rightX = image.width - 1 - depth;
       const leftIndex = (y * image.width + leftX) * 4;
       const rightIndex = (y * image.width + rightX) * 4;
 
       for (let channel = 0; channel < 3; channel += 1) {
+        deltas[y][channel] = output[rightIndex + channel] - output[leftIndex + channel];
+      }
+    }
+
+    const smoothedDeltas = smoothRgbSeries(deltas, smoothRadius);
+
+    for (let y = 0; y < image.height; y += 1) {
+      const leftX = depth;
+      const rightX = image.width - 1 - depth;
+      const leftIndex = (y * image.width + leftX) * 4;
+      const rightIndex = (y * image.width + rightX) * 4;
+
+      for (let channel = 0; channel < 3; channel += 1) {
+        const correction = clamp(
+          (smoothedDeltas[y][channel] * weight) / 2,
+          -motherWrapCorrectionMax,
+          motherWrapCorrectionMax
+        );
         const left = output[leftIndex + channel];
         const right = output[rightIndex + channel];
-        const target = (left + right) / 2;
 
-        output[leftIndex + channel] = Math.round(clamp(left + (target - left) * weight, 0, 255));
-        output[rightIndex + channel] = Math.round(clamp(right + (target - right) * weight, 0, 255));
+        output[leftIndex + channel] = Math.round(clamp(left + correction, 0, 255));
+        output[rightIndex + channel] = Math.round(clamp(right - correction, 0, 255));
       }
     }
   }
@@ -776,7 +1361,7 @@ async function normalizeColorOutputFace(
   face: ScenePanoramaPostprocessImage,
   faceSize: number
 ): Promise<ScenePanoramaPostprocessImage> {
-  if (face.contentType === "image/webp" && face.bytes.byteLength <= maxGeneratedFaceBytes) {
+  if (face.contentType === "image/webp") {
     return face;
   }
 
@@ -814,6 +1399,32 @@ function collectColorSamples(pixels: Buffer) {
 
 function getMean(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+}
+
+function smoothRgbSeries(values: Array<[number, number, number]>, radius: number) {
+  if (values.length === 0 || radius <= 0) {
+    return values;
+  }
+
+  return values.map((_, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length - 1, index + radius);
+    const smoothed = [0, 0, 0] as [number, number, number];
+    let count = 0;
+
+    for (let sampleIndex = start; sampleIndex <= end; sampleIndex += 1) {
+      smoothed[0] += values[sampleIndex][0];
+      smoothed[1] += values[sampleIndex][1];
+      smoothed[2] += values[sampleIndex][2];
+      count += 1;
+    }
+
+    smoothed[0] /= Math.max(1, count);
+    smoothed[1] /= Math.max(1, count);
+    smoothed[2] /= Math.max(1, count);
+
+    return smoothed;
+  });
 }
 
 function getStandardDeviation(values: number[], mean: number) {
@@ -867,29 +1478,13 @@ async function decodeFaceToRgba(bytes: Buffer, faceSize: number): Promise<RgbaIm
 }
 
 async function encodeRgbaToWebp(pixels: Buffer, width: number, height: number) {
-  return encodeRgbaToWebpWithLimit(pixels, width, height, maxGeneratedFaceBytes);
-}
-
-async function encodeRgbaToWebpWithLimit(pixels: Buffer, width: number, height: number, maxBytes: number) {
-  let smallest: Buffer | null = null;
-
-  for (const quality of webpQualitySteps) {
-    const encoded = await createSharpRgbaInput(pixels, width, height)
-      .webp({
-        effort: 4,
-        quality,
-        smartSubsample: true
-      })
-      .toBuffer();
-
-    smallest = encoded;
-
-    if (encoded.byteLength <= maxBytes) {
-      return encoded;
-    }
-  }
-
-  return smallest ?? Buffer.alloc(0);
+  return createSharpRgbaInput(pixels, width, height)
+    .webp({
+      effort: 4,
+      quality: generatedWebpQuality,
+      smartSubsample: true
+    })
+    .toBuffer();
 }
 
 function createSharpRgbaInput(pixels: Buffer, width: number, height: number) {
@@ -900,12 +1495,6 @@ function createSharpRgbaInput(pixels: Buffer, width: number, height: number) {
       width
     }
   });
-}
-
-function readRgbPixel(pixels: Buffer, x: number, y: number, width: number): [number, number, number] {
-  const index = (y * width + x) * 4;
-
-  return [pixels[index], pixels[index + 1], pixels[index + 2]];
 }
 
 function measureRgbLuma([r, g, b]: [number, number, number]) {

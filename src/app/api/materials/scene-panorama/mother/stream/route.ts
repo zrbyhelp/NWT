@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
           resolveLocale(body.locale),
           (event) => send(event),
           {
+            maxRedrawAttempts: normalizeMaxRedrawAttempts(body.maxRedrawAttempts),
             referenceImages: body.referenceImages
           }
         );
@@ -56,6 +57,7 @@ async function readPanoramaMotherRequestBody(request: NextRequest): Promise<{
   blockId?: unknown;
   input?: unknown;
   locale?: unknown;
+  maxRedrawAttempts?: unknown;
   referenceImages?: Awaited<ReturnType<typeof prepareScenePanoramaReferenceImages>>;
 }> {
   const formData = await request.formData();
@@ -69,6 +71,7 @@ async function readPanoramaMotherRequestBody(request: NextRequest): Promise<{
     blockId: formData.get("blockId"),
     input,
     locale: formData.get("locale"),
+    maxRedrawAttempts: formData.get("maxRedrawAttempts"),
     referenceImages: await prepareScenePanoramaReferenceImages(referenceFiles)
   };
 }
@@ -83,6 +86,18 @@ function resolvePanoramaStreamErrorCode(error: unknown) {
   }
 
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeMaxRedrawAttempts(value: unknown) {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return Number.parseInt(value, 10);
+  }
+
+  return undefined;
 }
 
 function resolveLocale(locale: unknown): Locale {

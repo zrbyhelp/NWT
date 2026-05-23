@@ -9,7 +9,13 @@ import {
   scenePanoramaPostprocessFaces,
   stabilizeScenePanoramaFaces
 } from "@/lib/ai/scene-panorama-postprocess";
-import { deleteMaterialImagesByUrls, uploadMaskBoardImage, uploadMaterialImageBytes } from "@/lib/storage/material";
+import {
+  deleteMaterialImagesByUrls,
+  isValidScenePanoramaImageBytes,
+  uploadItemModelBytes,
+  uploadMaskBoardImage,
+  uploadMaterialImageBytes
+} from "@/lib/storage/material";
 import type { MaskMaterialCreateInput, SceneMaterialCreateInput } from "@/lib/home-workspace";
 
 type ScriptRecord = {
@@ -130,7 +136,28 @@ vi.mock("@/lib/storage/material", () => ({
 
     return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) && bytes.byteLength > 0 && bytes.byteLength <= 10 * 1024 * 1024;
   }),
+  isValidScenePanoramaImageBytes: vi.fn((bytes: Uint8Array, contentType: string) => {
+    const normalizedContentType = contentType.toLowerCase().split(";")[0]?.trim();
+
+    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) && bytes.byteLength > 0;
+  }),
+  isValidScenePanoramaImageFile: vi.fn((file: File, options: { allowOversize?: boolean } = {}) => {
+    const normalizedContentType = file.type.toLowerCase().split(";")[0]?.trim();
+
+    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) &&
+      file.size > 0 &&
+      (options.allowOversize || file.size <= 10 * 1024 * 1024);
+  }),
+  isValidMaterialModelBytes: vi.fn((bytes: Uint8Array, contentType: string, fileName = "") => {
+    const normalizedContentType = contentType.toLowerCase().split(";")[0]?.trim();
+
+    return (normalizedContentType === "model/gltf-binary" || fileName.endsWith(".glb")) && bytes.byteLength > 0 && bytes.byteLength <= 100 * 1024 * 1024;
+  }),
   deleteMaterialImagesByUrls: vi.fn(),
+  uploadItemBoardImage: vi.fn(async () => "https://cdn.example.com/materials/item-board.png"),
+  uploadItemModelBytes: vi.fn(async () => "https://cdn.example.com/materials/imported-model.glb"),
+  uploadItemModelInputImage: vi.fn(async () => "https://cdn.example.com/materials/item-model-input.png"),
+  uploadItemViewImage: vi.fn(async () => "https://cdn.example.com/materials/item-view.png"),
   uploadMaskBoardImage: vi.fn(async () => "https://cdn.example.com/materials/mask-board.png"),
   uploadScenePanoramaFaceImage: vi.fn(async () => "https://cdn.example.com/materials/scene-face.png"),
   uploadScenePanoramaMotherImage: vi.fn(async () => "https://cdn.example.com/materials/scene-mother.png"),
@@ -450,7 +477,7 @@ describe("home workspace data", () => {
     });
   });
 
-  it("creates a self-created scene material with panorama metadata and front preview", async () => {
+  it("creates a self-created scene material with panorama metadata and first block scene preview", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { createSceneMaterial } = await import("@/lib/home-workspace");
     const input = createSceneInput({ panoramaDrawingStyle: "photo" });
@@ -487,7 +514,7 @@ describe("home workspace data", () => {
               })
             ]
           }),
-          previewUrl: "https://cdn.example.com/scene/main-front.png",
+          previewUrl: "https://cdn.example.com/scene/main-mother.png",
           style: "MYSTERY",
           titleZh: "废弃研究所"
         })
@@ -495,7 +522,7 @@ describe("home workspace data", () => {
     );
     expect(material).toMatchObject({
       category: "scene",
-      previewUrl: "https://cdn.example.com/scene/main-front.png",
+      previewUrl: "https://cdn.example.com/scene/main-mother.png",
       title: "废弃研究所"
     });
   });
@@ -577,11 +604,30 @@ describe("home workspace data", () => {
       showAiThinking: false
     });
     vi.mocked(generateDefaultScenePanoramaMother).mockResolvedValue({
+      attempt: 1,
       mother: {
         contentType: "image/png",
         dataUrl: "data:image/png;base64,bW90aGVy",
         fileName: "mother.png"
       },
+      quality: {
+        bandDelta: 0,
+        edgeDelta: 0,
+        horizonPeakShiftRatio: 0,
+        issues: [],
+        lumaDelta: 0,
+        passed: true,
+        score: 0,
+        seamComplexityRatio: 1,
+        thresholds: {
+          bandDelta: 28,
+          edgeDelta: 18,
+          horizonPeakShiftRatio: 0.06,
+          lumaDelta: 18,
+          seamComplexityRatio: 1.8
+        }
+      },
+      qualityPassed: true,
       sizeProfile: "4k"
     });
 
@@ -602,6 +648,56 @@ describe("home workspace data", () => {
         referenceImages: [expect.objectContaining({ fileName: "mother.png" })]
       })
     );
+  });
+
+  it("accepts generated panorama mother URLs above the normal 10MB image limit", async () => {
+    const { prepareScenePanoramaMotherImage } = await import("@/lib/home-workspace");
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 7);
+    const fetchMock = vi.fn(async () =>
+      new Response(bytes, {
+        headers: { "Content-Type": "image/webp" },
+        status: 200
+      })
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await prepareScenePanoramaMotherImage(null, "https://cdn.example.com/panoramas/mother.webp", "https://app.example.com");
+
+    expect(result).toMatchObject({
+      contentType: "image/webp",
+      fileName: "scene-panorama-mother.png"
+    });
+    expect(result.bytes.byteLength).toBe(bytes.byteLength);
+    expect(isValidScenePanoramaImageBytes).toHaveBeenCalledWith(expect.any(Buffer), "image/webp");
+  });
+
+  it("accepts generated panorama mother files above the normal 10MB image limit", async () => {
+    const { prepareScenePanoramaMotherImage } = await import("@/lib/home-workspace");
+    const file = new File([Buffer.alloc(10 * 1024 * 1024 + 1, 3)], "mother.webp", { type: "image/webp" });
+
+    const result = await prepareScenePanoramaMotherImage(file, null, "https://app.example.com", {
+      allowOversizeFile: true
+    });
+
+    expect(result).toMatchObject({
+      contentType: "image/webp",
+      fileName: "mother.webp"
+    });
+    expect(result.bytes.byteLength).toBe(file.size);
+  });
+
+  it("passes the generated panorama oversize allowance to storage upload helpers", async () => {
+    const { uploadScenePanoramaFace, uploadScenePanoramaMother } = await import("@/lib/home-workspace");
+    const file = new File([Buffer.alloc(10 * 1024 * 1024 + 1, 5)], "panorama.webp", { type: "image/webp" });
+
+    await uploadScenePanoramaFace("reader-id", file, { allowOversize: true });
+    await uploadScenePanoramaMother("reader-id", file, { allowOversize: true });
+
+    const { uploadScenePanoramaFaceImage, uploadScenePanoramaMotherImage } = await import("@/lib/storage/material");
+
+    expect(uploadScenePanoramaFaceImage).toHaveBeenCalledWith("reader-id", file, { allowOversize: true });
+    expect(uploadScenePanoramaMotherImage).toHaveBeenCalledWith("reader-id", file, { allowOversize: true });
   });
 
   it("streams scene panorama progress with the selected iteration count", async () => {
@@ -1025,6 +1121,69 @@ describe("home workspace data", () => {
     expect(await zip.file("materials/scene-lab/material.md")!.async("text")).toContain("全景母图");
   });
 
+  it("exports item model input images, legacy six-view images, and GLB models", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { exportSelfCreatedMaterialsZip } = await import("@/lib/material-transfer");
+    const existingMaterial = {
+      ...createMaterial("item-scanner", "ITEM", "灵犀扫描器", "Scanner", "SCI_FI"),
+      id: "created-item-id",
+      previewUrl: "https://cdn.example.com/items/board.png",
+      metadata: createItemMetadata()
+    };
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    mocks.prisma.storyMaterialLibraryEntry.findFirst.mockResolvedValue({
+      id: "entry-id",
+      userId: "reader-id",
+      materialId: "created-item-id",
+      source: "SELF_CREATED",
+      createdAt,
+      updatedAt: createdAt,
+      material: existingMaterial
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.endsWith(".glb")) {
+          return new Response(new Uint8Array([0x67, 0x6c, 0x54, 0x46]), { headers: { "Content-Type": "model/gltf-binary" } });
+        }
+
+        return new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } });
+      })
+    );
+
+    const archive = await exportSelfCreatedMaterialsZip({
+      locale: "zh-CN",
+      materialId: "created-item-id",
+      origin: "http://localhost:3000"
+    });
+    const zip = await JSZip.loadAsync(archive.bytes);
+    const manifest = JSON.parse(await zip.file("manifest.json")!.async("text"));
+    const material = manifest.materials[0];
+
+    expect(material.itemModelInputImage).toBeTruthy();
+    expect(material.itemViewImages).toHaveLength(6);
+    expect(material.itemModel).toMatchObject({
+      contentType: "model/gltf-binary",
+      fileName: "scanner.glb"
+    });
+    expect(await zip.file(material.itemViewImages[0].image.path)!.async("uint8array")).toHaveLength(3);
+    expect(await zip.file(material.itemModelInputImage.image.path)!.async("uint8array")).toHaveLength(3);
+    expect(await zip.file(material.itemModel.path)!.async("uint8array")).toHaveLength(4);
+    expect(await zip.file("materials/item-scanner/material.md")!.async("text")).toContain("模型输入图");
+    expect(await zip.file("materials/item-scanner/material.md")!.async("text")).toContain("历史六视图");
+    expect(await zip.file("materials/item-scanner/material.md")!.async("text")).toContain("3D 模型");
+  });
+
   it("imports a material archive as a private self-created copy with a re-uploaded image", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { importMaterialsZip } = await import("@/lib/material-transfer");
@@ -1126,6 +1285,55 @@ describe("home workspace data", () => {
     expect(result.importedCount).toBe(1);
   });
 
+  it("imports item model input images, legacy six-view images, and GLB models", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { importMaterialsZip } = await import("@/lib/material-transfer");
+    const archive = await createItemMaterialArchiveBytes();
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+
+    const result = await importMaterialsZip(archive, "zh-CN");
+
+    expect(uploadMaterialImageBytes).toHaveBeenCalledTimes(8);
+    expect(uploadItemModelBytes).toHaveBeenCalledWith(
+      "reader-id",
+      expect.any(Uint8Array),
+      "model/gltf-binary",
+      "scanner.glb"
+    );
+    expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          category: "ITEM",
+          metadata: expect.objectContaining({
+            kind: "item",
+            model3d: expect.objectContaining({
+              source: "instantmesh",
+              url: "https://cdn.example.com/materials/imported-model.glb"
+            }),
+            modelInputImage: expect.objectContaining({
+              url: "https://cdn.example.com/materials/imported-board.png"
+            }),
+            viewImages: expect.objectContaining({
+              front: expect.objectContaining({
+                url: "https://cdn.example.com/materials/imported-board.png"
+              })
+            })
+          }),
+          previewUrl: "https://cdn.example.com/materials/imported-board.png"
+        })
+      })
+    );
+    expect(result.importedCount).toBe(1);
+  });
+
   it("stabilizes panorama faces without copying reference pixels back into AI output", async () => {
     const referenceFaces = await Promise.all(
       scenePanoramaPostprocessFaces.map(async (face, index) => ({
@@ -1179,7 +1387,7 @@ describe("home workspace data", () => {
     expect(quality.innerBandDeltas).toHaveLength(12);
     expect(quality.maxEdgeDelta).toBeLessThan(4);
     expect(quality.maxInnerBandDelta).toBeLessThan(4);
-    expect(quality.totalBytes).toBeLessThan(10 * 1024 * 1024);
+    expect(quality.totalBytes).toBeGreaterThan(0);
   });
 
   it("rotates cubemap sampling so the back face center avoids the equirectangular seam", () => {
@@ -1241,7 +1449,7 @@ describe("home workspace data", () => {
   });
 
   it("uses pixel-faithful face prompts without mask or seam-protection wording", async () => {
-    const source = await readFile("src/lib/ai/image-runtime.ts", "utf8");
+    const source = await readFile("src/lib/ai/image-runtime/scene-panorama-prompts.ts", "utf8");
     const promptSource = source.slice(
       source.indexOf("function buildScenePanoramaFacePrompt"),
       source.indexOf("function getScenePanoramaFaceDescription")
@@ -1483,6 +1691,51 @@ function createSceneMetadata(panoramaDrawingStyle = "realistic") {
   };
 }
 
+function createItemMetadata() {
+  return {
+    kind: "item",
+    version: 2,
+    name: "灵犀扫描器",
+    itemCategory: "设备",
+    description: "半透明的便携扫描装置。",
+    traits: ["半透明外壳"],
+    uses: ["医疗检查"],
+    functions: ["扫描"],
+    materials: ["半透明树脂"],
+    colors: ["青色"],
+    styles: ["赛博"],
+    brand: "",
+    model: "",
+    keywords: ["扫描仪"],
+    scaleHint: "约 18cm",
+    style: "sciFi",
+    boardDrawingStyle: "realistic",
+    boardImage: {
+      source: "generated",
+      url: "https://cdn.example.com/items/board.png"
+    },
+    modelInputImage: {
+      source: "generated",
+      url: "https://cdn.example.com/items/model-input.png"
+    },
+    viewImages: sceneFaceNames.reduce<Record<(typeof sceneFaceNames)[number], { source: "generated"; url: string }>>((views, face) => {
+      views[face] = {
+        source: "generated",
+        url: `https://cdn.example.com/items/${face}.png`
+      };
+
+      return views;
+    }, {} as Record<(typeof sceneFaceNames)[number], { source: "generated"; url: string }>),
+    model3d: {
+      byteSize: 4,
+      contentType: "model/gltf-binary",
+      fileName: "scanner.glb",
+      source: "instantmesh",
+      url: "https://cdn.example.com/items/scanner.glb"
+    }
+  };
+}
+
 async function createSolidFacePng(red: number, green: number, blue: number) {
   return sharp({
     create: {
@@ -1682,6 +1935,75 @@ async function createSceneMaterialArchiveBytes() {
     })
   );
   zip.file(motherAsset.image.path, new Uint8Array([1, 2, 3]));
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function createItemMaterialArchiveBytes() {
+  const zip = new JSZip();
+  const imagePath = "materials/item-scanner/images/preview.png";
+  const modelInputImagePath = "materials/item-scanner/item-model-input/model-input.png";
+  const viewAssets = sceneFaceNames.map((face) => {
+    const path = `materials/item-scanner/item-views/${face}.png`;
+
+    zip.file(path, new Uint8Array([1, 2, 3]));
+
+    return {
+      face,
+      image: {
+        path,
+        fileName: `${face}.png`,
+        contentType: "image/png",
+        byteSize: 3
+      }
+    };
+  });
+  const modelPath = "materials/item-scanner/models/scanner.glb";
+
+  zip.file(imagePath, new Uint8Array([1, 2, 3]));
+  zip.file(modelInputImagePath, new Uint8Array([1, 2, 3]));
+  zip.file(modelPath, new Uint8Array([0x67, 0x6c, 0x54, 0x46]));
+  zip.file(
+    "manifest.json",
+    JSON.stringify({
+      exportedAt: "2026-05-21T00:00:00.000Z",
+      format: "nwt.materials",
+      version: 1,
+      materials: [
+        {
+          slug: "item-scanner",
+          category: "item",
+          style: "sciFi",
+          titleZh: "灵犀扫描器",
+          titleEn: "Scanner",
+          descriptionZh: "半透明的便携扫描装置。",
+          descriptionEn: "A translucent portable scanner.",
+          metadata: createItemMetadata(),
+          image: {
+            path: imagePath,
+            fileName: "preview.png",
+            contentType: "image/png",
+            byteSize: 3
+          },
+          itemModelInputImage: {
+            image: {
+              path: modelInputImagePath,
+              fileName: "model-input.png",
+              contentType: "image/png",
+              byteSize: 3
+            }
+          },
+          itemViewImages: viewAssets,
+          itemModel: {
+            path: modelPath,
+            fileName: "scanner.glb",
+            contentType: "model/gltf-binary",
+            byteSize: 4
+          }
+        }
+      ]
+    })
+  );
 
   return zip.generateAsync({ type: "uint8array" });
 }

@@ -5,10 +5,12 @@ import {
   AiConfigError,
   aiProviderInputSchema,
   imageModelInputSchema,
+  instantMeshConfigInputSchema,
   llmModelInputSchema,
   type AiConfigSnapshot,
   type AiProviderInput,
   type ImageModelInput,
+  type InstantMeshConfigInput,
   type LlmModelInput,
   type ProviderModelOption,
   type VectorModelInput,
@@ -36,8 +38,48 @@ export type DefaultImageRuntimeConfig = {
   modelId: string;
 };
 
+export type DefaultInstantMeshRuntimeConfig = {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  submitPath: string;
+  statusPathTemplate: string;
+  pollIntervalMs: number;
+  timeoutSeconds: number;
+};
+
+type InstantMeshConfigRecord = {
+  id: string;
+  userId: string;
+  name: string;
+  baseUrl: string;
+  encryptedApiKey: string | null;
+  submitPath: string;
+  statusPathTemplate: string;
+  pollIntervalMs: number;
+  timeoutSeconds: number;
+  enabled: boolean;
+  isDefault: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function instantMeshDelegate() {
+  return (prisma as unknown as {
+    instantMeshConfig: {
+      create: (args: unknown) => Promise<InstantMeshConfigRecord>;
+      delete: (args: unknown) => Promise<InstantMeshConfigRecord>;
+      findFirst: (args: unknown) => Promise<InstantMeshConfigRecord | null>;
+      findFirstOrThrow: (args: unknown) => Promise<InstantMeshConfigRecord>;
+      findMany: (args: unknown) => Promise<InstantMeshConfigRecord[]>;
+      update: (args: unknown) => Promise<InstantMeshConfigRecord>;
+      updateMany: (args: unknown) => Promise<unknown>;
+    };
+  }).instantMeshConfig;
+}
+
 export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnapshot> {
-  const [providers, llmModels, vectorModels, imageModels] = await Promise.all([
+  const [providers, llmModels, vectorModels, imageModels, instantMeshConfigs] = await Promise.all([
     prisma.aiProvider.findMany({
       where: { userId },
       include: { _count: { select: { imageModels: true, llmModels: true, vectorModels: true } } },
@@ -56,6 +98,10 @@ export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnaps
     prisma.imageModel.findMany({
       where: { provider: { userId } },
       include: { provider: true },
+      orderBy: { createdAt: "asc" }
+    }),
+    instantMeshDelegate().findMany({
+      where: { userId },
       orderBy: { createdAt: "asc" }
     })
   ]);
@@ -110,6 +156,20 @@ export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnaps
       isDefault: model.isDefault,
       createdAt: model.createdAt.toISOString(),
       updatedAt: model.updatedAt.toISOString()
+    })),
+    instantMeshConfigs: instantMeshConfigs.map((config) => ({
+      id: config.id,
+      name: config.name,
+      baseUrl: config.baseUrl,
+      hasApiKey: Boolean(config.encryptedApiKey),
+      submitPath: config.submitPath,
+      statusPathTemplate: config.statusPathTemplate,
+      pollIntervalMs: config.pollIntervalMs,
+      timeoutSeconds: config.timeoutSeconds,
+      enabled: config.enabled,
+      isDefault: config.isDefault,
+      createdAt: config.createdAt.toISOString(),
+      updatedAt: config.updatedAt.toISOString()
     }))
   };
 }
@@ -402,6 +462,67 @@ export async function deleteImageModel(userId: string, modelId: string) {
   return getAiConfigSnapshot(userId);
 }
 
+export async function saveInstantMeshConfig(userId: string, input: InstantMeshConfigInput) {
+  const parsed = instantMeshConfigInputSchema.parse(input);
+  const apiKey = parsed.apiKey?.trim();
+  const encryptedApiKey = apiKey ? encryptSecret(apiKey) : undefined;
+  const canBeDefault = parsed.enabled && parsed.isDefault;
+  const delegate = instantMeshDelegate();
+
+  if (parsed.id) {
+    await findUserInstantMeshConfigOrThrow(userId, parsed.id);
+  }
+
+  const config = parsed.id
+    ? await delegate.update({
+        where: { id: parsed.id },
+        data: {
+          name: parsed.name,
+          baseUrl: parsed.baseUrl,
+          ...(encryptedApiKey ? { encryptedApiKey } : {}),
+          ...(parsed.clearApiKey ? { encryptedApiKey: null } : {}),
+          submitPath: parsed.submitPath,
+          statusPathTemplate: parsed.statusPathTemplate,
+          pollIntervalMs: parsed.pollIntervalMs,
+          timeoutSeconds: parsed.timeoutSeconds,
+          enabled: parsed.enabled,
+          isDefault: false
+        }
+      })
+    : await delegate.create({
+        data: {
+          userId,
+          name: parsed.name,
+          baseUrl: parsed.baseUrl,
+          encryptedApiKey: encryptedApiKey ?? null,
+          submitPath: parsed.submitPath,
+          statusPathTemplate: parsed.statusPathTemplate,
+          pollIntervalMs: parsed.pollIntervalMs,
+          timeoutSeconds: parsed.timeoutSeconds,
+          enabled: parsed.enabled,
+          isDefault: false
+        }
+      });
+
+  if (canBeDefault) {
+    await delegate.updateMany({
+      where: { id: { not: config.id }, userId },
+      data: { isDefault: false }
+    });
+    await delegate.update({ where: { id: config.id }, data: { isDefault: true } });
+  }
+
+  await ensureInstantMeshDefault(userId);
+  return getAiConfigSnapshot(userId);
+}
+
+export async function deleteInstantMeshConfig(userId: string, configId: string) {
+  await findUserInstantMeshConfigOrThrow(userId, configId);
+  await instantMeshDelegate().delete({ where: { id: configId } });
+  await ensureInstantMeshDefault(userId);
+  return getAiConfigSnapshot(userId);
+}
+
 export async function getDefaultLlmRuntimeConfig(userId?: string | null): Promise<DefaultLlmRuntimeConfig> {
   const defaultModel = userId
     ? await prisma.llmModel.findFirst({
@@ -469,6 +590,32 @@ export async function getDefaultImageRuntimeConfig(userId?: string | null): Prom
   };
 }
 
+export async function getDefaultInstantMeshRuntimeConfig(userId?: string | null): Promise<DefaultInstantMeshRuntimeConfig> {
+  if (!userId) {
+    throw new AiConfigError("No default InstantMesh API is configured.", "missing-default-instantmesh");
+  }
+
+  const config = await getDefaultInstantMeshConfig(userId);
+
+  if (!config) {
+    throw new AiConfigError("No default InstantMesh API is configured for this user.", "missing-default-instantmesh");
+  }
+
+  if (!config.encryptedApiKey) {
+    throw new AiConfigError("The default InstantMesh API has no API key.", "missing-instantmesh-secret");
+  }
+
+  return {
+    name: config.name,
+    baseUrl: config.baseUrl,
+    apiKey: decryptSecret(config.encryptedApiKey),
+    submitPath: config.submitPath,
+    statusPathTemplate: config.statusPathTemplate,
+    pollIntervalMs: config.pollIntervalMs,
+    timeoutSeconds: config.timeoutSeconds
+  };
+}
+
 export async function getDefaultVectorModel(userId?: string | null) {
   if (!userId) {
     return null;
@@ -501,8 +648,23 @@ export async function getDefaultImageModel(userId?: string | null) {
   });
 }
 
+export async function getDefaultInstantMeshConfig(userId?: string | null) {
+  if (!userId) {
+    return null;
+  }
+
+  return instantMeshDelegate().findFirst({
+    where: {
+      enabled: true,
+      isDefault: true,
+      userId
+    },
+    orderBy: { createdAt: "asc" }
+  });
+}
+
 async function ensureAllDefaults(userId: string) {
-  await Promise.all([ensureLlmDefault(userId), ensureVectorDefault(userId), ensureImageDefault(userId)]);
+  await Promise.all([ensureLlmDefault(userId), ensureVectorDefault(userId), ensureImageDefault(userId), ensureInstantMeshDefault(userId)]);
 }
 
 async function ensureLlmDefault(userId: string) {
@@ -580,6 +742,31 @@ async function ensureImageDefault(userId: string) {
   await prisma.imageModel.update({ where: { id: selected.id }, data: { isDefault: true } });
 }
 
+async function ensureInstantMeshDefault(userId: string) {
+  const delegate = instantMeshDelegate();
+  const configs = await delegate.findMany({
+    where: { userId },
+    orderBy: { createdAt: "asc" }
+  });
+  const selected = chooseDefaultModel(
+    configs.map((config) => ({
+      id: config.id,
+      enabled: config.enabled,
+      isDefault: config.isDefault,
+      providerEnabled: true,
+      createdAt: config.createdAt
+    }))
+  );
+
+  if (!selected) {
+    await delegate.updateMany({ where: { userId }, data: { isDefault: false } });
+    return;
+  }
+
+  await delegate.updateMany({ where: { id: { not: selected.id }, userId }, data: { isDefault: false } });
+  await delegate.update({ where: { id: selected.id }, data: { isDefault: true } });
+}
+
 async function findUserProviderOrThrow(userId: string, providerId: string) {
   return prisma.aiProvider.findFirstOrThrow({ where: { id: providerId, userId } });
 }
@@ -607,6 +794,15 @@ async function findUserImageModelOrThrow(userId: string, modelId: string) {
     where: {
       id: modelId,
       provider: { userId }
+    }
+  });
+}
+
+async function findUserInstantMeshConfigOrThrow(userId: string, configId: string) {
+  return instantMeshDelegate().findFirstOrThrow({
+    where: {
+      id: configId,
+      userId
     }
   });
 }

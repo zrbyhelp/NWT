@@ -5,11 +5,14 @@ import { generateDefaultMaskBoardImage, generateDefaultScenePanorama, streamDefa
 const panoramaFaces = ["front", "back", "left", "right", "top", "bottom"] as const;
 
 const runtimeMocks = vi.hoisted(() => ({
+  analyzeScenePanoramaMotherImage: vi.fn(),
   analyzeScenePanoramaFaces: vi.fn(),
   edit: vi.fn(),
   generate: vi.fn(),
   getDefaultImageRuntimeConfig: vi.fn(),
   harmonizeScenePanoramaFaceColors: vi.fn(),
+  measureFaceReferenceEdgeDelta: vi.fn(),
+  repairScenePanoramaColorSeams: vi.fn(),
   splitEquirectangularToCubemap: vi.fn(),
   stabilizeScenePanoramaMotherImage: vi.fn(),
   stabilizeScenePanoramaFaces: vi.fn(),
@@ -41,8 +44,11 @@ vi.mock("@/lib/ai/scene-panorama-projection", () => ({
 }));
 
 vi.mock("@/lib/ai/scene-panorama-postprocess", () => ({
+  analyzeScenePanoramaMotherImage: runtimeMocks.analyzeScenePanoramaMotherImage,
   analyzeScenePanoramaFaces: runtimeMocks.analyzeScenePanoramaFaces,
   harmonizeScenePanoramaFaceColors: runtimeMocks.harmonizeScenePanoramaFaceColors,
+  measureFaceReferenceEdgeDelta: runtimeMocks.measureFaceReferenceEdgeDelta,
+  repairScenePanoramaColorSeams: runtimeMocks.repairScenePanoramaColorSeams,
   stabilizeScenePanoramaMotherImage: runtimeMocks.stabilizeScenePanoramaMotherImage,
   stabilizeScenePanoramaFaces: runtimeMocks.stabilizeScenePanoramaFaces
 }));
@@ -108,7 +114,7 @@ describe("scene panorama runtime", () => {
         averageFaceColorDeltaAfter: 2,
         averageFaceColorDeltaBefore: 8,
         averageReferenceColorDelta: 2,
-        colorAlgorithm: "mother-guided-color-transfer-v1",
+        colorAlgorithm: "candidate-preserving-color-match-v2",
         colorAdjusted: true,
         colorRejected: false,
         faceDeltas: [],
@@ -117,7 +123,30 @@ describe("scene panorama runtime", () => {
         maxFaceColorDeltaBefore: 10
       }
     }));
+    runtimeMocks.analyzeScenePanoramaMotherImage.mockResolvedValue(createMotherQualityReport(true));
     runtimeMocks.analyzeScenePanoramaFaces.mockResolvedValue(createQualityReport(4, 4));
+    runtimeMocks.measureFaceReferenceEdgeDelta.mockResolvedValue(4);
+    runtimeMocks.repairScenePanoramaColorSeams.mockImplementation(async (
+      _referenceFaces: unknown,
+      candidateFaces: Array<{ contentType: string; fileName: string }>
+    ) => ({
+      applied: true,
+      color: {
+        averageFaceColorDeltaAfter: 2,
+        averageFaceColorDeltaBefore: 8,
+        averageReferenceColorDelta: 2,
+        colorAlgorithm: "candidate-preserving-color-match-v2",
+        colorAdjusted: true,
+        colorRejected: false,
+        faceDeltas: [],
+        maxFaceColorDelta: 3,
+        maxFaceColorDeltaAfter: 3,
+        maxFaceColorDeltaBefore: 10
+      },
+      faces: candidateFaces,
+      qualityAfter: createQualityReport(4, 4),
+      qualityBefore: createQualityReport(72, 72)
+    }));
   });
 
   it("starts all six reference repaint calls without sending a mask", async () => {
@@ -175,6 +204,55 @@ describe("scene panorama runtime", () => {
     });
   });
 
+  it("uses the gpt-image-2 panorama profile with high quality requests", async () => {
+    const enhancedBytes = await createSolidPng(16, 16, [180, 120, 96]);
+
+    runtimeMocks.getDefaultImageRuntimeConfig.mockResolvedValueOnce({
+      apiKey: "test-key",
+      baseUrl: "https://api.openai.com/v1",
+      modelId: "gpt-image-2",
+      providerName: "OpenAI"
+    });
+    runtimeMocks.edit.mockResolvedValue({
+      data: [{ b64_json: enhancedBytes.toString("base64") }]
+    });
+
+    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id");
+    const generatePayload = runtimeMocks.generate.mock.calls[0][0] as Record<string, unknown>;
+    const editPayloads = runtimeMocks.edit.mock.calls.map(([payload]) => payload as Record<string, unknown>);
+
+    expect(generatePayload).toMatchObject({
+      output_format: "png",
+      quality: "high",
+      size: "3840x1920"
+    });
+    expect(String(generatePayload.prompt)).toContain("3840x1920");
+    expect(runtimeMocks.splitEquirectangularToCubemap).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      expect.objectContaining({
+        faceSize: 2880,
+        normalizedHeight: 1920,
+        normalizedWidth: 3840
+      })
+    );
+    expect(editPayloads).toHaveLength(6);
+    expect(editPayloads.every((payload) => payload.size === "2880x2880")).toBe(true);
+    expect(editPayloads.every((payload) => payload.quality === "high")).toBe(true);
+    expect(editPayloads.every((payload) => payload.output_format === "png")).toBe(true);
+    expect(editPayloads.every((payload) => !Object.prototype.hasOwnProperty.call(payload, "input_fidelity"))).toBe(true);
+    expect(editPayloads.map((payload) => String(payload.prompt))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("2880x2880"),
+        expect.stringContaining("像素级忠实升级")
+      ])
+    );
+    expect(result).toMatchObject({
+      mode: "enhanced",
+      repaired: true,
+      sizeProfile: "gpt-image-2"
+    });
+  });
+
   it("requests mask board images with the generic 4k preset and puts the target in the prompt", async () => {
     await generateDefaultMaskBoardImage("生成角色设定板", "reader-id");
 
@@ -201,7 +279,38 @@ describe("scene panorama runtime", () => {
     expect(generatePayloads[0]).toMatchObject({ size: "4096x2048" });
     expect(facePayloads).toHaveLength(6);
     expect(facePayloads.every((payload) => payload.size === "4096x4096")).toBe(true);
+    expect(facePayloads.every((payload) => typeof payload.image === "string")).toBe(true);
     expect(facePayloads.every((payload) => String(payload.image).startsWith("data:image/png;base64,"))).toBe(true);
+  });
+
+  it("retries panorama mother generation before splitting cubemap faces", async () => {
+    const enhancedBytes = await createSolidPng(16, 16, [180, 120, 96]);
+
+    runtimeMocks.edit.mockResolvedValue({
+      data: [{ b64_json: enhancedBytes.toString("base64") }]
+    });
+    runtimeMocks.analyzeScenePanoramaMotherImage
+      .mockResolvedValueOnce(createMotherQualityReport(false, 8))
+      .mockResolvedValueOnce(createMotherQualityReport(true, 0.5));
+
+    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id", undefined, { maxRedrawAttempts: 2 });
+
+    expect(result.motherQualityPassed).toBe(true);
+    expect(runtimeMocks.generate).toHaveBeenCalledTimes(2);
+    expect(runtimeMocks.splitEquirectangularToCubemap).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues with the best-scored panorama mother when the mother gate keeps failing", async () => {
+    runtimeMocks.analyzeScenePanoramaMotherImage
+      .mockResolvedValueOnce(createMotherQualityReport(false, 8))
+      .mockResolvedValueOnce(createMotherQualityReport(false, 6));
+
+    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id", undefined, { maxRedrawAttempts: 2 });
+
+    expect(result.motherQualityPassed).toBe(false);
+    expect(result.motherQuality?.score).toBe(6);
+    expect(runtimeMocks.generate).toHaveBeenCalledTimes(2);
+    expect(runtimeMocks.splitEquirectangularToCubemap).toHaveBeenCalledTimes(1);
   });
 
   it("streams mother, preview faces, quality, and final faces in order", async () => {
@@ -261,7 +370,6 @@ describe("scene panorama runtime", () => {
       expect.objectContaining({
         level: "WARNING",
         metadata: expect.objectContaining({
-          face: "front",
           faceRequestAttempt: 1,
           nextFaceRequestAttempt: 2,
           retryError: "upstream bad gateway"
@@ -322,6 +430,56 @@ describe("scene panorama runtime", () => {
     expect(result.qualityPassed).toBe(false);
     expect(events.at(-1)).toMatchObject({ type: "progress" });
     expect(events.some((event) => event.type === "done" && event.qualityBestEffort)).toBe(true);
+  });
+
+  it("uses local color seam repair before spending another AI repaint attempt", async () => {
+    const enhancedBytes = await createSolidPng(16, 16, [180, 120, 96]);
+
+    runtimeMocks.edit.mockResolvedValue({
+      data: [{ b64_json: enhancedBytes.toString("base64") }]
+    });
+    runtimeMocks.analyzeScenePanoramaFaces.mockResolvedValueOnce(createColorQualityReport(54, 58));
+
+    const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id", undefined, { maxRedrawAttempts: 2 });
+
+    expect(result.qualityPassed).toBe(true);
+    expect(runtimeMocks.repairScenePanoramaColorSeams).toHaveBeenCalledTimes(1);
+    expect(runtimeMocks.edit).toHaveBeenCalledTimes(6);
+  });
+
+  it("redraws the more suspicious side of a geometry seam first", async () => {
+    const firstRoundBytes = await createSolidPng(16, 16, [10, 10, 10]);
+    const secondRoundBytes = await createSolidPng(16, 16, [120, 120, 120]);
+    const events: Array<{ type: string; faces?: string[] }> = [];
+    let editIndex = 0;
+
+    runtimeMocks.edit.mockImplementation(async () => {
+      editIndex += 1;
+
+      return {
+        data: [{ b64_json: (editIndex <= 6 ? firstRoundBytes : secondRoundBytes).toString("base64") }]
+      };
+    });
+    runtimeMocks.analyzeScenePanoramaFaces
+      .mockResolvedValueOnce(createGeometryQualityReport(72, 72))
+      .mockResolvedValueOnce(createQualityReport(4, 4));
+    runtimeMocks.measureFaceReferenceEdgeDelta
+      .mockResolvedValueOnce(70)
+      .mockResolvedValueOnce(8);
+
+    const result = await streamDefaultScenePanorama(
+      createGenerationInput(),
+      "reader-id",
+      (event) => {
+        events.push(event);
+      },
+      undefined,
+      { maxRedrawAttempts: 2 }
+    );
+
+    expect(events.find((event) => event.type === "iterating")?.faces).toEqual(["front"]);
+    expect(runtimeMocks.edit).toHaveBeenCalledTimes(7);
+    expect(result.qualityPassed).toBe(true);
   });
 
   it("streams final faces from the best attempt when a later retry gets worse", async () => {
@@ -385,7 +543,7 @@ describe("scene panorama runtime", () => {
 
     const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 16 });
 
-    expect(result.report.colorAlgorithm).toBe("mother-guided-color-transfer-v1");
+    expect(result.report.colorAlgorithm).toBe("mother-guided-low-frequency-seam-v3");
     expect(result.report.colorAdjusted).toBe(true);
     expect(result.report.faceDeltas.every((delta) => delta.afterDelta < delta.beforeDelta)).toBe(true);
     expect(result.faces).toHaveLength(6);
@@ -440,7 +598,7 @@ describe("scene panorama runtime", () => {
     expect(result.report.averageFaceColorDeltaAfter).toBeLessThan(3);
   });
 
-  it("uses the mother face as low-frequency color authority while reducing seam deltas", async () => {
+  it("preserves candidate clarity while using the mother face for color matching and seam reduction", async () => {
     const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
       "@/lib/ai/scene-panorama-postprocess"
     );
@@ -462,6 +620,21 @@ describe("scene panorama runtime", () => {
     expect(result.report.averageFaceColorDeltaAfter).toBeLessThan(result.report.averageFaceColorDeltaBefore * 0.55);
     expect(afterQuality.averageEdgeDelta).toBeLessThan(beforeQuality.averageEdgeDelta);
     expect(afterQuality.maxEdgeDelta).toBeLessThan(beforeQuality.maxEdgeDelta);
+  });
+
+  it("does not flatten high-frequency face detail when matching a soft mother reference", async () => {
+    const postprocess = await vi.importActual<typeof import("@/lib/ai/scene-panorama-postprocess")>(
+      "@/lib/ai/scene-panorama-postprocess"
+    );
+    const referenceFaces = await createSolidFaces([92, 112, 130], 64);
+    const candidateFaces = await createCheckerFaces([130, 84, 70], [214, 160, 134], 64);
+    const beforeDetail = await measureLumaStandardDeviation(candidateFaces[0].bytes, 64);
+
+    const result = await postprocess.harmonizeScenePanoramaFaceColors(referenceFaces, candidateFaces, { faceSize: 64 });
+    const afterDetail = await measureLumaStandardDeviation(result.faces[0].bytes, 64);
+
+    expect(result.report.averageFaceColorDeltaAfter).toBeLessThanOrEqual(result.report.averageFaceColorDeltaBefore);
+    expect(afterDetail).toBeGreaterThan(beforeDetail * 0.75);
   });
 
   it("stabilizes mother panorama horizontal wrap color before cubemap splitting", async () => {
@@ -732,6 +905,21 @@ async function createSeamShiftedFaces(colors: Array<[number, number, number]>, s
   );
 }
 
+async function createCheckerFaces(
+  firstColor: [number, number, number],
+  secondColor: [number, number, number],
+  size = 64
+) {
+  return Promise.all(
+    panoramaFaces.map(async (face) => ({
+      bytes: await createCheckerPng(size, size, firstColor, secondColor),
+      contentType: "image/png",
+      face,
+      fileName: `scene-panorama-${face}.png`
+    }))
+  );
+}
+
 async function createPatchedPng(width: number, height: number, baseColor: [number, number, number]) {
   const pixels = Buffer.alloc(width * height * 4);
   const brightPatchSize = Math.max(2, Math.floor(Math.min(width, height) / 5));
@@ -747,6 +935,39 @@ async function createPatchedPng(width: number, height: number, baseColor: [numbe
         : inShadowPatch
           ? [4, 5, 7]
           : baseColor;
+
+      pixels[index] = color[0];
+      pixels[index + 1] = color[1];
+      pixels[index + 2] = color[2];
+      pixels[index + 3] = 255;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: {
+      channels: 4,
+      height,
+      width
+    }
+  })
+    .png()
+    .toBuffer();
+}
+
+async function createCheckerPng(
+  width: number,
+  height: number,
+  firstColor: [number, number, number],
+  secondColor: [number, number, number]
+) {
+  const pixels = Buffer.alloc(width * height * 4);
+  const cellSize = Math.max(2, Math.floor(Math.min(width, height) / 8));
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const useFirst = (Math.floor(x / cellSize) + Math.floor(y / cellSize)) % 2 === 0;
+      const color = useFirst ? firstColor : secondColor;
 
       pixels[index] = color[0];
       pixels[index + 1] = color[1];
@@ -879,8 +1100,27 @@ async function measureHorizontalWrapDelta(bytes: Buffer, width: number, height: 
   return total / Math.max(1, count);
 }
 
+async function measureLumaStandardDeviation(bytes: Buffer, size: number) {
+  const pixels = await sharp(bytes)
+    .resize(size, size, { fit: "fill" })
+    .toColorspace("srgb")
+    .removeAlpha()
+    .raw()
+    .toBuffer();
+  const values: number[] = [];
+
+  for (let index = 0; index < pixels.length; index += 3) {
+    values.push(0.2126 * pixels[index] + 0.7152 * pixels[index + 1] + 0.0722 * pixels[index + 2]);
+  }
+
+  const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, values.length);
+
+  return Math.sqrt(variance);
+}
+
 async function waitForMockCalls(mock: { mock: { calls: unknown[] } }, count: number) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
     if (mock.mock.calls.length >= count) {
       return;
     }
@@ -924,12 +1164,128 @@ function createQualityReport(maxEdgeDelta: number, maxInnerBandDelta: number) {
   return {
     averageEdgeDelta: maxEdgeDelta,
     averageInnerBandDelta: maxInnerBandDelta,
+    averageStructureDelta: 4,
     edgeDeltas,
     faceByteSizes,
     innerBandDeltas,
+    issues: maxEdgeDelta > 18 || maxInnerBandDelta > 28
+      ? [{
+          delta: Math.max(maxEdgeDelta, maxInnerBandDelta),
+          edgeDelta: maxEdgeDelta,
+          firstEdge: "left" as const,
+          firstFace: "front" as const,
+          innerBandDelta: maxInnerBandDelta,
+          kind: "geometry" as const,
+          lumaDelta: maxEdgeDelta,
+          reversed: false,
+          secondEdge: "right" as const,
+          secondFace: "left" as const,
+          structureDelta: 24
+        }]
+      : [],
     largestFaceBytes: 1024,
     maxEdgeDelta,
     maxInnerBandDelta,
+    maxStructureDelta: maxEdgeDelta > 18 || maxInnerBandDelta > 28 ? 24 : 4,
+    structureDeltas: [
+      {
+        delta: maxEdgeDelta > 18 || maxInnerBandDelta > 28 ? 24 : 4,
+        firstEdge: "left" as const,
+        firstFace: "front" as const,
+        reversed: false,
+        secondEdge: "right" as const,
+        secondFace: "left" as const
+      }
+    ],
     totalBytes: panoramaFaces.length * 1024
+  };
+}
+
+function createColorQualityReport(maxEdgeDelta: number, maxInnerBandDelta: number) {
+  return {
+    ...createQualityReport(maxEdgeDelta, maxInnerBandDelta),
+    issues: [
+      {
+        delta: Math.max(maxEdgeDelta, maxInnerBandDelta),
+        edgeDelta: maxEdgeDelta,
+        firstEdge: "left" as const,
+        firstFace: "front" as const,
+        innerBandDelta: maxInnerBandDelta,
+        kind: "color" as const,
+        lumaDelta: maxEdgeDelta,
+        reversed: false,
+        secondEdge: "right" as const,
+        secondFace: "left" as const,
+        structureDelta: 4
+      }
+    ],
+    maxStructureDelta: 4,
+    structureDeltas: [
+      {
+        delta: 4,
+        firstEdge: "left" as const,
+        firstFace: "front" as const,
+        reversed: false,
+        secondEdge: "right" as const,
+        secondFace: "left" as const
+      }
+    ]
+  };
+}
+
+function createGeometryQualityReport(maxEdgeDelta: number, maxInnerBandDelta: number) {
+  return {
+    ...createQualityReport(maxEdgeDelta, maxInnerBandDelta),
+    issues: [
+      {
+        delta: Math.max(maxEdgeDelta, maxInnerBandDelta, 42),
+        edgeDelta: maxEdgeDelta,
+        firstEdge: "left" as const,
+        firstFace: "front" as const,
+        innerBandDelta: maxInnerBandDelta,
+        kind: "geometry" as const,
+        lumaDelta: maxEdgeDelta,
+        reversed: false,
+        secondEdge: "right" as const,
+        secondFace: "left" as const,
+        structureDelta: 42
+      }
+    ],
+    maxStructureDelta: 42,
+    structureDeltas: [
+      {
+        delta: 42,
+        firstEdge: "left" as const,
+        firstFace: "front" as const,
+        reversed: false,
+        secondEdge: "right" as const,
+        secondFace: "left" as const
+      }
+    ]
+  };
+}
+
+function createMotherQualityReport(passed: boolean, score = passed ? 0.6 : 7) {
+  return {
+    bandDelta: passed ? 4 : 64,
+    edgeDelta: passed ? 4 : 72,
+    horizonPeakShiftRatio: passed ? 0.01 : 0.12,
+    issues: passed
+      ? []
+      : [
+          { kind: "wrap-edge-color" as const, threshold: 18, value: 72 },
+          { kind: "wrap-band-color" as const, threshold: 28, value: 64 }
+        ],
+    lumaDelta: passed ? 3 : 40,
+    passed,
+    score,
+    seamComplexityRatio: passed ? 1.1 : 2.4,
+    thresholds: {
+      bandDelta: 28,
+      edgeDelta: 18,
+      horizonPeakShiftRatio: 0.06,
+      lumaDelta: 18,
+      seamComplexityRatio: 1.8
+    }
   };
 }

@@ -1,4 +1,4 @@
-import { HomeWorkspace } from "@/components/home-workspace";
+import { HomeWorkspace } from "@/components/home-workspace/index";
 import type { Locale } from "@/i18n/routing";
 import { getHomeWorkspaceData } from "@/lib/home-workspace";
 

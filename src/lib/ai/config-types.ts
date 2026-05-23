@@ -47,8 +47,23 @@ export const imageModelInputSchema = z.object({
   isDefault: z.boolean().default(false)
 });
 
+export const instantMeshConfigInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().trim().min(1).max(100),
+  baseUrl: z.string().trim().url(),
+  apiKey: z.string().optional(),
+  clearApiKey: z.boolean().default(false),
+  submitPath: z.string().trim().min(1).max(160).default("/api/instantmesh/tasks"),
+  statusPathTemplate: z.string().trim().min(1).max(200).default("/api/instantmesh/tasks/{taskId}"),
+  pollIntervalMs: z.coerce.number().int().min(500).max(30000).default(1500),
+  timeoutSeconds: z.coerce.number().int().min(30).max(3600).default(900),
+  enabled: z.boolean().default(true),
+  isDefault: z.boolean().default(false)
+});
+
 export type AiProviderInput = z.infer<typeof aiProviderInputSchema>;
 export type ImageModelInput = z.infer<typeof imageModelInputSchema>;
+export type InstantMeshConfigInput = z.infer<typeof instantMeshConfigInputSchema>;
 export type LlmModelInput = z.infer<typeof llmModelInputSchema>;
 export type VectorModelInput = z.infer<typeof vectorModelInputSchema>;
 
@@ -115,9 +130,25 @@ export type ImageModelView = {
   updatedAt: string;
 };
 
+export type InstantMeshConfigView = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  submitPath: string;
+  statusPathTemplate: string;
+  pollIntervalMs: number;
+  timeoutSeconds: number;
+  enabled: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AiConfigSnapshot = {
   providers: AiProviderView[];
   imageModels: ImageModelView[];
+  instantMeshConfigs: InstantMeshConfigView[];
   llmModels: LlmModelView[];
   vectorModels: VectorModelView[];
 };

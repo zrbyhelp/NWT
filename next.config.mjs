@@ -6,7 +6,7 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const nextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: "12mb"
+      bodySizeLimit: "80mb"
     }
   },
   typedRoutes: true

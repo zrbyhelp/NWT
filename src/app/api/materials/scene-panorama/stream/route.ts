@@ -86,13 +86,16 @@ async function readPanoramaRequestBody(request: NextRequest): Promise<{
   const motherFile = motherValue instanceof File && motherValue.size > 0 ? motherValue : null;
   const motherUrlValue = formData.get("motherUrl");
   const motherUrl = typeof motherUrlValue === "string" && motherUrlValue.trim() ? motherUrlValue.trim() : null;
+  const motherSource = formData.get("motherSource");
 
   return {
     blockId: formData.get("blockId"),
     input,
     locale: formData.get("locale"),
     maxRedrawAttempts: formData.get("maxRedrawAttempts"),
-    motherImage: await prepareScenePanoramaMotherImage(motherFile, motherUrl, request.nextUrl.origin),
+    motherImage: await prepareScenePanoramaMotherImage(motherFile, motherUrl, request.nextUrl.origin, {
+      allowOversizeFile: motherSource === "generated"
+    }),
     referenceImages: await prepareScenePanoramaReferenceImages(referenceFiles)
   };
 }

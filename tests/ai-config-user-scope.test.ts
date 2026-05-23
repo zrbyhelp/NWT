@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
       update: vi.fn(),
       updateMany: vi.fn()
     },
+    instantMeshConfig: {
+      findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn()
+    },
     vectorModel: {
       findMany: vi.fn(),
       update: vi.fn(),
@@ -42,9 +47,11 @@ describe("user-scoped AI configuration", () => {
     mocks.prisma.aiProvider.findMany.mockResolvedValue([]);
     mocks.prisma.llmModel.findMany.mockResolvedValue([]);
     mocks.prisma.imageModel.findMany.mockResolvedValue([]);
+    mocks.prisma.instantMeshConfig.findMany.mockResolvedValue([]);
     mocks.prisma.vectorModel.findMany.mockResolvedValue([]);
     mocks.prisma.llmModel.updateMany.mockResolvedValue({});
     mocks.prisma.imageModel.updateMany.mockResolvedValue({});
+    mocks.prisma.instantMeshConfig.updateMany.mockResolvedValue({});
     mocks.prisma.vectorModel.updateMany.mockResolvedValue({});
     delete process.env.OPENAI_BASE_URL;
     delete process.env.OPENAI_API_KEY;
@@ -74,6 +81,11 @@ describe("user-scoped AI configuration", () => {
     expect(mocks.prisma.imageModel.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { provider: { userId: "user-a" } }
+      })
+    );
+    expect(mocks.prisma.instantMeshConfig.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-a" }
       })
     );
   });

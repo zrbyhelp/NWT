@@ -2,7 +2,7 @@
 
 import type { Locale } from "@/i18n/routing";
 import type { AuthCredentialsInput, AuthPasswordInput, AuthPreferencesInput, AuthProfileInput } from "@/lib/auth-types";
-import type { AiProviderInput, ImageModelInput, LlmModelInput, VectorModelInput } from "@/lib/ai/config-types";
+import type { AiProviderInput, ImageModelInput, InstantMeshConfigInput, LlmModelInput, VectorModelInput } from "@/lib/ai/config-types";
 import type { OutboundProxySettings } from "@/lib/system-settings-types";
 import {
   changeCurrentViewerPassword,
@@ -17,34 +17,43 @@ import {
 import {
   deleteAiProvider,
   deleteImageModel,
+  deleteInstantMeshConfig,
   deleteLlmModel,
   deleteVectorModel,
   fetchProviderModels,
   getAiConfigSnapshot,
   saveAiProvider,
   saveImageModel,
+  saveInstantMeshConfig,
   saveLlmModel,
   saveVectorModel
 } from "@/lib/ai/model-config";
 import {
   addMaterialToLibrary,
+  assistItemDraft,
   assistMaskDraft,
   assistSceneDraft,
   createConversation,
+  createItemMaterial,
   createMaskMaterial,
   createSceneMaterial,
   deleteSelfCreatedMaterial,
   deleteConversation,
   cleanupUploadedMaterialImages,
+  generateItemBoard,
+  generateItemModelInputImage,
   generateMaskBoard,
   generateSceneBlockPanorama,
   prepareSceneAssistReferenceImages,
   sendConversationMessage,
   setMaterialCommunitySharing,
+  updateItemMaterial,
   updateMaskMaterial,
   updateSceneMaterial,
   uploadScenePanoramaFace,
   uploadScenePanoramaMother,
+  type ItemMaterialCreateInput,
+  type ItemMaterialImageMode,
   type MaskMaterialBoardImageMode,
   type MaskMaterialCreateInput,
   type SceneMaterialCreateInput
@@ -74,6 +83,31 @@ export async function assistHomeMaskDraft(input: MaskMaterialCreateInput, instru
 
 export async function generateHomeMaskBoard(input: MaskMaterialCreateInput, locale: Locale) {
   return generateMaskBoard(input, locale);
+}
+
+export async function assistHomeItemDraft(input: ItemMaterialCreateInput, instruction: string, locale: Locale) {
+  return assistItemDraft(input, instruction, locale);
+}
+
+export async function generateHomeItemBoard(input: ItemMaterialCreateInput, locale: Locale) {
+  return generateItemBoard(input, locale);
+}
+
+export async function generateHomeItemModelInputImage(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("ITEM_DRAFT_REQUIRED");
+  }
+
+  if (!(boardImageValue instanceof File) || boardImageValue.size <= 0) {
+    throw new Error("ITEM_BOARD_IMAGE_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as ItemMaterialCreateInput;
+
+  return generateItemModelInputImage(draft, boardImageValue, locale);
 }
 
 export async function assistHomeSceneDraft(input: SceneMaterialCreateInput, instruction: string, locale: Locale) {
@@ -114,7 +148,9 @@ export async function uploadHomeScenePanoramaFace(formData: FormData) {
   try {
     return {
       face,
-      url: await uploadScenePanoramaFace(viewer.id, file)
+      url: await uploadScenePanoramaFace(viewer.id, file, {
+        allowOversize: isGeneratedScenePanoramaUploadSource(formData.get("source"))
+      })
     };
   } catch (error) {
     throw normalizeScenePanoramaUploadError(error);
@@ -131,7 +167,9 @@ export async function uploadHomeScenePanoramaMother(formData: FormData) {
 
   try {
     return {
-      url: await uploadScenePanoramaMother(viewer.id, file)
+      url: await uploadScenePanoramaMother(viewer.id, file, {
+        allowOversize: isGeneratedScenePanoramaUploadSource(formData.get("source"))
+      })
     };
   } catch (error) {
     throw normalizeScenePanoramaUploadError(error);
@@ -152,6 +190,10 @@ function normalizeScenePanoramaUploadError(error: unknown) {
   return new Error("SCENE_PANORAMA_UPLOAD_FAILED");
 }
 
+function isGeneratedScenePanoramaUploadSource(value: FormDataEntryValue | null) {
+  return typeof value === "string" && ["generated", "reference-repaint", "direct-cut"].includes(value);
+}
+
 export async function createHomeMaskMaterial(formData: FormData, locale: Locale) {
   const draftValue = formData.get("draft");
   const boardImageValue = formData.get("boardImage");
@@ -164,6 +206,21 @@ export async function createHomeMaskMaterial(formData: FormData, locale: Locale)
   const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
 
   return createMaskMaterial(draft, boardImageFile, locale);
+}
+
+export async function createHomeItemMaterial(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("ITEM_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as ItemMaterialCreateInput;
+  const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
+  const modelInputImageFile = getItemModelInputImageFile(formData);
+
+  return createItemMaterial(draft, boardImageFile, modelInputImageFile, locale);
 }
 
 export async function createHomeSceneMaterial(formData: FormData, locale: Locale) {
@@ -194,6 +251,29 @@ export async function updateHomeMaskMaterial(materialId: string, formData: FormD
   const boardImageMode = isMaskMaterialBoardImageMode(boardImageModeValue) ? boardImageModeValue : boardImageFile ? "replace" : "keep";
 
   return updateMaskMaterial(materialId, draft, boardImageFile, boardImageMode, locale);
+}
+
+export async function updateHomeItemMaterial(materialId: string, formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+  const boardImageModeValue = formData.get("boardImageMode");
+  const modelInputImageModeValue = formData.get("modelInputImageMode");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("ITEM_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as ItemMaterialCreateInput;
+  const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
+  const boardImageMode = isItemMaterialImageMode(boardImageModeValue) ? boardImageModeValue : boardImageFile ? "replace" : "keep";
+  const modelInputImageFile = getItemModelInputImageFile(formData);
+  const modelInputImageMode = isItemMaterialImageMode(modelInputImageModeValue)
+    ? modelInputImageModeValue
+    : modelInputImageFile
+      ? "replace"
+      : "keep";
+
+  return updateItemMaterial(materialId, draft, boardImageFile, boardImageMode, modelInputImageFile, modelInputImageMode, locale);
 }
 
 export async function updateHomeSceneMaterial(materialId: string, formData: FormData, locale: Locale) {
@@ -325,6 +405,26 @@ export async function deleteHomeImageModel(modelId: string) {
   return deleteImageModel(viewer.id, modelId);
 }
 
+export async function saveHomeInstantMeshConfig(input: InstantMeshConfigInput) {
+  const viewer = await requireAuth();
+  return saveInstantMeshConfig(viewer.id, input);
+}
+
+export async function deleteHomeInstantMeshConfig(configId: string) {
+  const viewer = await requireAuth();
+  return deleteInstantMeshConfig(viewer.id, configId);
+}
+
 function isMaskMaterialBoardImageMode(value: FormDataEntryValue | null): value is MaskMaterialBoardImageMode {
   return value === "keep" || value === "replace" || value === "clear";
+}
+
+function isItemMaterialImageMode(value: FormDataEntryValue | null): value is ItemMaterialImageMode {
+  return value === "keep" || value === "replace" || value === "clear";
+}
+
+function getItemModelInputImageFile(formData: FormData) {
+  const file = formData.get("modelInputImage");
+
+  return file instanceof File && file.size > 0 ? file : null;
 }
