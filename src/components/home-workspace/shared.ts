@@ -19,6 +19,9 @@ import {
 import type {
   ItemDraftPatch,
   ItemMaterialCreateInput,
+  CreatureDraftPatch,
+  CreatureMaterialCreateInput,
+  WorkspaceCreatureMaterialMetadata,
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceConversation,
@@ -35,6 +38,9 @@ import type {
 export type {
   ItemDraftPatch,
   ItemMaterialCreateInput,
+  CreatureDraftPatch,
+  CreatureMaterialCreateInput,
+  WorkspaceCreatureMaterialMetadata,
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceConversation,
@@ -332,12 +338,63 @@ export const maskPersonalityGroups = [
   { id: "behavior", fields: ["action", "curiosity", "performative"] }
 ] as const;
 export const maskBoardDrawingStyles = ["photo", "realistic", "anime", "painterly", "cel", "guofeng", "comic", "concept"] as const;
+export const creatureTaxonomyFields = [
+  { id: "creatureType", options: ["beast", "spirit", "insectoid", "aquatic", "avian", "plantlike", "construct", "swarm"] }
+] as const;
+export const creatureMorphologyFields = [
+  { id: "sizeClass", options: ["tiny", "small", "medium", "large", "giant", "colossal"] },
+  { id: "length", unit: "m", options: [] },
+  { id: "weight", unit: "kg", options: [] },
+  { id: "limbStructure", options: ["quadruped", "biped", "multiLimbed", "winged", "serpentine", "tentacled"] },
+  { id: "bodyCovering", options: ["fur", "scales", "feathers", "shell", "skin", "chitin", "bark", "mist"] },
+  { id: "headFeature", options: ["horns", "crest", "mandibles", "beak", "maskFace", "multipleEyes", "noVisibleHead"] },
+  { id: "tailAppendage", options: ["tail", "stinger", "fins", "tendrils", "none", "multipleTails"] },
+  { id: "movement", options: ["walk", "run", "fly", "swim", "burrow", "crawl", "float", "phase"] },
+  { id: "specialOrgans", options: ["glowCore", "scentGlands", "sonarSac", "sporePouch", "venomGland", "crystalGrowth"] }
+] as const;
+export const creatureColorFields = [
+  { id: "primaryColor", swatches: ["#2F5D46", "#6E7F45", "#4B5563", "#8B5E34", "#1F2937", "#F2F0E8"] },
+  { id: "secondaryColor", swatches: ["#7C3AED", "#0EA5E9", "#F97316", "#A3E635", "#94A3B8", "#B45309"] },
+  { id: "markingColor", swatches: ["#FACC15", "#EF4444", "#22C55E", "#38BDF8", "#E879F9", "#111827"] },
+  { id: "glowColor", swatches: ["#67E8F9", "#A7F3D0", "#FDE68A", "#F0ABFC", "#BFDBFE", "#FFFFFF"] }
+] as const;
+export const creatureVocalizationFields = [
+  { id: "frequency", min: 0, max: 100, defaultValue: 50 },
+  { id: "rhythm", min: 0, max: 100, defaultValue: 50 },
+  { id: "volume", min: 0, max: 100, defaultValue: 50 },
+  { id: "emotionReadability", min: 0, max: 100, defaultValue: 50 },
+  { id: "mimicry", min: 0, max: 100, defaultValue: 20 }
+] as const;
+export const creatureSenseFields = [
+  { id: "sensoryAcuity", min: 0, max: 100, defaultValue: 55 }
+] as const;
+export const creatureEcologyFields = [
+  { id: "habitat", options: ["forest", "ruins", "cave", "wetland", "desert", "deepSea", "urban", "void"] },
+  { id: "diet", options: ["herbivore", "carnivore", "omnivore", "photosynthetic", "mineral", "energy", "parasitic"] },
+  { id: "activityCycle", options: ["diurnal", "nocturnal", "crepuscular", "seasonal", "triggered", "dormant"] },
+  { id: "socialStructure", options: ["solitary", "pair", "pack", "hive", "herd", "colony", "symbiotic"] },
+  { id: "reproduction", options: ["eggs", "liveBirth", "spores", "budding", "fragmentation", "ritual", "manufactured"] }
+] as const;
+export const creatureAbilityFields = ["powers", "weaknesses", "resourceNeeds", "interactionUses", "dangerNotes", "keywords"] as const;
+export const creatureBehaviorGroups = [
+  { id: "survival", fields: ["aggression", "territoriality", "alertness", "stealth", "persistence"] },
+  { id: "social", fields: ["sociability", "curiosity", "adaptability", "tameability", "bonding"] },
+  { id: "interaction", fields: ["threatResponse", "resourceGuarding"] }
+] as const;
 export const itemTagFields = ["traits", "uses", "functions", "materials", "colors", "styles", "keywords"] as const;
 export type MaskBodyFieldId = (typeof maskBodyFields)[number]["id"];
 export type MaskColorFieldId = (typeof maskColorFields)[number]["id"];
 export type MaskVoiceFieldId = (typeof maskVoiceFields)[number]["id"];
 export type MaskPersonalityFieldId = (typeof maskPersonalityGroups)[number]["fields"][number];
 export type MaskBoardDrawingStyle = (typeof maskBoardDrawingStyles)[number];
+export type CreatureTaxonomyFieldId = (typeof creatureTaxonomyFields)[number]["id"];
+export type CreatureMorphologyFieldId = (typeof creatureMorphologyFields)[number]["id"];
+export type CreatureColorFieldId = (typeof creatureColorFields)[number]["id"];
+export type CreatureVocalizationFieldId = (typeof creatureVocalizationFields)[number]["id"];
+export type CreatureSenseFieldId = (typeof creatureSenseFields)[number]["id"];
+export type CreatureEcologyFieldId = (typeof creatureEcologyFields)[number]["id"];
+export type CreatureAbilityFieldId = (typeof creatureAbilityFields)[number];
+export type CreatureBehaviorFieldId = (typeof creatureBehaviorGroups)[number]["fields"][number];
 export type ScenePanoramaDrawingStyle = MaskBoardDrawingStyle;
 export type SceneReferenceImageDraft = {
   id: string;
@@ -374,6 +431,25 @@ export type MaskDraftPatch = {
   colors?: Partial<Record<MaskColorFieldId, string>>;
   voice?: Partial<Record<MaskVoiceFieldId, number>>;
   personality?: Partial<Record<MaskPersonalityFieldId, number>>;
+};
+export type CreatureCreateDraft = {
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  taxonomy: Record<CreatureTaxonomyFieldId, string>;
+  morphology: Record<CreatureMorphologyFieldId, string>;
+  colors: Record<CreatureColorFieldId, string>;
+  vocalization: Record<CreatureVocalizationFieldId, number>;
+  senses: Record<CreatureSenseFieldId, number>;
+  ecology: Record<CreatureEcologyFieldId, string>;
+  abilities: Record<CreatureAbilityFieldId, string[]>;
+  behaviorLogic: string;
+  behavior: Record<CreatureBehaviorFieldId, number>;
+  boardDrawingStyle: MaskBoardDrawingStyle;
+  boardImagePreviewUrl: string;
+  boardImageFile: File | null;
+  boardImageSource: MaskBoardImageSource;
+  aiMessages: MaskAiMessage[];
 };
 export type ScenePanoramaFace = (typeof scenePanoramaFaces)[number];
 export type ItemViewFace = ScenePanoramaFace;

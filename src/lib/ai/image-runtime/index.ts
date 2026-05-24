@@ -52,6 +52,7 @@ import {
   type ImageRuntimeConfig,
   type ScenePanoramaFace,
   type ScenePanoramaFaceImage,
+  type ScenePanoramaColorStatus,
   type ScenePanoramaGenerationInput,
   type ScenePanoramaGenerationOptions,
   type ScenePanoramaGenerationResult,
@@ -618,14 +619,20 @@ async function validateProvidedScenePanoramaMotherImage(
   };
 }
 
-export async function generateDefaultItemBoardImage(prompt: string, userId: string, observationContext?: AiObservationContext) {
+export async function generateDefaultItemBoardImage(
+  prompt: string,
+  userId: string,
+  observationContext?: AiObservationContext,
+  options: { referenceImages?: ScenePanoramaReferenceImage[] } = {}
+) {
   const config = await getDefaultImageRuntimeConfig(userId);
   const callPreset = getImageModelCallPreset(config);
   const promptWithTarget = appendItemBoardTargetPrompt(prompt);
+  const referenceImages = options.referenceImages ?? [];
   const context: AiObservationContext = {
     ...observationContext,
     feature: observationContext?.feature ?? "image.item-board",
-    input: { prompt: promptWithTarget, targetResolution: maskBoardTargetResolution },
+    input: { prompt: promptWithTarget, referenceImageCount: referenceImages.length, targetResolution: maskBoardTargetResolution },
     modelId: config.modelId,
     providerName: config.providerName,
     userId: observationContext?.userId ?? userId
@@ -635,13 +642,15 @@ export async function generateDefaultItemBoardImage(prompt: string, userId: stri
     const client = await createImageOpenAiClient(config);
 
     updateAiObservation(span, {
-      input: { prompt: promptWithTarget, targetResolution: maskBoardTargetResolution },
+      input: { prompt: promptWithTarget, referenceImageCount: referenceImages.length, targetResolution: maskBoardTargetResolution },
       metadata: {
         baseUrl: config.baseUrl,
         imageCallPreset: callPreset.id,
         modelId: config.modelId,
         requestSize: callPreset.maskBoardSize,
         providerName: config.providerName,
+        referenceImageCount: referenceImages.length,
+        referenceImages: summarizeReferenceImages(referenceImages),
         targetResolution: maskBoardTargetResolution
       }
     });
@@ -652,6 +661,7 @@ export async function generateDefaultItemBoardImage(prompt: string, userId: stri
       fileName: "item-board.png",
       kind: "maskBoard",
       prompt: promptWithTarget,
+      referenceImages,
       size: callPreset.maskBoardSize
     });
     const normalized = await normalizeMaskBoardImageResult(result);
@@ -1002,7 +1012,40 @@ async function generateScenePanoramaInternal(
           }
         }
       );
-      for (const face of colorResult.faces) {
+      let quality = repaintResult.quality;
+      let qualitySource = "pre-color" as "pre-color" | "final-color";
+      let finalQualityError: string | undefined;
+      let selectedFinalFaces = colorResult.faces;
+      let color: ScenePanoramaColorReport = colorResult.report;
+      let colorStatus: ScenePanoramaColorStatus = colorResult.status;
+
+      try {
+        const finalColorQuality = await analyzeScenePanoramaFaces(colorResult.faces, { faceSize: sizeProfile.faceSize });
+        const preColorScore = getScenePanoramaQualityScore(repaintResult.quality);
+        const finalColorScore = getScenePanoramaQualityScore(finalColorQuality);
+        const shouldKeepColorResult =
+          colorResult.status !== "adjusted" ||
+          finalColorScore <= preColorScore ||
+          finalColorQuality.issues.length < repaintResult.quality.issues.length;
+
+        if (shouldKeepColorResult) {
+          quality = finalColorQuality;
+          qualitySource = "final-color";
+        } else {
+          selectedFinalFaces = repaintResult.faces;
+          color = {
+            ...colorResult.report,
+            colorAdjusted: false,
+            colorRejected: true
+          };
+          colorStatus = "rejected";
+          qualitySource = "pre-color";
+        }
+      } catch (error) {
+        finalQualityError = truncateErrorMessage(getErrorMessage(error));
+      }
+
+      for (const face of selectedFinalFaces) {
         await emit({
           type: "face",
           attempt: repaintResult.bestAttempt,
@@ -1012,10 +1055,8 @@ async function generateScenePanoramaInternal(
         });
       }
 
-      const faces = faceBuffersToResult(colorResult.faces);
-      const quality = repaintResult.quality;
-      const color = colorResult.report;
-      const colorStatus = colorResult.status;
+      const faces = faceBuffersToResult(selectedFinalFaces);
+      const qualityPassed = isScenePanoramaQualityPassing(quality);
       const colorError = "error" in colorResult ? colorResult.error : undefined;
 
       updateAiObservation(span, {
@@ -1035,6 +1076,7 @@ async function generateScenePanoramaInternal(
           faceCount: scenePanoramaFaces.length,
           faceEditSize: sizeProfile.faceEditSize,
           faceSize: sizeProfile.faceSize,
+          finalQualityError,
           largestFaceBytes: quality.largestFaceBytes,
           maxFaceColorDelta: color.maxFaceColorDelta,
           maxFaceColorDeltaAfter: color.maxFaceColorDeltaAfter,
@@ -1045,8 +1087,9 @@ async function generateScenePanoramaInternal(
           motherQualityPassed: motherResult.qualityPassed,
           motherQualityScore: motherResult.quality.score,
           motherSize: sizeProfile.motherSize,
-          qualityBestEffort: !repaintResult.qualityPassed,
-          qualityPassed: repaintResult.qualityPassed,
+          qualityBestEffort: !qualityPassed,
+          qualityPassed,
+          qualitySource,
           qualityRepairRounds: repaintResult.qualityRepairRounds,
           qualityRetriedFaces: repaintResult.qualityRetriedFaces,
           repaired: true,
@@ -1067,6 +1110,7 @@ async function generateScenePanoramaInternal(
           colorStatus,
           earlyStopped: repaintResult.earlyStopped,
           faceCount: scenePanoramaFaces.length,
+          finalQualityError,
           largestFaceBytes: quality.largestFaceBytes,
           maxFaceColorDelta: color.maxFaceColorDelta,
           maxFaceColorDeltaAfter: color.maxFaceColorDeltaAfter,
@@ -1076,8 +1120,9 @@ async function generateScenePanoramaInternal(
           mode: "enhanced",
           motherQualityPassed: motherResult.qualityPassed,
           motherQualityScore: motherResult.quality.score,
-          qualityBestEffort: !repaintResult.qualityPassed,
-          qualityPassed: repaintResult.qualityPassed,
+          qualityBestEffort: !qualityPassed,
+          qualityPassed,
+          qualitySource,
           qualityRepairRounds: repaintResult.qualityRepairRounds,
           qualityRetriedFaces: repaintResult.qualityRetriedFaces,
           repaired: true,
@@ -1097,8 +1142,8 @@ async function generateScenePanoramaInternal(
         motherQuality: motherResult.quality,
         motherQualityPassed: motherResult.qualityPassed,
         quality,
-        qualityBestEffort: !repaintResult.qualityPassed,
-        qualityPassed: repaintResult.qualityPassed,
+        qualityBestEffort: !qualityPassed,
+        qualityPassed,
         repaired: true,
         sizeProfile: sizeProfile.id
       } satisfies ScenePanoramaGenerationResult;

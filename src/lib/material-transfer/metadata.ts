@@ -26,6 +26,15 @@ export function updateImportedMetadataImage(
       : null;
   }
 
+  if (record.kind === "creature" && ("boardImage" in record || previewUrl)) {
+    record.boardImage = previewUrl
+      ? {
+          source: getMaskBoardImageSource(record.boardImage) ?? "uploaded",
+          url: previewUrl
+        }
+      : null;
+  }
+
   if (record.kind === "item") {
     if ("boardImage" in record || previewUrl) {
       record.boardImage = previewUrl
@@ -151,6 +160,16 @@ export function getMaskMetadataRecord(metadata: unknown) {
   const record = metadata as Record<string, unknown>;
 
   return record.kind === "mask" ? record : null;
+}
+
+export function getCreatureMetadataRecord(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+
+  const record = metadata as Record<string, unknown>;
+
+  return record.kind === "creature" ? record : null;
 }
 
 export function getSceneMetadataRecord(metadata: unknown) {

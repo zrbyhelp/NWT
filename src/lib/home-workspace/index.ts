@@ -43,6 +43,7 @@ import {
   isValidMaterialImageFile,
   isValidScenePanoramaImageBytes,
   isValidScenePanoramaImageFile,
+  uploadCreatureBoardImage,
   uploadMaskBoardImage,
   uploadItemBoardImage,
   uploadItemModelInputImage,
@@ -60,6 +61,9 @@ export type {
   MaskDraftPatch,
   MaskAiAssistResult,
   MaskBoardGenerationResult,
+  CreatureDraftPatch,
+  CreatureAiAssistResult,
+  CreatureBoardGenerationResult,
   ItemViewFace,
   ItemViewImageResult,
   ItemBoardGenerationResult,
@@ -67,6 +71,7 @@ export type {
   ItemModelInputImageResult,
   ItemViewsGenerationResult,
   MaskMaterialCreateInput,
+  CreatureMaterialCreateInput,
   SceneMaterialCreateInput,
   ItemMaterialCreateInput,
   ItemDraftPatch,
@@ -87,7 +92,16 @@ export type {
   WorkspaceMaskBoardImageSource,
   WorkspaceMaskVoiceFieldId,
   WorkspaceMaskPersonalityFieldId,
+  WorkspaceCreatureTaxonomyFieldId,
+  WorkspaceCreatureMorphologyFieldId,
+  WorkspaceCreatureColorFieldId,
+  WorkspaceCreatureVocalizationFieldId,
+  WorkspaceCreatureSenseFieldId,
+  WorkspaceCreatureEcologyFieldId,
+  WorkspaceCreatureAbilityFieldId,
+  WorkspaceCreatureBehaviorFieldId,
   WorkspaceMaskMaterialMetadata,
+  WorkspaceCreatureMaterialMetadata,
   WorkspaceItemMaterialMetadata,
   WorkspaceSceneMaterialMetadata,
   WorkspaceMaterialMetadata,
@@ -108,6 +122,9 @@ import type {
   MaskDraftPatch,
   MaskAiAssistResult,
   MaskBoardGenerationResult,
+  CreatureDraftPatch,
+  CreatureAiAssistResult,
+  CreatureBoardGenerationResult,
   ItemViewFace,
   ItemViewImageResult,
   ItemBoardGenerationResult,
@@ -115,6 +132,7 @@ import type {
   ItemModelInputImageResult,
   ItemViewsGenerationResult,
   MaskMaterialCreateInput,
+  CreatureMaterialCreateInput,
   SceneMaterialCreateInput,
   ItemMaterialCreateInput,
   ItemDraftPatch,
@@ -135,7 +153,16 @@ import type {
   WorkspaceMaskBoardImageSource,
   WorkspaceMaskVoiceFieldId,
   WorkspaceMaskPersonalityFieldId,
+  WorkspaceCreatureTaxonomyFieldId,
+  WorkspaceCreatureMorphologyFieldId,
+  WorkspaceCreatureColorFieldId,
+  WorkspaceCreatureVocalizationFieldId,
+  WorkspaceCreatureSenseFieldId,
+  WorkspaceCreatureEcologyFieldId,
+  WorkspaceCreatureAbilityFieldId,
+  WorkspaceCreatureBehaviorFieldId,
   WorkspaceMaskMaterialMetadata,
+  WorkspaceCreatureMaterialMetadata,
   WorkspaceItemMaterialMetadata,
   WorkspaceSceneMaterialMetadata,
   WorkspaceMaterialMetadata,
@@ -563,38 +590,29 @@ export async function updateMaskMaterial(
   });
 }
 
-export async function createItemMaterial(
-  input: ItemMaterialCreateInput,
-  boardImageFile: File | null,
-  modelInputImageFile: File | null,
-  locale: Locale
-) {
+export async function createCreatureMaterial(input: CreatureMaterialCreateInput, boardImageFile: File | null, locale: Locale) {
   const viewer = await requireAuth();
   const name = input.name.trim();
   const description = input.description.trim();
 
   if (!name) {
-    throw new Error("ITEM_NAME_REQUIRED");
+    throw new Error("CREATURE_NAME_REQUIRED");
   }
 
   await ensureHomeWorkspaceDefaults(viewer.id);
 
-  const boardUrl = boardImageFile && boardImageFile.size > 0 ? await uploadItemBoardImage(viewer.id, boardImageFile) : null;
-  const modelInputImageUrl = modelInputImageFile && modelInputImageFile.size > 0
-    ? await uploadItemModelInputImage(viewer.id, modelInputImageFile)
-    : input.modelInputImage?.url || null;
-  const previewUrl = boardUrl ?? modelInputImageUrl ?? null;
+  const previewUrl = boardImageFile && boardImageFile.size > 0 ? await uploadCreatureBoardImage(viewer.id, boardImageFile) : null;
   const material = await prisma.storyMaterial.create({
     data: {
-      slug: createUserMaterialSlug("item", name),
-      category: "ITEM",
+      slug: createUserMaterialSlug("creature", name),
+      category: "CREATURE",
       style: toStoryMaterialStyle(input.style),
       titleZh: name,
       titleEn: name,
       descriptionZh: description || name,
       descriptionEn: description || name,
       previewUrl,
-      metadata: buildItemMaterialMetadata(input, boardUrl, input.boardImageSource, modelInputImageUrl, getExistingItemViewImageUrlsFromInput(input)),
+      metadata: buildCreatureMaterialMetadata(input, previewUrl, input.boardImageSource),
       communityVisible: false,
       libraryEntries: {
         create: {
@@ -613,13 +631,11 @@ export async function createItemMaterial(
   });
 }
 
-export async function updateItemMaterial(
+export async function updateCreatureMaterial(
   materialId: string,
-  input: ItemMaterialCreateInput,
+  input: CreatureMaterialCreateInput,
   boardImageFile: File | null,
-  boardImageMode: ItemMaterialImageMode,
-  modelInputImageFile: File | null,
-  modelInputImageMode: ItemMaterialImageMode,
+  boardImageMode: MaskMaterialBoardImageMode,
   locale: Locale
 ) {
   const viewer = await requireAuth();
@@ -627,7 +643,7 @@ export async function updateItemMaterial(
   const description = input.description.trim();
 
   if (!name) {
-    throw new Error("ITEM_NAME_REQUIRED");
+    throw new Error("CREATURE_NAME_REQUIRED");
   }
 
   const entry = await prisma.storyMaterialLibraryEntry.findFirst({
@@ -641,52 +657,44 @@ export async function updateItemMaterial(
     }
   });
 
-  if (!entry || normalizeMaterialCategory(entry.material.category) !== "item") {
+  if (!entry || normalizeMaterialCategory(entry.material.category) !== "creature") {
     throw new Error("MATERIAL_NOT_EDITABLE");
   }
 
-  const existingMetadata = getItemMaterialMetadata(entry.material.metadata);
-  let boardUrl = existingMetadata?.boardImage?.url ?? entry.material.previewUrl ?? null;
-  let boardImageSource: WorkspaceMaskBoardImageSource | null = existingMetadata?.boardImage?.source ?? input.boardImageSource ?? null;
-  let modelInputImageUrl = (existingMetadata?.modelInputImage?.url ?? input.modelInputImage?.url) || null;
-  let viewImageUrls = getExistingItemViewImageUrls(existingMetadata);
+  let previewUrl = entry.material.previewUrl ?? null;
+  let boardImageSource = getExistingMaskBoardImageSource(entry.material.metadata) ?? input.boardImageSource ?? null;
 
   if (boardImageMode === "replace") {
     if (!boardImageFile || boardImageFile.size <= 0) {
       throw new Error("INVALID_MATERIAL_IMAGE_FILE");
     }
 
-    boardUrl = await uploadItemBoardImage(viewer.id, boardImageFile);
+    previewUrl = await uploadCreatureBoardImage(viewer.id, boardImageFile);
     boardImageSource = input.boardImageSource ?? "uploaded";
   } else if (boardImageMode === "clear") {
-    boardUrl = null;
+    previewUrl = null;
     boardImageSource = null;
+  } else if (previewUrl && !boardImageSource) {
+    boardImageSource = "uploaded";
   }
 
-  if (modelInputImageMode === "replace") {
-    if (!modelInputImageFile || modelInputImageFile.size <= 0) {
-      throw new Error("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE");
-    }
-
-    modelInputImageUrl = await uploadItemModelInputImage(viewer.id, modelInputImageFile);
-  } else if (modelInputImageMode === "clear") {
-    modelInputImageUrl = null;
-  }
-
-  const previewUrl = boardUrl ?? modelInputImageUrl ?? viewImageUrls.front ?? null;
   const material = await prisma.storyMaterial.update({
     where: {
       id: entry.material.id
     },
     data: {
-      category: "ITEM",
+      category: "CREATURE",
       style: toStoryMaterialStyle(input.style),
       titleZh: name,
       titleEn: name,
       descriptionZh: description || name,
       descriptionEn: description || name,
       previewUrl,
-      metadata: buildItemMaterialMetadata(input, boardUrl, boardImageSource, modelInputImageUrl, viewImageUrls)
+      metadata: buildCreatureMaterialMetadata(
+        input,
+        previewUrl,
+        boardImageSource ?? input.boardImageSource ?? null
+      )
     }
   });
 
@@ -696,6 +704,230 @@ export async function updateItemMaterial(
     inLibrary: true,
     librarySource: "SELF_CREATED"
   });
+}
+
+export async function createItemMaterial(
+  input: ItemMaterialCreateInput,
+  boardImageFile: File | null,
+  modelInputImageFile: File | null,
+  locale: Locale
+) {
+  const viewer = await requireAuth();
+  const uploadedUrls: string[] = [];
+  let persistenceStage: ItemMaterialPersistenceStage = "prepare";
+
+  try {
+    const name = input.name.trim();
+    const description = input.description.trim();
+
+    if (!name) {
+      throw new Error("ITEM_NAME_REQUIRED");
+    }
+
+    await ensureHomeWorkspaceDefaults(viewer.id);
+
+    persistenceStage = "upload";
+    const boardUrl = boardImageFile && boardImageFile.size > 0 ? await uploadItemBoardImage(viewer.id, boardImageFile) : null;
+
+    if (boardUrl) {
+      uploadedUrls.push(boardUrl);
+    }
+
+    const modelInputImageUrl = modelInputImageFile && modelInputImageFile.size > 0
+      ? await uploadItemModelInputImage(viewer.id, modelInputImageFile)
+      : input.modelInputImage?.url || null;
+
+    if (modelInputImageFile && modelInputImageFile.size > 0 && modelInputImageUrl) {
+      uploadedUrls.push(modelInputImageUrl);
+    }
+
+    persistenceStage = "record";
+    const previewUrl = boardUrl ?? modelInputImageUrl ?? null;
+    const material = await prisma.storyMaterial.create({
+      data: {
+        slug: createUserMaterialSlug("item", name),
+        category: "ITEM",
+        style: toStoryMaterialStyle(input.style),
+        titleZh: name,
+        titleEn: name,
+        descriptionZh: description || name,
+        descriptionEn: description || name,
+        previewUrl,
+        metadata: buildItemMaterialMetadata(input, boardUrl, input.boardImageSource, modelInputImageUrl, getExistingItemViewImageUrlsFromInput(input)),
+        communityVisible: false,
+        libraryEntries: {
+          create: {
+            userId: viewer.id,
+            source: "SELF_CREATED"
+          }
+        }
+      }
+    });
+
+    revalidatePath(`/${locale}`);
+
+    return mapMaterial(material, locale, {
+      inLibrary: true,
+      librarySource: "SELF_CREATED"
+    });
+  } catch (error) {
+    await cleanupUploadedItemMaterialImages(uploadedUrls);
+    throw normalizeItemMaterialPersistenceError(error, persistenceStage);
+  }
+}
+
+export async function updateItemMaterial(
+  materialId: string,
+  input: ItemMaterialCreateInput,
+  boardImageFile: File | null,
+  boardImageMode: ItemMaterialImageMode,
+  modelInputImageFile: File | null,
+  modelInputImageMode: ItemMaterialImageMode,
+  locale: Locale
+) {
+  const viewer = await requireAuth();
+  const uploadedUrls: string[] = [];
+  let persistenceStage: ItemMaterialPersistenceStage = "prepare";
+
+  try {
+    const name = input.name.trim();
+    const description = input.description.trim();
+
+    if (!name) {
+      throw new Error("ITEM_NAME_REQUIRED");
+    }
+
+    persistenceStage = "record";
+    const entry = await prisma.storyMaterialLibraryEntry.findFirst({
+      where: {
+        userId: viewer.id,
+        materialId,
+        source: "SELF_CREATED"
+      },
+      include: {
+        material: true
+      }
+    });
+
+    if (!entry || normalizeMaterialCategory(entry.material.category) !== "item") {
+      throw new Error("MATERIAL_NOT_EDITABLE");
+    }
+
+    const existingMetadata = getItemMaterialMetadata(entry.material.metadata);
+    let boardUrl = existingMetadata?.boardImage?.url ?? entry.material.previewUrl ?? null;
+    let boardImageSource: WorkspaceMaskBoardImageSource | null = existingMetadata?.boardImage?.source ?? input.boardImageSource ?? null;
+    let modelInputImageUrl = (existingMetadata?.modelInputImage?.url ?? input.modelInputImage?.url) || null;
+    let viewImageUrls = getExistingItemViewImageUrls(existingMetadata);
+
+    if (boardImageMode === "replace") {
+      if (!boardImageFile || boardImageFile.size <= 0) {
+        throw new Error("INVALID_MATERIAL_IMAGE_FILE");
+      }
+
+      persistenceStage = "upload";
+      boardUrl = await uploadItemBoardImage(viewer.id, boardImageFile);
+      uploadedUrls.push(boardUrl);
+      boardImageSource = input.boardImageSource ?? "uploaded";
+    } else if (boardImageMode === "clear") {
+      boardUrl = null;
+      boardImageSource = null;
+    }
+
+    if (modelInputImageMode === "replace") {
+      if (!modelInputImageFile || modelInputImageFile.size <= 0) {
+        throw new Error("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE");
+      }
+
+      persistenceStage = "upload";
+      modelInputImageUrl = await uploadItemModelInputImage(viewer.id, modelInputImageFile);
+      uploadedUrls.push(modelInputImageUrl);
+    } else if (modelInputImageMode === "clear") {
+      modelInputImageUrl = null;
+    }
+
+    persistenceStage = "record";
+    const previewUrl = boardUrl ?? modelInputImageUrl ?? viewImageUrls.front ?? null;
+    const material = await prisma.storyMaterial.update({
+      where: {
+        id: entry.material.id
+      },
+      data: {
+        category: "ITEM",
+        style: toStoryMaterialStyle(input.style),
+        titleZh: name,
+        titleEn: name,
+        descriptionZh: description || name,
+        descriptionEn: description || name,
+        previewUrl,
+        metadata: buildItemMaterialMetadata(input, boardUrl, boardImageSource, modelInputImageUrl, viewImageUrls)
+      }
+    });
+
+    revalidatePath(`/${locale}`);
+
+    return mapMaterial(material, locale, {
+      inLibrary: true,
+      librarySource: "SELF_CREATED"
+    });
+  } catch (error) {
+    await cleanupUploadedItemMaterialImages(uploadedUrls);
+    throw normalizeItemMaterialPersistenceError(error, persistenceStage);
+  }
+}
+
+type ItemMaterialPersistenceStage = "prepare" | "upload" | "record";
+
+function normalizeItemMaterialPersistenceError(error: unknown, stage: ItemMaterialPersistenceStage) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = getErrorCode(error);
+
+  if (
+    message.includes("ITEM_NAME_REQUIRED") ||
+    message.includes("INVALID_MATERIAL_IMAGE_FILE") ||
+    message.includes("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE") ||
+    message.includes("MATERIAL_NOT_EDITABLE")
+  ) {
+    return error instanceof Error ? error : new Error(message);
+  }
+
+  if (
+    code === "P2000" ||
+    message.includes("Data too long") ||
+    message.includes("max_allowed_packet") ||
+    message.includes("Packet for query is too large") ||
+    message.includes("request entity too large")
+  ) {
+    return new Error("ITEM_MATERIAL_METADATA_TOO_LARGE");
+  }
+
+  if (stage === "upload" || (
+    message.includes("R2") ||
+    message.includes("S3") ||
+    message.includes("AccessDenied") ||
+    message.includes("NoSuchBucket") ||
+    message.includes("SignatureDoesNotMatch") ||
+    message.includes("CredentialsProviderError")
+  )) {
+    return new Error("ITEM_MATERIAL_UPLOAD_FAILED");
+  }
+
+  if (code?.startsWith("P")) {
+    return new Error("ITEM_MATERIAL_DATABASE_FAILED");
+  }
+
+  return new Error("ITEM_MATERIAL_PERSISTENCE_FAILED");
+}
+
+async function cleanupUploadedItemMaterialImages(urls: string[]) {
+  if (urls.length === 0) {
+    return;
+  }
+
+  try {
+    await deleteMaterialImagesByUrls(urls);
+  } catch {
+    // Best-effort cleanup: preserve the original persistence failure for the UI.
+  }
 }
 
 export async function createSceneMaterial(input: SceneMaterialCreateInput, uploadedFaceUrls: string[], locale: Locale) {
@@ -1186,21 +1418,21 @@ export async function generateMaskBoard(input: MaskMaterialCreateInput, locale: 
   });
 }
 
-export async function assistItemDraft(input: ItemMaterialCreateInput, instruction: string, locale: Locale): Promise<ItemAiAssistResult> {
+export async function assistCreatureDraft(input: CreatureMaterialCreateInput, instruction: string, locale: Locale): Promise<CreatureAiAssistResult> {
   const viewer = await requireAuth();
   const normalizedInstruction = instruction.trim();
 
   if (!normalizedInstruction) {
-    throw new Error("ITEM_ASSIST_EMPTY_INSTRUCTION");
+    throw new Error("CREATURE_ASSIST_EMPTY_INSTRUCTION");
   }
 
   const reply = await generateDefaultLlmReply(
-    buildItemAssistMessages(input, normalizedInstruction, locale),
+    buildCreatureAssistMessages(input, normalizedInstruction, locale),
     viewer.id,
     false,
     locale,
     {
-      feature: "item.assist",
+      feature: "creature.assist",
       input: {
         currentDraft: input,
         instruction: normalizedInstruction
@@ -1213,21 +1445,103 @@ export async function assistItemDraft(input: ItemMaterialCreateInput, instructio
 
   return {
     message,
-    patch: sanitizeItemDraftPatch(record.patch)
+    patch: sanitizeCreatureDraftPatch(record.patch)
   };
 }
 
-export async function generateItemBoard(input: ItemMaterialCreateInput, locale: Locale): Promise<ItemBoardGenerationResult> {
+export async function generateCreatureBoard(input: CreatureMaterialCreateInput, locale: Locale): Promise<CreatureBoardGenerationResult> {
   const viewer = await requireAuth();
 
-  return generateDefaultItemBoardImage(buildItemBoardPrompt(input, locale), viewer.id, {
-    feature: "item.board.generate",
+  return generateDefaultMaskBoardImage(buildCreatureBoardPrompt(input, locale), viewer.id, {
+    feature: "creature.board.generate",
     input: {
       draft: input,
       locale
     },
     locale
   });
+}
+
+export async function assistItemDraft(
+  input: ItemMaterialCreateInput,
+  instruction: string,
+  locale: Locale,
+  referenceImages: SceneAssistReferenceImage[] = []
+): Promise<ItemAiAssistResult> {
+  const viewer = await requireAuth();
+  const normalizedInstruction = instruction.trim() || (referenceImages.length > 0
+    ? (locale === "en-US"
+        ? "Sync the item draft from the uploaded reference images."
+        : "请根据上传的参考图片同步完善当前物品草稿。")
+    : "");
+
+  if (!normalizedInstruction) {
+    throw new Error("ITEM_ASSIST_EMPTY_INSTRUCTION");
+  }
+
+  let reply: Awaited<ReturnType<typeof generateDefaultLlmReply>>;
+
+  try {
+    reply = await generateDefaultLlmReply(
+      buildItemAssistMessages(input, normalizedInstruction, locale, referenceImages),
+      viewer.id,
+      false,
+      locale,
+      {
+        feature: "item.assist",
+        input: {
+          currentDraft: input,
+          instruction: normalizedInstruction,
+          referenceImages: summarizeSceneAssistReferenceImages(referenceImages)
+        }
+      }
+    );
+  } catch (error) {
+    if (referenceImages.length > 0 && isLikelyLlmVisionUnsupportedError(error)) {
+      throw new Error("ITEM_ASSIST_REFERENCE_IMAGE_UNSUPPORTED");
+    }
+
+    throw error;
+  }
+  const parsed = parseJsonObject(reply.content);
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : reply.content.trim();
+
+  return {
+    message,
+    patch: sanitizeItemDraftPatch(record.patch)
+  };
+}
+
+export async function generateItemBoard(
+  input: ItemMaterialCreateInput,
+  locale: Locale,
+  referenceImages: ScenePanoramaReferenceImage[] = []
+): Promise<ItemBoardGenerationResult> {
+  const viewer = await requireAuth();
+
+  try {
+    return await generateDefaultItemBoardImage(
+      buildItemBoardPrompt(input, locale),
+      viewer.id,
+      {
+        feature: "item.board.generate",
+        input: {
+          draft: input,
+          locale,
+          referenceImageCount: referenceImages.length
+        },
+        locale
+      },
+      { referenceImages }
+    );
+  } catch (error) {
+    if (referenceImages.length > 0 && isLikelyImageReferenceUnsupportedError(error)) {
+      throw new Error("ITEM_BOARD_REFERENCE_IMAGE_UNSUPPORTED");
+    }
+
+    throw error;
+  }
 }
 
 export async function generateItemModelInputImage(
@@ -1466,6 +1780,44 @@ function buildMaskMaterialMetadata(
     colors: input.colors,
     voice: input.voice,
     personality: input.personality,
+    boardDrawingStyle: normalizeMaskBoardDrawingStyle(input.boardDrawingStyle),
+    boardImage: previewUrl
+      ? {
+          source: boardImageSource ?? input.boardImageSource ?? "uploaded",
+          url: previewUrl
+        }
+      : null
+  };
+}
+
+function buildCreatureMaterialMetadata(
+  input: CreatureMaterialCreateInput,
+  previewUrl: string | null,
+  boardImageSource?: WorkspaceMaskBoardImageSource | null
+): WorkspaceCreatureMaterialMetadata {
+  return {
+    kind: "creature",
+    version: 1,
+    subject: "species",
+    name: input.name.trim(),
+    description: input.description.trim(),
+    style: input.style,
+    taxonomy: input.taxonomy,
+    morphology: input.morphology,
+    colors: input.colors,
+    vocalization: input.vocalization,
+    senses: input.senses,
+    ecology: input.ecology,
+    abilities: {
+      powers: sanitizeStringList(input.abilities.powers),
+      weaknesses: sanitizeStringList(input.abilities.weaknesses),
+      resourceNeeds: sanitizeStringList(input.abilities.resourceNeeds),
+      interactionUses: sanitizeStringList(input.abilities.interactionUses),
+      dangerNotes: sanitizeStringList(input.abilities.dangerNotes),
+      keywords: sanitizeStringList(input.abilities.keywords)
+    },
+    behaviorLogic: input.behaviorLogic.trim(),
+    behavior: input.behavior,
     boardDrawingStyle: normalizeMaskBoardDrawingStyle(input.boardDrawingStyle),
     boardImage: previewUrl
       ? {
@@ -1723,6 +2075,42 @@ export async function prepareSceneAssistReferenceImages(files: File[]): Promise<
   );
 }
 
+export async function prepareItemBoardReferenceImages(files: File[]): Promise<ScenePanoramaReferenceImage[]> {
+  return Promise.all(
+    files.slice(0, 3).map(async (file) => {
+      if (!isValidMaterialImageFile(file)) {
+        throw new Error("INVALID_ITEM_REFERENCE_IMAGE_FILE");
+      }
+
+      return {
+        bytes: Buffer.from(await file.arrayBuffer()),
+        contentType: file.type.toLowerCase(),
+        fileName: file.name || "item-reference.png"
+      };
+    })
+  );
+}
+
+export async function prepareItemAssistReferenceImages(files: File[]): Promise<SceneAssistReferenceImage[]> {
+  return Promise.all(
+    files.slice(0, 3).map(async (file) => {
+      if (!isValidMaterialImageFile(file)) {
+        throw new Error("INVALID_ITEM_REFERENCE_IMAGE_FILE");
+      }
+
+      const contentType = file.type.toLowerCase();
+      const bytes = Buffer.from(await file.arrayBuffer());
+
+      return {
+        byteSize: bytes.byteLength,
+        contentType,
+        dataUrl: `data:${contentType};base64,${bytes.toString("base64")}`,
+        fileName: file.name || "item-reference.png"
+      };
+    })
+  );
+}
+
 export async function cleanupUploadedMaterialImages(urls: string[]) {
   await deleteMaterialImagesByUrls(urls);
 }
@@ -1905,6 +2293,36 @@ function buildMaskAssistMessages(input: MaskMaterialCreateInput, instruction: st
   ];
 }
 
+function buildCreatureAssistMessages(input: CreatureMaterialCreateInput, instruction: string, locale: Locale): RuntimeChatMessage[] {
+  const isEnglish = locale === "en-US";
+  const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are an assistant for editing a creature material in New World Novel.",
+        "A creature material defines a reusable species or population for interactive fiction, not a human facade and not a single character biography.",
+        "You may define morphology, ecology, vocalization, senses, abilities, limitations, behavior logic, and interaction rules.",
+        "Do not turn the creature into a human character with personal backstory, family history, plot events, or world relationships.",
+        "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
+        "Patch may only include: name, description, style, taxonomy, morphology, colors, vocalization, senses, ecology, abilities, behaviorLogic, behavior.",
+        "abilities fields must be arrays of concise strings.",
+        "style must be one of realistic, fantasy, sciFi, mystery, cyberpunk, classical, apocalyptic.",
+        "vocalization, senses, and behavior values must be numbers from 0 to 100.",
+        languageRule
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        currentDraft: input,
+        instruction
+      })
+    }
+  ];
+}
+
 function buildSceneAssistMessages(
   input: SceneMaterialCreateInput,
   instruction: string,
@@ -1954,9 +2372,29 @@ function buildSceneAssistMessages(
   ];
 }
 
-function buildItemAssistMessages(input: ItemMaterialCreateInput, instruction: string, locale: Locale): RuntimeChatMessage[] {
+function buildItemAssistMessages(
+  input: ItemMaterialCreateInput,
+  instruction: string,
+  locale: Locale,
+  referenceImages: SceneAssistReferenceImage[] = []
+): RuntimeChatMessage[] {
   const isEnglish = locale === "en-US";
   const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+  const textContent = JSON.stringify({
+    currentDraft: input,
+    instruction,
+    referenceImages: summarizeSceneAssistReferenceImages(referenceImages)
+  });
+  const userContent: RuntimeChatContentPart[] = [
+    {
+      type: "text",
+      text: textContent
+    },
+    ...referenceImages.map((image) => ({
+      type: "image_url" as const,
+      image_url: { url: image.dataUrl }
+    }))
+  ];
 
   return [
     {
@@ -1965,6 +2403,8 @@ function buildItemAssistMessages(input: ItemMaterialCreateInput, instruction: st
         "You are an assistant for editing an item material in New World Novel.",
         "An item material describes a visible, usable object for interactive fiction.",
         "Keep the result focused on inspectable object properties, usage, function, materials, colors, style, brand, model, keywords, and scale.",
+        "When reference images are attached, inspect only visible object information: silhouette, components, material, color, style, affordances, and approximate scale.",
+        "Do not copy image text, watermarks, UI, background clutter, unrelated scene context, people, hands, or brand marks unless the user explicitly asks to keep a visible brand.",
         "Do not create long plot backstory or unrelated world lore.",
         "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
         "Patch may only include: name, itemCategory, description, traits, uses, functions, materials, colors, styles, brand, model, keywords, scaleHint, style.",
@@ -1975,10 +2415,7 @@ function buildItemAssistMessages(input: ItemMaterialCreateInput, instruction: st
     },
     {
       role: "user",
-      content: JSON.stringify({
-        currentDraft: input,
-        instruction
-      })
+      content: referenceImages.length > 0 ? userContent : textContent
     }
   ];
 }
@@ -2007,6 +2444,27 @@ function isLikelyLlmVisionUnsupportedError(error: unknown) {
     message.includes("vision") ||
     message.includes("multimodal") ||
     message.includes("content part")
+  );
+}
+
+function isLikelyImageReferenceUnsupportedError(error: unknown) {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  const status = typeof error === "object" && error ? (error as Record<string, unknown>).status : null;
+
+  return (
+    status === 400 ||
+    status === 404 ||
+    message.includes("image") ||
+    message.includes("reference") ||
+    message.includes("unsupported") ||
+    message.includes("not support") ||
+    message.includes("unknown parameter") ||
+    message.includes("unexpected parameter") ||
+    message.includes("invalid parameter")
+  ) && (
+    message.includes("image") ||
+    message.includes("reference") ||
+    message.includes("input")
   );
 }
 
@@ -2050,6 +2508,34 @@ function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
   ].join("\n");
 }
 
+function buildCreatureBoardPrompt(input: CreatureMaterialCreateInput, locale: Locale) {
+  const isEnglish = locale === "en-US";
+  const drawingStyle = getMaskBoardDrawingStylePrompt(normalizeMaskBoardDrawingStyle(input.boardDrawingStyle), locale);
+  const creatureData = summarizeCreaturePromptData(input, locale);
+
+  if (isEnglish) {
+    return [
+      "Create a 16:9 horizontal creature design board for an interactive novel species material.",
+      "Define the creature as a reusable species or population, not a single human-like character portrait.",
+      "Show one clear main creature, morphology/anatomy callouts, scale reference, habitat hint, and small behavior-logic vignettes.",
+      "Avoid personal biography scenes, family history, plot events, human costumes as the focus, UI screenshots, and watermarks.",
+      `Drawing style: ${drawingStyle}.`,
+      creatureData,
+      "Composition: production-ready creature sheet, readable silhouette, full body visible, safe margins, concise visual annotations."
+    ].join("\n");
+  }
+
+  return [
+    "生成一张 16:9 横版生物设定板，用于交互小说的物种/族群素材。",
+    "把它定义为可复用的生物物种或族群，不是单个人类角色肖像。",
+    "画面包含一个清晰的主体生物、形态/解剖标注、比例参考、栖息地提示和少量行为逻辑小图示。",
+    "不要画个人传记场景、家族史、剧情事件、以人类服装为中心的设计、UI 截图或水印。",
+    `绘制风格：${drawingStyle}。`,
+    creatureData,
+    "构图：可用于生产的生物设定稿，轮廓清晰，全身可见，四周留安全边距，标注简洁可读。"
+  ].join("\n");
+}
+
 function buildItemBoardPrompt(input: ItemMaterialCreateInput, locale: Locale) {
   const isEnglish = locale === "en-US";
   const drawingStyle = getMaskBoardDrawingStylePrompt(normalizeMaskBoardDrawingStyle(input.boardDrawingStyle), locale);
@@ -2059,20 +2545,22 @@ function buildItemBoardPrompt(input: ItemMaterialCreateInput, locale: Locale) {
     return [
       "Create a 16:9 horizontal item design board for an interactive novel material.",
       "The board should make the item easy to inspect and later reconstruct as a 3D asset.",
+      "If reference images are provided, use them for the item's silhouette, materials, color zones, relative proportions, interaction affordances, and style direction; do not copy watermarks, text, UI, people, hands, or unrelated backgrounds.",
       `Drawing style: ${drawingStyle}.`,
       itemData,
       "Composition: one clear hero view of the object, small material/color/use callouts, and a readable scale ruler.",
-      "No characters holding the item, no busy scene background, no watermark."
+      "Treat the item as a fictional static prop or asset reference. No characters holding or using it, no injury, blood, threat, attack scene, busy scene background, or watermark."
     ].join("\n");
   }
 
   return [
     "生成一张 16:9 横版物品设定板，用于交互小说素材。",
     "设定板要便于查看物品外观，并能作为后续 3D 重建的参考。",
+    "如果提供了参考图，请参考物品轮廓、材质、颜色分区、相对比例、可交互部件和风格方向；不要复制水印、文字、UI、人物、手部或无关背景。",
     `绘制风格：${drawingStyle}。`,
     itemData,
     "构图：一个清晰的物品主视觉，少量材质/颜色/用途标注，并包含可读比例尺。",
-    "不要人物手持，不要复杂场景背景，不要水印。"
+    "仅作为虚构静态道具或资产参考；不要人物手持或使用，不要真实伤害、血迹、威胁或攻击场景，不要复杂场景背景，不要水印。"
   ].join("\n");
 }
 
@@ -2092,6 +2580,60 @@ function buildItemModelInputImagePrompt(input: ItemMaterialCreateInput, locale: 
     "画面必须与参考设定板和结构化物品数据保持一致。",
     itemData
   ].join("\n");
+}
+
+function summarizeCreaturePromptData(input: CreatureMaterialCreateInput, locale: Locale) {
+  const isEnglish = locale === "en-US";
+  const labels = isEnglish
+    ? {
+        abilities: "Abilities",
+        behavior: "Behavior Logic",
+        behaviorSliders: "Behavior Tendencies",
+        colors: "Colors",
+        description: "Definition",
+        ecology: "Ecology",
+        morphology: "Morphology",
+        name: "Name",
+        senses: "Senses",
+        taxonomy: "Taxonomy",
+        vocalization: "Vocalization"
+      }
+    : {
+        abilities: "能力与限制",
+        behavior: "行为逻辑",
+        behaviorSliders: "行为倾向",
+        colors: "颜色标记",
+        description: "完整定义",
+        ecology: "生态",
+        morphology: "形态结构",
+        name: "名称",
+        senses: "感知",
+        taxonomy: "分类",
+        vocalization: "发声"
+      };
+
+  return [
+    `${labels.name}: ${input.name || (isEnglish ? "Untitled creature" : "未命名生物")}`,
+    `${labels.description}: ${input.description || (isEnglish ? "unspecified" : "未指定")}`,
+    `${labels.taxonomy}: ${formatPromptRecord(input.taxonomy)}`,
+    `${labels.morphology}: ${formatPromptRecord(input.morphology)}`,
+    `${labels.colors}: ${formatPromptRecord(input.colors)}`,
+    `${labels.vocalization}: ${formatPromptRecord(input.vocalization)}`,
+    `${labels.senses}: ${formatPromptRecord(input.senses)}`,
+    `${labels.ecology}: ${formatPromptRecord(input.ecology)}`,
+    `${labels.abilities}: ${formatPromptRecord(input.abilities)}`,
+    `${labels.behavior}: ${input.behaviorLogic || (isEnglish ? "unspecified" : "未指定")}`,
+    `${labels.behaviorSliders}: ${formatPromptRecord(input.behavior)}`
+  ].join("\n");
+}
+
+function formatPromptRecord(record: Record<string, unknown>) {
+  const text = Object.entries(record)
+    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value ?? "")}`)
+    .filter((entry) => !entry.endsWith(": "))
+    .join(", ");
+
+  return text || "unspecified";
 }
 
 function summarizeItemPromptData(input: ItemMaterialCreateInput, locale: Locale) {
@@ -2184,6 +2726,59 @@ function sanitizeMaskDraftPatch(value: unknown): MaskDraftPatch {
   patch.colors = pickColorRecord(record.colors, maskColorFieldIds);
   patch.voice = pickNumberRecord(record.voice, maskVoiceFieldIds, { speechSpeed: [80, 220] });
   patch.personality = pickNumberRecord(record.personality, maskPersonalityFieldIds);
+
+  return patch;
+}
+
+function sanitizeCreatureDraftPatch(value: unknown): CreatureDraftPatch {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const patch: CreatureDraftPatch = {};
+
+  if (typeof record.name === "string") {
+    patch.name = record.name.slice(0, 120);
+  }
+
+  if (typeof record.description === "string") {
+    patch.description = record.description.slice(0, 2000);
+  }
+
+  if (typeof record.style === "string" && isWorkspaceMaterialStyle(record.style)) {
+    patch.style = record.style;
+  }
+
+  patch.taxonomy = pickStringRecord(record.taxonomy, creatureTaxonomyFieldIds);
+  patch.morphology = pickStringRecord(record.morphology, creatureMorphologyFieldIds);
+  patch.colors = pickColorRecord(record.colors, creatureColorFieldIds);
+  patch.vocalization = pickNumberRecord(record.vocalization, creatureVocalizationFieldIds);
+  patch.senses = pickNumberRecord(record.senses, creatureSenseFieldIds);
+  patch.ecology = pickStringRecord(record.ecology, creatureEcologyFieldIds);
+
+  if (record.abilities && typeof record.abilities === "object") {
+    const abilitiesRecord = record.abilities as Record<string, unknown>;
+    const abilities = creatureAbilityFieldIds.reduce<NonNullable<CreatureDraftPatch["abilities"]>>((result, field) => {
+      const values = sanitizeStringList(abilitiesRecord[field]);
+
+      if (values.length > 0) {
+        result[field] = values;
+      }
+
+      return result;
+    }, {});
+
+    if (Object.keys(abilities).length > 0) {
+      patch.abilities = abilities;
+    }
+  }
+
+  if (typeof record.behaviorLogic === "string") {
+    patch.behaviorLogic = record.behaviorLogic.slice(0, 2400);
+  }
+
+  patch.behavior = pickNumberRecord(record.behavior, creatureBehaviorFieldIds);
 
   return patch;
 }
@@ -2336,6 +2931,56 @@ const maskPersonalityFieldIds: WorkspaceMaskPersonalityFieldId[] = [
   "action",
   "curiosity",
   "performative"
+];
+const creatureTaxonomyFieldIds: WorkspaceCreatureTaxonomyFieldId[] = ["creatureType"];
+const creatureMorphologyFieldIds: WorkspaceCreatureMorphologyFieldId[] = [
+  "sizeClass",
+  "length",
+  "weight",
+  "limbStructure",
+  "bodyCovering",
+  "headFeature",
+  "tailAppendage",
+  "movement",
+  "specialOrgans"
+];
+const creatureColorFieldIds: WorkspaceCreatureColorFieldId[] = ["primaryColor", "secondaryColor", "markingColor", "glowColor"];
+const creatureVocalizationFieldIds: WorkspaceCreatureVocalizationFieldId[] = [
+  "frequency",
+  "rhythm",
+  "volume",
+  "emotionReadability",
+  "mimicry"
+];
+const creatureSenseFieldIds: WorkspaceCreatureSenseFieldId[] = ["sensoryAcuity"];
+const creatureEcologyFieldIds: WorkspaceCreatureEcologyFieldId[] = [
+  "habitat",
+  "diet",
+  "activityCycle",
+  "socialStructure",
+  "reproduction"
+];
+const creatureAbilityFieldIds: WorkspaceCreatureAbilityFieldId[] = [
+  "powers",
+  "weaknesses",
+  "resourceNeeds",
+  "interactionUses",
+  "dangerNotes",
+  "keywords"
+];
+const creatureBehaviorFieldIds: WorkspaceCreatureBehaviorFieldId[] = [
+  "aggression",
+  "sociability",
+  "territoriality",
+  "curiosity",
+  "alertness",
+  "stealth",
+  "persistence",
+  "adaptability",
+  "tameability",
+  "bonding",
+  "threatResponse",
+  "resourceGuarding"
 ];
 
 function pickStringRecord<T extends string>(value: unknown, keys: T[]) {

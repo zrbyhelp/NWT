@@ -86,10 +86,11 @@ import { getRangeLevelIndex } from "./labels";
 
 export { BodyTextField, ColorField, MaskRangeField, Metric };
 
-function BodyTextField({
+function BodyTextField<T extends string>({
   fieldId,
   inputMode,
   label,
+  namespace = "maskForm",
   options,
   onChange,
   placeholder,
@@ -97,11 +98,12 @@ function BodyTextField({
   unit,
   value
 }: {
-  fieldId: MaskBodyFieldId;
+  fieldId: T;
   inputMode: "decimal" | "text";
   label: string;
+  namespace?: string;
   options: string[];
-  onChange: (fieldId: MaskBodyFieldId, value: string) => void;
+  onChange: (fieldId: T, value: string) => void;
   placeholder: string;
   t: (key: string, values?: Record<string, string | number>) => string;
   unit?: string;
@@ -163,7 +165,7 @@ function BodyTextField({
             type="button"
             onClick={() => setIsOpen((current) => !current)}
             className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-foreground/45 transition hover:bg-muted hover:text-foreground"
-            aria-label={t("maskForm.openSuggestions", { field: label })}
+            aria-label={t(`${namespace}.openSuggestions`, { field: label })}
           >
             <ChevronDown className={cn("h-4 w-4 transition", isOpen ? "rotate-180" : "")} aria-hidden="true" />
           </button>
@@ -197,13 +199,13 @@ function BodyTextField({
               </button>
             ))
           ) : (
-            <p className="px-3 py-2 text-xs text-foreground/45">{t("maskForm.suggestionsEmpty")}</p>
+            <p className="px-3 py-2 text-xs text-foreground/45">{t(`${namespace}.suggestionsEmpty`)}</p>
           )}
         </div>
       ) : null}
       {options.length > 0 ? (
         <span className="block truncate text-xs text-foreground/42">
-          {t("maskForm.suggestionsLabel", { values: options.slice(0, 4).join(" / ") })}
+          {t(`${namespace}.suggestionsLabel`, { values: options.slice(0, 4).join(" / ") })}
         </span>
       ) : null}
     </div>
@@ -219,6 +221,7 @@ function MaskRangeField({
   lowLabel,
   max,
   min,
+  namespace = "maskForm",
   onChange,
   t,
   ticks,
@@ -232,6 +235,7 @@ function MaskRangeField({
   lowLabel: string;
   max: number;
   min: number;
+  namespace?: string;
   onChange: (value: number) => void;
   t: (key: string, values?: Record<string, string | number>) => string;
   ticks?: string[];
@@ -278,11 +282,11 @@ function MaskRangeField({
 
       <div className="grid gap-2 text-xs leading-5 text-foreground/50 sm:grid-cols-2">
         <p>
-          <span className="font-medium text-foreground/58">{t("maskForm.lowValueLabel")}</span>
+          <span className="font-medium text-foreground/58">{t(`${namespace}.lowValueLabel`)}</span>
           {lowLabel}
         </p>
         <p>
-          <span className="font-medium text-foreground/58">{t("maskForm.highValueLabel")}</span>
+          <span className="font-medium text-foreground/58">{t(`${namespace}.highValueLabel`)}</span>
           {highLabel}
         </p>
       </div>
@@ -290,17 +294,19 @@ function MaskRangeField({
   );
 }
 
-function ColorField({
+function ColorField<T extends string>({
   fieldId,
   label,
+  namespace = "maskForm",
   onChange,
   palette,
   t,
   value
 }: {
-  fieldId: MaskColorFieldId;
+  fieldId: T;
   label: string;
-  onChange: (fieldId: MaskColorFieldId, value: string) => void;
+  namespace?: string;
+  onChange: (fieldId: T, value: string) => void;
   palette: readonly string[];
   t: (key: string, values?: Record<string, string | number>) => string;
   value: string;
@@ -322,18 +328,18 @@ function ColorField({
               value === color ? "border-foreground scale-105 shadow-md" : "border-border hover:scale-105"
             )}
             style={{ backgroundColor: color }}
-            aria-label={t("maskForm.colorSwatchLabel", { color, field: label })}
+            aria-label={t(`${namespace}.colorSwatchLabel`, { color, field: label })}
             title={color}
           />
         ))}
         <label className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs text-foreground/62">
-          <span>{t("maskForm.pickColor")}</span>
+          <span>{t(`${namespace}.pickColor`)}</span>
           <input
             type="color"
             value={value}
             onChange={(event) => onChange(fieldId, event.target.value)}
             className="h-5 w-5 cursor-pointer rounded border-none bg-transparent p-0"
-            aria-label={t("maskForm.colorPickerLabel", { field: label })}
+            aria-label={t(`${namespace}.colorPickerLabel`, { field: label })}
           />
         </label>
       </div>

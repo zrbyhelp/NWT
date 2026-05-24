@@ -443,6 +443,7 @@
       "createSoon": "Material creation will be available in a later version.",
       "cancel": "Cancel",
       "saveMask": "Save Facade",
+      "saveCreature": "Save Creature",
       "saveItem": "Save Item",
       "saveScene": "Save Scene",
       "edit": "Edit",
@@ -767,6 +768,319 @@
           "performative": { "label": "Performative Drive", "low": "Restrained, does not steal focus", "high": "Dramatic, camera-aware, emotionally expressive" }
         }
       },
+      "creatureForm": {
+        "title": "New Creature",
+        "editTitle": "Edit Creature",
+        "description": "Define a reusable species or population with morphology, ecology, ability limits, behavior logic, and interaction rules.",
+        "editDescription": "Update a saved creature material, including its full definition, behavior logic, and board.",
+        "basicTitle": "Basic Info",
+        "name": "Name",
+        "namePlaceholder": "Enter a creature name",
+        "style": "Content Style",
+        "fullDefinition": "Full Definition",
+        "fullDefinitionPlaceholder": "Summarize the species or population's form, physiology, niche, interaction value, and story use",
+        "fullDefinitionHint": "Creature materials define a species or population, not a single character biography.",
+        "taxonomyTitle": "Taxonomy and Ecology",
+        "morphologyTitle": "Morphology",
+        "morphologyDescription": "Capture observable body structure, physiology, and locomotion.",
+        "colorTitle": "Color Markings",
+        "vocalTitle": "Vocalization and Senses",
+        "abilityTitle": "Abilities and Limits",
+        "behaviorLogicTitle": "Behavior Logic",
+        "behaviorTendencyTitle": "Behavior Tendencies",
+        "behaviorLogicPlaceholder": "Describe triggers and priorities for feeding, patrol, alerting, attacking, retreating, taming, group coordination, and resource guarding",
+        "inputPlaceholder": "Type directly",
+        "numericPlaceholder": "Enter a value",
+        "suggestionsLabel": "Suggestions: {values}",
+        "suggestionsEmpty": "No matching suggestions. You can keep typing.",
+        "openSuggestions": "Open {field} suggestions",
+        "scoreValue": "{value}/100",
+        "lowValueLabel": "Low: ",
+        "highValueLabel": "High: ",
+        "detailTraitLevels": {
+          "veryLow": "Very low, {description}",
+          "low": "Low, {description}",
+          "balanced": "Balanced presentation",
+          "high": "High, {description}",
+          "veryHigh": "Very high, {description}"
+        },
+        "saveSuccess": "Creature created and added to My Materials.",
+        "saveFailed": "Failed to create the creature. Please try again later.",
+        "saveEdit": "Save Changes",
+        "updateSuccess": "Creature changes saved.",
+        "updateFailed": "Failed to save creature changes. Please try again later.",
+        "missingProviderSecret": "The default model provider has no API key. Complete it in Experience Settings first.",
+        "aiTitle": "AI Assist",
+        "aiEmpty": "Ask AI to complete the niche, ability limits, behavior logic, and interaction rules.",
+        "aiPlaceholder": "Example: Make it a ruin-dwelling group creature with clear alerting, nest guarding, and taming limits",
+        "aiSend": "Send AI assist message",
+        "aiMissingDefaultLlm": "No usable default LLM is configured. Set one in Experience Settings first.",
+        "aiFailed": "AI assist failed. Please try again later.",
+        "boardTitle": "Creature Board",
+        "boardEmpty": "Click to upload a horizontal creature board",
+        "boardUpload": "Upload Creature Board",
+        "boardDrawingStyle": "Drawing Style",
+        "boardGenerate": "Generate",
+        "boardGenerated": "Creature board generated.",
+        "boardGenerateFailed": "Failed to generate the creature board. Please try again later.",
+        "boardMissingDefaultImage": "No usable default image model is configured. Set one in Experience Settings first.",
+        "invalidBoardImage": "Boards only support PNG/JPG/WebP up to 10MB.",
+        "boardPreviewOpen": "Open creature board preview",
+        "boardPreviewClose": "Close preview",
+        "boardPreviewAlt": "Creature board preview",
+        "boardRemove": "Remove creature board",
+        "boardSource": {
+          "uploaded": "Uploaded image",
+          "generated": "AI generated"
+        },
+        "boardDrawingStyles": {
+          "photo": "Live-action photo",
+          "realistic": "Realistic",
+          "anime": "Anime",
+          "painterly": "Painterly",
+          "cel": "Cel Shaded",
+          "guofeng": "Guofeng",
+          "comic": "Comic",
+          "concept": "Concept Art"
+        },
+        "pickColor": "Pick",
+        "colorSwatchLabel": "Choose {field} {color}",
+        "colorPickerLabel": "{field} color picker",
+        "removeTag": "Remove tag",
+        "errors": {
+          "nameRequired": "Enter a creature name first."
+        },
+        "units": {
+          "m": "m",
+          "kg": "kg"
+        },
+        "taxonomyFields": {
+          "creatureType": { "label": "Creature Type" }
+        },
+        "ecologyFields": {
+          "habitat": { "label": "Habitat" },
+          "diet": { "label": "Diet" },
+          "activityCycle": { "label": "Activity Cycle" },
+          "socialStructure": { "label": "Social Structure" },
+          "reproduction": { "label": "Reproduction / Spread" }
+        },
+        "morphologyFields": {
+          "sizeClass": { "label": "Size Class" },
+          "length": { "label": "Length / Height" },
+          "weight": { "label": "Weight" },
+          "limbStructure": { "label": "Limb Structure" },
+          "bodyCovering": { "label": "Body Covering" },
+          "headFeature": { "label": "Head Feature" },
+          "tailAppendage": { "label": "Tail / Appendage" },
+          "movement": { "label": "Movement" },
+          "specialOrgans": { "label": "Special Organs" }
+        },
+        "colorFields": {
+          "primaryColor": { "label": "Primary Color" },
+          "secondaryColor": { "label": "Secondary Color" },
+          "markingColor": { "label": "Marking Color" },
+          "glowColor": { "label": "Glow / Energy Color" }
+        },
+        "options": {
+          "creatureType": {
+            "beast": "Beast",
+            "spirit": "Spirit",
+            "insectoid": "Insectoid",
+            "aquatic": "Aquatic",
+            "avian": "Avian",
+            "plantlike": "Plantlike",
+            "construct": "Construct",
+            "swarm": "Swarm / Colony"
+          },
+          "sizeClass": {
+            "tiny": "Tiny",
+            "small": "Small",
+            "medium": "Medium",
+            "large": "Large",
+            "giant": "Giant",
+            "colossal": "Colossal"
+          },
+          "limbStructure": {
+            "quadruped": "Quadruped",
+            "biped": "Biped",
+            "multiLimbed": "Multi-limbed",
+            "winged": "Winged",
+            "serpentine": "Serpentine",
+            "tentacled": "Tentacled"
+          },
+          "bodyCovering": {
+            "fur": "Fur",
+            "scales": "Scales",
+            "feathers": "Feathers",
+            "shell": "Shell",
+            "skin": "Skin",
+            "chitin": "Chitin",
+            "bark": "Bark-like",
+            "mist": "Mist-like"
+          },
+          "headFeature": {
+            "horns": "Horns",
+            "crest": "Crest",
+            "mandibles": "Mandibles",
+            "beak": "Beak",
+            "maskFace": "Face Plate",
+            "multipleEyes": "Multiple Eyes",
+            "noVisibleHead": "No Visible Head"
+          },
+          "tailAppendage": {
+            "tail": "Tail",
+            "stinger": "Stinger",
+            "fins": "Fins",
+            "tendrils": "Tendrils",
+            "none": "None",
+            "multipleTails": "Multiple Tails"
+          },
+          "movement": {
+            "walk": "Walk",
+            "run": "Run",
+            "fly": "Fly",
+            "swim": "Swim",
+            "burrow": "Burrow",
+            "crawl": "Crawl",
+            "float": "Float",
+            "phase": "Phase"
+          },
+          "specialOrgans": {
+            "glowCore": "Glow Core",
+            "scentGlands": "Scent Glands",
+            "sonarSac": "Sonar Sac",
+            "sporePouch": "Spore Pouch",
+            "venomGland": "Venom Gland",
+            "crystalGrowth": "Crystal Growth"
+          },
+          "habitat": {
+            "forest": "Forest",
+            "ruins": "Ruins",
+            "cave": "Cave",
+            "wetland": "Wetland",
+            "desert": "Desert",
+            "deepSea": "Deep Sea",
+            "urban": "Urban Gaps",
+            "void": "Void / Other Realm"
+          },
+          "diet": {
+            "herbivore": "Herbivore",
+            "carnivore": "Carnivore",
+            "omnivore": "Omnivore",
+            "photosynthetic": "Photosynthetic",
+            "mineral": "Mineral-feeding",
+            "energy": "Energy-feeding",
+            "parasitic": "Parasitic"
+          },
+          "activityCycle": {
+            "diurnal": "Diurnal",
+            "nocturnal": "Nocturnal",
+            "crepuscular": "Crepuscular",
+            "seasonal": "Seasonal",
+            "triggered": "Triggered",
+            "dormant": "Dormant"
+          },
+          "socialStructure": {
+            "solitary": "Solitary",
+            "pair": "Pair",
+            "pack": "Pack",
+            "hive": "Hive",
+            "herd": "Herd",
+            "colony": "Colony",
+            "symbiotic": "Symbiotic"
+          },
+          "reproduction": {
+            "eggs": "Eggs",
+            "liveBirth": "Live Birth",
+            "spores": "Spores",
+            "budding": "Budding",
+            "fragmentation": "Fragmentation",
+            "ritual": "Ritual Spread",
+            "manufactured": "Manufactured"
+          }
+        },
+        "vocalFields": {
+          "frequency": {
+            "label": "Vocal Frequency",
+            "description": "Sets whether calls feel low and resonant or high and piercing.",
+            "low": "Low, muffled, vibrating",
+            "high": "High, sharp, penetrating",
+            "ticks": { "first": "Very low", "second": "Low", "third": "Mid", "fourth": "High", "fifth": "Very high" }
+          },
+          "rhythm": {
+            "label": "Call Rhythm",
+            "description": "Sets whether calls are scattered, regular, or complexly coded.",
+            "low": "Scattered, brief",
+            "high": "Complex, strongly rhythmic",
+            "ticks": { "first": "Scattered", "second": "Simple", "third": "Stable", "fourth": "Complex", "fifth": "Language-like" }
+          },
+          "volume": {
+            "label": "Volume",
+            "description": "Sets audible range and pressure.",
+            "low": "Soft, only heard nearby",
+            "high": "Loud, heard at range",
+            "ticks": { "first": "Very soft", "second": "Soft", "third": "Normal", "fourth": "Loud", "fifth": "Deafening" }
+          },
+          "emotionReadability": {
+            "label": "Emotion Readability",
+            "description": "Sets how easily others can read emotion from sound.",
+            "low": "Hard to read",
+            "high": "Emotion is obvious",
+            "ticks": { "first": "Unreadable", "second": "Vague", "third": "Moderate", "fourth": "Clear", "fifth": "Very clear" }
+          },
+          "mimicry": {
+            "label": "Mimicry",
+            "description": "Sets whether it mimics environments, voices, or other creatures.",
+            "low": "Almost no mimicry",
+            "high": "Highly mimetic",
+            "ticks": { "first": "None", "second": "Light", "third": "Limited", "fourth": "Skilled", "fifth": "Convincing" }
+          }
+        },
+        "senseFields": {
+          "sensoryAcuity": {
+            "label": "Sensory Acuity",
+            "description": "Combines smell, hearing, heat sense, psychic sense, or abnormal perception.",
+            "low": "Dull, easy to bypass",
+            "high": "Keen, hard to approach",
+            "ticks": { "first": "Dull", "second": "Weak", "third": "Normal", "fourth": "Keen", "fifth": "Exceptional" }
+          }
+        },
+        "abilityFields": {
+          "powers": "Abilities",
+          "weaknesses": "Weaknesses",
+          "resourceNeeds": "Resource Needs",
+          "interactionUses": "Interaction Uses",
+          "dangerNotes": "Danger Notes",
+          "keywords": "Keywords"
+        },
+        "abilityPlaceholders": {
+          "powers": "Type an ability and press Enter",
+          "weaknesses": "Type a weakness and press Enter",
+          "resourceNeeds": "Type a resource need and press Enter",
+          "interactionUses": "Type an interaction use and press Enter",
+          "dangerNotes": "Type a danger note and press Enter",
+          "keywords": "Type a keyword and press Enter"
+        },
+        "behaviorGroups": {
+          "survival": "Survival Behavior",
+          "social": "Social and Interaction",
+          "interaction": "Threat and Resources"
+        },
+        "behaviorFields": {
+          "aggression": { "label": "Aggression", "low": "Avoids conflict", "high": "Attacks proactively" },
+          "sociability": { "label": "Sociability", "low": "Solitary", "high": "Strong group coordination" },
+          "territoriality": { "label": "Territoriality", "low": "Migratory or wandering", "high": "Strong territory defense" },
+          "curiosity": { "label": "Curiosity", "low": "Conservative, avoids novelty", "high": "Explores proactively" },
+          "alertness": { "label": "Alertness", "low": "Dull, relaxed", "high": "Highly alert" },
+          "stealth": { "label": "Stealth", "low": "Obvious, direct", "high": "Hidden ambusher" },
+          "persistence": { "label": "Persistent Tracking", "low": "Gives up quickly", "high": "Tracks for a long time" },
+          "adaptability": { "label": "Adaptability", "low": "Depends on fixed conditions", "high": "Adapts quickly" },
+          "tameability": { "label": "Tameability", "low": "Almost untamable", "high": "Can learn training feedback" },
+          "bonding": { "label": "Bonding", "low": "Weak attachment", "high": "Forms attachment easily" },
+          "threatResponse": { "label": "Threat Response", "low": "Retreats or freezes", "high": "Counters quickly" },
+          "resourceGuarding": { "label": "Food / Nest Guarding", "low": "Weak resource defense", "high": "Strongly guards resources" }
+        }
+      },
       "itemForm": {
         "title": "New Item",
         "editTitle": "Edit Item",
@@ -812,9 +1126,19 @@
         "aiPlaceholder": "Example: Make it a cyber medical prop with translucent material and scanning functions",
         "aiSend": "Send item AI assist message",
         "aiMissingDefaultLlm": "No usable default LLM is configured. Set one in Experience Settings first.",
+        "aiReferenceImages": "Item AI References",
+        "aiReferenceEmpty": "Upload up to 3 reference images so AI can sync the item draft from the visuals.",
+        "aiReferenceOnlyMessage": "Sync the item draft from the reference images",
+        "aiReferenceUnsupported": "The default LLM does not support image input. Switch to a vision-capable model in Experience Settings.",
         "aiFailed": "Item AI assist failed. Please try again later.",
         "boardTitle": "Item Board",
         "boardDescription": "A 16:9 visual board showing appearance, notes, and scale.",
+        "boardReferenceImages": "Board References",
+        "boardReferenceEmpty": "Upload up to 3 references for this item board generation only.",
+        "referenceImageAdd": "Upload reference",
+        "referenceImageRemove": "Remove reference image",
+        "referenceImageLimit": "Each reference area supports up to 3 images.",
+        "invalidReferenceImage": "References only support PNG/JPG/WebP up to 10MB.",
         "boardEmpty": "Click to upload an item board",
         "boardUpload": "Upload item board",
         "boardDrawingStyle": "Drawing Style",
@@ -822,6 +1146,7 @@
         "boardGenerated": "Item board generated.",
         "boardGenerateFailed": "Failed to generate the item board. Please try again later.",
         "boardMissingDefaultImage": "No usable default image model is configured. Set one in Experience Settings first.",
+        "boardReferenceUnsupported": "The default image model does not support reference-image generation. Switch to an image model with reference support in Experience Settings.",
         "invalidBoardImage": "Boards only support PNG/JPG/WebP up to 10MB.",
         "boardRemove": "Remove board",
         "modelInputTitle": "AI Model Input Image",
@@ -881,6 +1206,9 @@
         "modelProgressFailed": "3D model generation failed",
         "saveSuccess": "Item created and added to My Materials.",
         "saveFailed": "Failed to save the item. Please try again later.",
+        "imageUploadFailed": "Failed to upload item images. Check the R2 storage configuration and try again.",
+        "metadataTooLarge": "The item data is too large for the material record. Reduce tags or images before saving.",
+        "recordSaveFailed": "The item material record could not be saved. If images were uploaded in this attempt, the system tried to clean them up; check the database connection or migrations and try again.",
         "saveEdit": "Save Changes",
         "updateSuccess": "Item changes saved.",
         "updateFailed": "Failed to save the item. Please try again later.",

@@ -1,21 +1,27 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zhMessages from "../messages/zh-CN.json";
 import {
+  assistHomeCreatureDraft,
   assistHomeItemDraft,
+  assistHomeItemDraftWithImages,
   assistHomeMaskDraft,
   assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
+  createHomeCreatureMaterial,
   createHomeItemMaterial,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
   deleteHomeMaterial,
+  generateHomeCreatureBoard,
   generateHomeItemBoard,
+  generateHomeItemBoardWithImages,
   generateHomeItemModelInputImage,
   generateHomeMaskBoard,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
+  updateHomeCreatureMaterial,
   updateHomeItemMaterial,
   updateHomeMaskMaterial,
   uploadHomeScenePanoramaFace,
@@ -53,18 +59,23 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/app/[locale]/actions", () => ({
+  assistHomeCreatureDraft: vi.fn(),
   assistHomeItemDraft: vi.fn(),
+  assistHomeItemDraftWithImages: vi.fn(),
   assistHomeMaskDraft: vi.fn(),
   assistHomeSceneDraft: vi.fn(),
   assistHomeSceneDraftWithImages: vi.fn(),
   cleanupHomeUploadedMaterialImages: vi.fn(),
+  createHomeCreatureMaterial: vi.fn(),
   createHomeConversation: vi.fn(),
   createHomeItemMaterial: vi.fn(),
   createHomeMaskMaterial: vi.fn(),
   createHomeSceneMaterial: vi.fn(),
   deleteHomeConversation: vi.fn(),
   deleteHomeMaterial: vi.fn(),
+  generateHomeCreatureBoard: vi.fn(),
   generateHomeItemBoard: vi.fn(),
+  generateHomeItemBoardWithImages: vi.fn(),
   generateHomeItemModelInputImage: vi.fn(),
   generateHomeMaskBoard: vi.fn(),
   generateHomeSceneBlockPanorama: vi.fn(),
@@ -73,6 +84,7 @@ vi.mock("@/app/[locale]/actions", () => ({
   logoutHomeAccount: vi.fn(),
   registerHomeAccount: vi.fn(),
   setHomeMaterialCommunitySharing: vi.fn(),
+  updateHomeCreatureMaterial: vi.fn(),
   updateHomeItemMaterial: vi.fn(),
   updateHomeMaskMaterial: vi.fn(),
   updateHomeSceneMaterial: vi.fn(),
@@ -168,7 +180,26 @@ describe("HomeWorkspace script manager", () => {
       dataUrl: "data:image/png;base64,Ym9hcmQ=",
       fileName: "mask-board.png"
     });
+    vi.mocked(assistHomeCreatureDraft).mockResolvedValue({
+      message: "已完善生物行为逻辑。",
+      patch: {
+        description: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+        behaviorLogic: "发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。",
+        ecology: { habitat: "废墟边界" },
+        behavior: { alertness: 86, resourceGuarding: 78 }
+      }
+    });
+    vi.mocked(generateHomeCreatureBoard).mockResolvedValue({
+      contentType: "image/png",
+      dataUrl: "data:image/png;base64,Y3JlYXR1cmU=",
+      fileName: "creature-board.png"
+    });
     vi.mocked(createHomeMaskMaterial).mockResolvedValue(createdSilverMaskMaterial);
+    vi.mocked(createHomeCreatureMaterial).mockResolvedValue(createdMistguardCreatureMaterial);
+    vi.mocked(updateHomeCreatureMaterial).mockResolvedValue({
+      ...createdMistguardCreatureMaterial,
+      title: "雾卫兽·改"
+    });
     vi.mocked(updateHomeMaskMaterial).mockImplementation(async (_materialId, formData) => {
       expect(formData.get("boardImageMode")).toBe("keep");
       expect(JSON.parse(String(formData.get("draft")))).toMatchObject({
@@ -459,6 +490,64 @@ describe("HomeWorkspace script manager", () => {
 
     expect(toast.info).toHaveBeenCalledWith("素材创建功能将在后续版本开放。");
 
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "生物" }));
+
+    expect(screen.getByRole("heading", { name: "新建生物" })).toBeInTheDocument();
+    const saveCreatureButton = screen.getByRole("button", { name: "保存生物" });
+    expect(saveCreatureButton).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("输入生物名称"), { target: { value: "雾卫兽" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：把它改成废墟群居生物，强调警戒、护巢和可驯化边界"), {
+      target: { value: "补全废墟群居与护巢行为" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送 AI 辅助消息" }));
+
+    await waitFor(() => {
+      expect(assistHomeCreatureDraft).toHaveBeenCalled();
+      expect(screen.getByLabelText("完整定义")).toHaveValue("雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。");
+      expect(screen.getByLabelText("行为逻辑")).toHaveValue("发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。");
+    });
+    expect(screen.getByText("已完善生物行为逻辑。")).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "警觉性" })).toHaveValue("86");
+    expect(screen.getByRole("slider", { name: "护食/护巢" })).toHaveValue("78");
+
+    fireEvent.change(screen.getByLabelText("生物类型"), { target: { value: "雾生兽类" } });
+    fireEvent.change(screen.getByLabelText("栖息地"), { target: { value: "废墟边界" } });
+    fireEvent.change(screen.getByLabelText("身长/高度"), { target: { value: "2.4" } });
+    fireEvent.change(screen.getByPlaceholderText("输入能力后回车"), { target: { value: "嗅出谎言" } });
+    fireEvent.keyDown(screen.getByPlaceholderText("输入能力后回车"), { key: "Enter" });
+    expect(screen.getByText("嗅出谎言")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "生成" }));
+
+    await waitFor(() => {
+      expect(generateHomeCreatureBoard).toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledWith("生物设定板已生成。");
+    });
+    expect(generateHomeCreatureBoard).toHaveBeenCalledWith(expect.objectContaining({ boardDrawingStyle: "realistic" }), "zh-CN");
+    expect(screen.getByText("creature-board.png")).toBeInTheDocument();
+
+    fireEvent.click(saveCreatureButton);
+
+    await waitFor(() => {
+      expect(createHomeCreatureMaterial).toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledWith("生物已创建并加入我的素材。");
+    });
+    expect(JSON.parse(String(vi.mocked(createHomeCreatureMaterial).mock.calls[0][0].get("draft")))).toMatchObject({
+      behaviorLogic: "发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。",
+      taxonomy: { creatureType: "雾生兽类" }
+    });
+    expect(screen.queryByRole("heading", { name: "新建生物" })).not.toBeInTheDocument();
+    expect(screen.getByText("雾卫兽")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /雾卫兽/ }));
+    expect(screen.getByText("行为逻辑")).toBeInTheDocument();
+    expect(screen.getByText("发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。")).toBeInTheDocument();
+    expect(screen.getByText("很高，高度警戒")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭素材详情" }));
+
     fireEvent.click(screen.getByRole("button", { name: "查看社区版本" }));
 
     expect(screen.getByRole("heading", { level: 1, name: "社区素材" })).toBeInTheDocument();
@@ -605,6 +694,97 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.queryByRole("heading", { name: "新建物品" })).not.toBeInTheDocument();
     expect(screen.getByText("灵犀扫描器")).toBeInTheDocument();
   }, 30000);
+
+  it("sends item AI assist with an image-only reference and clears it after success", async () => {
+    vi.mocked(assistHomeItemDraftWithImages).mockResolvedValue({
+      message: "已根据参考图同步物品。",
+      patch: {}
+    });
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "物品" }));
+    const sendButton = screen.getByRole("button", { name: "发送物品 AI 辅助消息" });
+
+    expect(sendButton).toBeDisabled();
+
+    const aiReferenceGroup = screen.getByRole("group", { name: "物品 AI 参考图" });
+    const aiReferenceInput = within(aiReferenceGroup).getByText("上传参考").closest("label")?.querySelector("input");
+
+    expect(aiReferenceInput).toBeTruthy();
+    fireEvent.change(aiReferenceInput as HTMLInputElement, {
+      target: { files: [new File(["item-ai-reference"], "item-ai-reference.png", { type: "image/png" })] }
+    });
+    expect(sendButton).not.toBeDisabled();
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(assistHomeItemDraftWithImages).toHaveBeenCalledWith(expect.any(FormData), "zh-CN");
+    });
+    const formData = vi.mocked(assistHomeItemDraftWithImages).mock.calls[0][0] as FormData;
+
+    expect(formData.get("instruction")).toBe("");
+    expect(formData.getAll("referenceImages")).toHaveLength(1);
+    expect(screen.getByText("根据参考图片同步完善物品草稿")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("item-ai-reference.png")).not.toBeInTheDocument();
+    });
+  });
+
+  it("generates an item board with reference images and clears them after success", async () => {
+    vi.mocked(generateHomeItemBoardWithImages).mockResolvedValue({
+      contentType: "image/png",
+      dataUrl: "data:image/png;base64,aXRlbS1ib2FyZA==",
+      fileName: "item-board.png"
+    });
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "物品" }));
+    fireEvent.change(screen.getByPlaceholderText("输入物品名称"), { target: { value: "灵犀扫描器" } });
+    const boardReferenceGroup = screen.getByRole("group", { name: "设定板参考图" });
+    const boardReferenceInput = within(boardReferenceGroup).getByText("上传参考").closest("label")?.querySelector("input");
+
+    expect(boardReferenceInput).toBeTruthy();
+    fireEvent.change(boardReferenceInput as HTMLInputElement, {
+      target: { files: [new File(["item-board-reference"], "item-board-reference.png", { type: "image/png" })] }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成设定板" }));
+
+    await waitFor(() => {
+      expect(generateHomeItemBoardWithImages).toHaveBeenCalledWith(expect.any(FormData), "zh-CN");
+      expect(toast.success).toHaveBeenCalledWith("物品设定板已生成。");
+    });
+    const formData = vi.mocked(generateHomeItemBoardWithImages).mock.calls[0][0] as FormData;
+
+    expect(formData.getAll("referenceImages")).toHaveLength(1);
+    expect(generateHomeItemBoard).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByText("item-board-reference.png")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows a concrete item record save error after item image upload succeeds", async () => {
+    vi.mocked(createHomeItemMaterial).mockRejectedValue(new Error("ITEM_MATERIAL_DATABASE_FAILED"));
+
+    render(<HomeWorkspace data={workspaceData} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "素材" }));
+    fireEvent.click(screen.getByRole("button", { name: "操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "物品" }));
+    fireEvent.change(screen.getByPlaceholderText("输入物品名称"), { target: { value: "灵犀扫描器" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存物品" }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "物品素材记录写入失败；若本次上传了图片，系统已尝试清理，请检查数据库连接或迁移后重试。"
+      );
+    });
+  });
 
   it("keeps scene panorama generation type in the form and uploads faces on save", async () => {
     const fetchMock = mockScenePanoramaFetch(createSceneStreamFaces());
@@ -1038,6 +1218,92 @@ const createdScannerItemMaterial: WorkspaceMaterial = {
       fileName: "scanner.glb",
       source: "instantmesh",
       url: "https://cdn.example.com/models/scanner.glb"
+    }
+  },
+  inLibrary: true,
+  librarySource: "SELF_CREATED"
+};
+
+const createdMistguardCreatureMaterial: WorkspaceMaterial = {
+  id: "mistguard-creature",
+  slug: "creature-mistguard",
+  category: "creature",
+  style: "fantasy",
+  title: "雾卫兽",
+  description: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+  previewUrl: "https://cdn.example.com/creature-board.png",
+  communityVisible: false,
+  metadata: {
+    kind: "creature",
+    version: 1,
+    subject: "species",
+    name: "雾卫兽",
+    description: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+    style: "fantasy",
+    taxonomy: {
+      creatureType: "雾生兽类"
+    },
+    morphology: {
+      sizeClass: "",
+      length: "2.4",
+      weight: "",
+      limbStructure: "",
+      bodyCovering: "",
+      headFeature: "",
+      tailAppendage: "",
+      movement: "",
+      specialOrgans: ""
+    },
+    colors: {
+      primaryColor: "#2F5D46",
+      secondaryColor: "#6E7F45",
+      markingColor: "#FACC15",
+      glowColor: "#67E8F9"
+    },
+    vocalization: {
+      frequency: 50,
+      rhythm: 50,
+      volume: 50,
+      emotionReadability: 50,
+      mimicry: 20
+    },
+    senses: {
+      sensoryAcuity: 55
+    },
+    ecology: {
+      habitat: "废墟边界",
+      diet: "",
+      activityCycle: "",
+      socialStructure: "",
+      reproduction: ""
+    },
+    abilities: {
+      powers: ["嗅出谎言"],
+      weaknesses: [],
+      resourceNeeds: [],
+      interactionUses: [],
+      dangerNotes: [],
+      keywords: []
+    },
+    behaviorLogic: "发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。",
+    behavior: {
+      aggression: 45,
+      sociability: 45,
+      territoriality: 55,
+      curiosity: 50,
+      alertness: 86,
+      stealth: 35,
+      persistence: 55,
+      adaptability: 50,
+      tameability: 30,
+      bonding: 35,
+      threatResponse: 55,
+      resourceGuarding: 78
+    },
+    boardDrawingStyle: "realistic",
+    boardImage: {
+      source: "generated",
+      url: "https://cdn.example.com/creature-board.png"
     }
   },
   inLibrary: true,

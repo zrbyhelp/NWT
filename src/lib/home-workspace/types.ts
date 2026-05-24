@@ -62,11 +62,33 @@ export type MaskAiAssistResult = {
   patch: MaskDraftPatch;
 };
 
+export type CreatureDraftPatch = {
+  name?: string;
+  description?: string;
+  style?: WorkspaceMaterialStyle;
+  taxonomy?: Partial<Record<WorkspaceCreatureTaxonomyFieldId, string>>;
+  morphology?: Partial<Record<WorkspaceCreatureMorphologyFieldId, string>>;
+  colors?: Partial<Record<WorkspaceCreatureColorFieldId, string>>;
+  vocalization?: Partial<Record<WorkspaceCreatureVocalizationFieldId, number>>;
+  senses?: Partial<Record<WorkspaceCreatureSenseFieldId, number>>;
+  ecology?: Partial<Record<WorkspaceCreatureEcologyFieldId, string>>;
+  abilities?: Partial<Record<WorkspaceCreatureAbilityFieldId, string[]>>;
+  behaviorLogic?: string;
+  behavior?: Partial<Record<WorkspaceCreatureBehaviorFieldId, number>>;
+};
+
+export type CreatureAiAssistResult = {
+  message: string;
+  patch: CreatureDraftPatch;
+};
+
 export type MaskBoardGenerationResult = {
   contentType: string;
   dataUrl: string;
   fileName: string;
 };
+
+export type CreatureBoardGenerationResult = MaskBoardGenerationResult;
 
 export type ItemViewFace = ScenePanoramaFace;
 
@@ -102,6 +124,23 @@ export type MaskMaterialCreateInput = {
   colors: Record<WorkspaceMaskColorFieldId, string>;
   voice: Record<WorkspaceMaskVoiceFieldId, number>;
   personality: Record<WorkspaceMaskPersonalityFieldId, number>;
+  boardDrawingStyle?: WorkspaceMaskBoardDrawingStyle;
+  boardImageSource?: "uploaded" | "generated" | null;
+};
+
+export type CreatureMaterialCreateInput = {
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  taxonomy: Record<WorkspaceCreatureTaxonomyFieldId, string>;
+  morphology: Record<WorkspaceCreatureMorphologyFieldId, string>;
+  colors: Record<WorkspaceCreatureColorFieldId, string>;
+  vocalization: Record<WorkspaceCreatureVocalizationFieldId, number>;
+  senses: Record<WorkspaceCreatureSenseFieldId, number>;
+  ecology: Record<WorkspaceCreatureEcologyFieldId, string>;
+  abilities: Record<WorkspaceCreatureAbilityFieldId, string[]>;
+  behaviorLogic: string;
+  behavior: Record<WorkspaceCreatureBehaviorFieldId, number>;
   boardDrawingStyle?: WorkspaceMaskBoardDrawingStyle;
   boardImageSource?: "uploaded" | "generated" | null;
 };
@@ -275,6 +314,52 @@ export type WorkspaceMaskPersonalityFieldId =
   | "curiosity"
   | "performative";
 
+export type WorkspaceCreatureTaxonomyFieldId = "creatureType";
+export type WorkspaceCreatureMorphologyFieldId =
+  | "sizeClass"
+  | "length"
+  | "weight"
+  | "limbStructure"
+  | "bodyCovering"
+  | "headFeature"
+  | "tailAppendage"
+  | "movement"
+  | "specialOrgans";
+export type WorkspaceCreatureColorFieldId = "primaryColor" | "secondaryColor" | "markingColor" | "glowColor";
+export type WorkspaceCreatureVocalizationFieldId =
+  | "frequency"
+  | "rhythm"
+  | "volume"
+  | "emotionReadability"
+  | "mimicry";
+export type WorkspaceCreatureSenseFieldId = "sensoryAcuity";
+export type WorkspaceCreatureEcologyFieldId =
+  | "habitat"
+  | "diet"
+  | "activityCycle"
+  | "socialStructure"
+  | "reproduction";
+export type WorkspaceCreatureAbilityFieldId =
+  | "powers"
+  | "weaknesses"
+  | "resourceNeeds"
+  | "interactionUses"
+  | "dangerNotes"
+  | "keywords";
+export type WorkspaceCreatureBehaviorFieldId =
+  | "aggression"
+  | "sociability"
+  | "territoriality"
+  | "curiosity"
+  | "alertness"
+  | "stealth"
+  | "persistence"
+  | "adaptability"
+  | "tameability"
+  | "bonding"
+  | "threatResponse"
+  | "resourceGuarding";
+
 export type WorkspaceMaskMaterialMetadata = {
   kind: "mask";
   version: 1;
@@ -286,6 +371,29 @@ export type WorkspaceMaskMaterialMetadata = {
   colors: Record<WorkspaceMaskColorFieldId, string>;
   voice: Record<WorkspaceMaskVoiceFieldId, number>;
   personality: Record<WorkspaceMaskPersonalityFieldId, number>;
+  boardDrawingStyle: WorkspaceMaskBoardDrawingStyle;
+  boardImage: {
+    source: WorkspaceMaskBoardImageSource;
+    url: string;
+  } | null;
+};
+
+export type WorkspaceCreatureMaterialMetadata = {
+  kind: "creature";
+  version: 1;
+  subject: "species";
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  taxonomy: Record<WorkspaceCreatureTaxonomyFieldId, string>;
+  morphology: Record<WorkspaceCreatureMorphologyFieldId, string>;
+  colors: Record<WorkspaceCreatureColorFieldId, string>;
+  vocalization: Record<WorkspaceCreatureVocalizationFieldId, number>;
+  senses: Record<WorkspaceCreatureSenseFieldId, number>;
+  ecology: Record<WorkspaceCreatureEcologyFieldId, string>;
+  abilities: Record<WorkspaceCreatureAbilityFieldId, string[]>;
+  behaviorLogic: string;
+  behavior: Record<WorkspaceCreatureBehaviorFieldId, number>;
   boardDrawingStyle: WorkspaceMaskBoardDrawingStyle;
   boardImage: {
     source: WorkspaceMaskBoardImageSource;
@@ -356,7 +464,12 @@ export type WorkspaceSceneMaterialMetadata = {
   }>;
 };
 
-export type WorkspaceMaterialMetadata = WorkspaceMaskMaterialMetadata | WorkspaceItemMaterialMetadata | WorkspaceSceneMaterialMetadata | Record<string, unknown>;
+export type WorkspaceMaterialMetadata =
+  | WorkspaceMaskMaterialMetadata
+  | WorkspaceCreatureMaterialMetadata
+  | WorkspaceItemMaterialMetadata
+  | WorkspaceSceneMaterialMetadata
+  | Record<string, unknown>;
 
 export type MaskMaterialBoardImageMode = "keep" | "replace" | "clear";
 export type ItemMaterialImageMode = MaskMaterialBoardImageMode;

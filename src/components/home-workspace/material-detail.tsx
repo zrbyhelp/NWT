@@ -29,6 +29,14 @@ import {
   defaultScenePanoramaView,
   defaultSceneScalePreset,
   defaultScenePanoramaMaxRedrawAttempts,
+  creatureAbilityFields,
+  creatureBehaviorGroups,
+  creatureColorFields,
+  creatureEcologyFields,
+  creatureMorphologyFields,
+  creatureSenseFields,
+  creatureTaxonomyFields,
+  creatureVocalizationFields,
   itemTagFields,
   maskBoardAcceptedTypes,
   maskBoardDrawingStyles,
@@ -55,6 +63,9 @@ import {
   loadScenePanoramaCubeTexture,
   scheduleScenePanoramaWebglStart,
   type ItemCreateDraft,
+  type CreatureBehaviorFieldId,
+  type CreatureSenseFieldId,
+  type CreatureVocalizationFieldId,
   type ItemModelDraft,
   type ItemModelProgress,
   type ItemModelStreamEvent,
@@ -92,7 +103,7 @@ import {
   type MaterialManagerView,
   type StreamingReply
 } from "./shared";
-import { getItemMaterialMetadata, getMaskMaterialMetadata, getNestedRecord, getSceneMaterialMetadata, isCompleteScenePanoramaFaceUrls, normalizeSceneScalePreset } from "./drafts";
+import { getCreatureMaterialMetadata, getItemMaterialMetadata, getMaskMaterialMetadata, getNestedRecord, getSceneMaterialMetadata, isCompleteScenePanoramaFaceUrls, normalizeSceneScalePreset } from "./drafts";
 import { getMaterialAccent, getScriptAccent, getScriptChats } from "./labels";
 import { ItemModelViewer, ScenePanoramaPreviewDialog, ScenePanoramaViewer } from "./viewers";
 
@@ -346,6 +357,7 @@ function MaterialDetailModal({
             <p className="mt-4 text-xs text-foreground/42">{material.slug}</p>
           </div>
           {material.category === "mask" ? <MaskMaterialDetail metadata={material.metadata} t={t} /> : null}
+          {material.category === "creature" ? <CreatureMaterialDetail metadata={material.metadata} t={t} /> : null}
           {material.category === "item" ? <ItemMaterialDetail metadata={material.metadata} t={t} /> : null}
           {material.category === "scene" ? <SceneMaterialDetail key={material.id} metadata={material.metadata} t={t} /> : null}
         </div>
@@ -520,6 +532,109 @@ function MaskMaterialDetail({
   );
 }
 
+function CreatureMaterialDetail({
+  metadata,
+  t
+}: {
+  metadata: WorkspaceMaterialMetadata | undefined | null;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const record = getCreatureMaterialMetadata(metadata);
+
+  if (!record || record.kind !== "creature") {
+    return null;
+  }
+
+  const taxonomy = getNestedRecord(record.taxonomy);
+  const morphology = getNestedRecord(record.morphology);
+  const colors = getNestedRecord(record.colors);
+  const vocalization = getNestedRecord(record.vocalization);
+  const senses = getNestedRecord(record.senses);
+  const ecology = getNestedRecord(record.ecology);
+  const behavior = getNestedRecord(record.behavior);
+
+  return (
+    <div className="mx-auto mt-8 max-w-md space-y-6 text-left">
+      <MaskDetailTextBlock title={t("creatureForm.fullDefinition")} value={record.description} preserveLines />
+      <MaskDetailKeyValues
+        title={t("creatureForm.taxonomyTitle")}
+        entries={[
+          ...creatureTaxonomyFields.map((field) => ({
+            label: t(`creatureForm.taxonomyFields.${field.id}.label`),
+            value: getRecordString(taxonomy, field.id)
+          })),
+          ...creatureEcologyFields.map((field) => ({
+            label: t(`creatureForm.ecologyFields.${field.id}.label`),
+            value: getRecordString(ecology, field.id)
+          }))
+        ]}
+      />
+      <MaskDetailKeyValues
+        title={t("creatureForm.morphologyTitle")}
+        entries={creatureMorphologyFields.map((field) => ({
+          label: t(`creatureForm.morphologyFields.${field.id}.label`),
+          value: getRecordString(morphology, field.id)
+        }))}
+      />
+      <MaskDetailColors
+        title={t("creatureForm.colorTitle")}
+        entries={creatureColorFields.map((field) => ({
+          label: t(`creatureForm.colorFields.${field.id}.label`),
+          value: getRecordString(colors, field.id)
+        }))}
+      />
+      <MaskDetailKeyValues
+        title={t("creatureForm.vocalTitle")}
+        entries={[
+          ...creatureVocalizationFields.map((field) => ({
+            label: t(`creatureForm.vocalFields.${field.id}.label`),
+            value:
+              getRecordNumber(vocalization, field.id) === null
+                ? ""
+                : getCreatureVocalDetailLabel(field.id, getRecordNumber(vocalization, field.id) ?? 0, t)
+          })),
+          ...creatureSenseFields.map((field) => ({
+            label: t(`creatureForm.senseFields.${field.id}.label`),
+            value:
+              getRecordNumber(senses, field.id) === null
+                ? ""
+                : getCreatureSenseDetailLabel(field.id, getRecordNumber(senses, field.id) ?? 0, t)
+          }))
+        ]}
+      />
+      <CreatureDetailTags
+        title={t("creatureForm.abilityTitle")}
+        groups={creatureAbilityFields.map((field) => ({
+          label: t(`creatureForm.abilityFields.${field}`),
+          values: record.abilities[field]
+        }))}
+      />
+      <MaskDetailTextBlock title={t("creatureForm.behaviorLogicTitle")} value={record.behaviorLogic} preserveLines />
+      <MaskDetailKeyValues
+        title={t("creatureForm.behaviorTendencyTitle")}
+        entries={creatureBehaviorGroups.flatMap((group) =>
+          group.fields.map((fieldId) => ({
+            label: t(`creatureForm.behaviorFields.${fieldId}.label`),
+            value:
+              getRecordNumber(behavior, fieldId) === null
+                ? ""
+                : getCreatureBehaviorDetailLabel(fieldId, getRecordNumber(behavior, fieldId) ?? 0, t)
+          }))
+        )}
+      />
+      {record.boardImage?.url ? (
+        <section>
+          <h3 className="text-sm font-semibold text-foreground/72">{t("creatureForm.boardTitle")}</h3>
+          <div className="mt-3 overflow-hidden rounded-xl border border-border bg-background">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={record.boardImage.url} alt="" loading="lazy" decoding="async" className="aspect-video w-full object-contain" />
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function ItemMaterialDetail({
   metadata,
   t
@@ -648,6 +763,40 @@ function ItemDetailTags({
           </div>
         </div>
       ))}
+    </section>
+  );
+}
+
+function CreatureDetailTags({
+  groups,
+  title
+}: {
+  groups: Array<{ label: string; values: string[] }>;
+  title: string;
+}) {
+  const visibleGroups = groups.filter((group) => group.values.length > 0);
+
+  if (visibleGroups.length === 0) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3 className="text-sm font-semibold text-foreground/72">{title}</h3>
+      <div className="mt-3 space-y-3">
+        {visibleGroups.map((group) => (
+          <div key={group.label}>
+            <p className="text-xs text-foreground/42">{group.label}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {group.values.map((value) => (
+                <span key={value} className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground/58">
+                  {value}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -793,8 +942,50 @@ function getMaskPersonalityDetailLabel(
   });
 }
 
+function getCreatureVocalDetailLabel(
+  fieldId: CreatureVocalizationFieldId,
+  value: number,
+  t: (key: string, values?: Record<string, string | number>) => string
+) {
+  return t(`creatureForm.vocalFields.${fieldId}.ticks.${getTraitTickKey(value, getCreatureVocalRange(fieldId))}`);
+}
+
+function getCreatureSenseDetailLabel(
+  fieldId: CreatureSenseFieldId,
+  value: number,
+  t: (key: string, values?: Record<string, string | number>) => string
+) {
+  return t(`creatureForm.senseFields.${fieldId}.ticks.${getTraitTickKey(value, getCreatureSenseRange(fieldId))}`);
+}
+
+function getCreatureBehaviorDetailLabel(
+  fieldId: CreatureBehaviorFieldId,
+  value: number,
+  t: (key: string, values?: Record<string, string | number>) => string
+) {
+  const level = getTraitLevel(value);
+
+  if (level === "balanced") {
+    return t("creatureForm.detailTraitLevels.balanced");
+  }
+
+  const direction = level === "veryLow" || level === "low" ? "low" : "high";
+
+  return t(`creatureForm.detailTraitLevels.${level}`, {
+    description: t(`creatureForm.behaviorFields.${fieldId}.${direction}`)
+  });
+}
+
 function getMaskVoiceRange(fieldId: MaskVoiceFieldId) {
   return maskVoiceFields.find((field) => field.id === fieldId) ?? { min: 0, max: 100 };
+}
+
+function getCreatureVocalRange(fieldId: CreatureVocalizationFieldId) {
+  return creatureVocalizationFields.find((field) => field.id === fieldId) ?? { min: 0, max: 100 };
+}
+
+function getCreatureSenseRange(fieldId: CreatureSenseFieldId) {
+  return creatureSenseFields.find((field) => field.id === fieldId) ?? { min: 0, max: 100 };
 }
 
 function getTraitTickKey(value: number, range: { min: number; max: number }) {
@@ -989,6 +1180,13 @@ function getMaterialDetailPreviewUrl(material: WorkspaceMaterial) {
     const frontUrl = item?.viewImages?.front?.url?.trim();
 
     return boardUrl || modelInputUrl || frontUrl || (item ? null : material.previewUrl);
+  }
+
+  if (material.category === "creature") {
+    const creature = getCreatureMaterialMetadata(material.metadata);
+    const boardUrl = creature?.boardImage?.url?.trim();
+
+    return boardUrl || material.previewUrl;
   }
 
   if (material.category !== "scene") {

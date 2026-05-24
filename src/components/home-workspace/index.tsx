@@ -38,24 +38,30 @@ import {
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
 import {
+  assistHomeCreatureDraft,
   assistHomeMaskDraft,
   assistHomeItemDraft,
+  assistHomeItemDraftWithImages,
   assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
   createHomeConversation,
+  createHomeCreatureMaterial,
   createHomeItemMaterial,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
   deleteHomeMaterial,
   deleteHomeConversation,
+  generateHomeCreatureBoard,
   generateHomeItemBoard,
+  generateHomeItemBoardWithImages,
   generateHomeItemModelInputImage,
   generateHomeMaskBoard,
   joinHomeMaterial,
   setHomeMaterialCommunitySharing,
+  updateHomeCreatureMaterial,
   updateHomeItemMaterial,
   updateHomeMaskMaterial,
   updateHomeSceneMaterial,
@@ -66,6 +72,7 @@ import { AuthDialog } from "@/components/auth-dialog";
 import { HeaderActions } from "@/components/header-actions";
 import { UserAvatar } from "@/components/user-avatar";
 import { ItemCreateDialog } from "./item-dialog";
+import { CreatureCreateDialog } from "./creature-dialog";
 import { MaskCreateDialog } from "./mask-dialog";
 import { MaterialDetailModal, MaterialExploreCard, ScriptExploreCard } from "./material-detail";
 import { SceneCreateDialog } from "./scene-dialog";
@@ -134,6 +141,16 @@ import {
   type ItemModelProgress,
   type ItemModelStreamEvent,
   type ItemTagFieldId,
+  type CreatureAbilityFieldId,
+  type CreatureBehaviorFieldId,
+  type CreatureColorFieldId,
+  type CreatureCreateDraft,
+  type CreatureDraftPatch,
+  type CreatureEcologyFieldId,
+  type CreatureMorphologyFieldId,
+  type CreatureSenseFieldId,
+  type CreatureTaxonomyFieldId,
+  type CreatureVocalizationFieldId,
   type MaskAiMessage,
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource,
@@ -164,16 +181,19 @@ import {
   type StreamingReply
 } from "./shared";
 import {
+  applyPatchToCreatureDraft,
   applyPatchToItemDraft,
   applyPatchToMaskDraft,
   applyPatchToSceneDraft,
   buildItemMaterialFormData,
   createClientId,
+  createDefaultCreatureDraft,
   createDefaultItemDraft,
   createDefaultMaskDraft,
   createDefaultSceneBlock,
   createDefaultSceneDraft,
   createInitialScenePanoramaGenerationDraft,
+  createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
   createMaskDraftFromMaterial,
   createPreviewUrl,
@@ -181,6 +201,7 @@ import {
   createSceneReferenceImageDrafts,
   dataUrlToFile,
   downloadMaterialArchive,
+  getCreatureBoardImageMode,
   getCompleteScenePanoramaFaceUrls,
   getItemModelInputFileForModel,
   getItemBoardFileForGeneration,
@@ -194,6 +215,7 @@ import {
   readItemModelStream,
   readTransferErrorCode,
   revokeItemBoardPreview,
+  revokeCreatureBoardPreview,
   revokeItemDraftPreviews,
   revokeItemModelInputImagePreview,
   revokeMaskBoardPreview,
@@ -202,6 +224,7 @@ import {
   revokeSceneFacePreview,
   revokeScenePanoramaMotherPreview,
   revokeSceneReferenceImagePreview,
+  serializeCreatureDraft,
   serializeItemDraft,
   serializeMaskDraft,
   serializeSceneTextDraft,
@@ -215,6 +238,9 @@ import {
   getScriptChats,
   getScriptRank,
   getScriptRating,
+  resolveCreatureAiError,
+  resolveCreatureBoardError,
+  resolveCreatureSaveError,
   resolveItemAiError,
   resolveItemBoardError,
   resolveItemModelError,
@@ -269,12 +295,21 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [maskAiPending, setMaskAiPending] = useState(false);
   const [maskBoardPending, setMaskBoardPending] = useState(false);
   const [maskSavePending, setMaskSavePending] = useState(false);
+  const [creatureCreateOpen, setCreatureCreateOpen] = useState(false);
+  const [creatureEditingMaterialId, setCreatureEditingMaterialId] = useState("");
+  const [creatureCreateDraft, setCreatureCreateDraft] = useState<CreatureCreateDraft>(() => createDefaultCreatureDraft());
+  const [creatureAiInput, setCreatureAiInput] = useState("");
+  const [creatureAiPending, setCreatureAiPending] = useState(false);
+  const [creatureBoardPending, setCreatureBoardPending] = useState(false);
+  const [creatureSavePending, setCreatureSavePending] = useState(false);
   const [itemCreateOpen, setItemCreateOpen] = useState(false);
   const [itemEditingMaterialId, setItemEditingMaterialId] = useState("");
   const [itemCreateDraft, setItemCreateDraft] = useState<ItemCreateDraft>(() => createDefaultItemDraft());
   const [itemAiInput, setItemAiInput] = useState("");
   const [itemAiPending, setItemAiPending] = useState(false);
+  const [itemAiReferenceImages, setItemAiReferenceImages] = useState<SceneReferenceImageDraft[]>([]);
   const [itemBoardPending, setItemBoardPending] = useState(false);
+  const [itemBoardReferenceImages, setItemBoardReferenceImages] = useState<SceneReferenceImageDraft[]>([]);
   const [itemModelInputPending, setItemModelInputPending] = useState(false);
   const [itemModelPending, setItemModelPending] = useState(false);
   const [itemModelProgress, setItemModelProgress] = useState<ItemModelProgress | null>(null);
@@ -376,10 +411,12 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const isCommunityScriptView = scriptManagerView === "community";
   const isCommunityMaterialView = materialManagerView === "community";
   const isMaskActionPending = maskAiPending || maskBoardPending || maskSavePending;
+  const isCreatureActionPending = creatureAiPending || creatureBoardPending || creatureSavePending;
   const isItemActionPending = itemAiPending || itemBoardPending || itemModelInputPending || itemModelPending || itemSavePending;
   const isSceneActionPending = sceneAiPending || Boolean(scenePanoramaPendingBlockId) || sceneSavePending;
   const isMaterialTransferDisabled = materialTransferPending;
   const isEditingMask = Boolean(maskEditingMaterialId);
+  const isEditingCreature = Boolean(creatureEditingMaterialId);
   const isEditingItem = Boolean(itemEditingMaterialId);
   const isEditingScene = Boolean(sceneEditingMaterialId);
 
@@ -413,6 +450,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       setMaterialCreateMenuOpen(false);
       setMaskCreateOpen(false);
       resetMaskCreateDraft();
+      setCreatureCreateOpen(false);
+      resetCreatureCreateDraft();
       setItemCreateOpen(false);
       resetItemCreateDraft();
       setSceneCreateOpen(false);
@@ -501,6 +540,25 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [maskCreateOpen]);
+
+  useEffect(() => {
+    if (!creatureCreateOpen) {
+      return;
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setCreatureCreateOpen(false);
+        resetCreatureCreateDraft();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [creatureCreateOpen]);
 
   useEffect(() => {
     if (!sceneCreateOpen) {
@@ -999,15 +1057,26 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     if (category === "mask") {
       resetMaskCreateDraft();
+      setCreatureCreateOpen(false);
       setItemCreateOpen(false);
       setSceneCreateOpen(false);
       setMaskCreateOpen(true);
       return;
     }
 
+    if (category === "creature") {
+      resetCreatureCreateDraft();
+      setMaskCreateOpen(false);
+      setItemCreateOpen(false);
+      setSceneCreateOpen(false);
+      setCreatureCreateOpen(true);
+      return;
+    }
+
     if (category === "item") {
       resetItemCreateDraft();
       setMaskCreateOpen(false);
+      setCreatureCreateOpen(false);
       setSceneCreateOpen(false);
       setItemCreateOpen(true);
       return;
@@ -1016,6 +1085,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     if (category === "scene") {
       resetSceneCreateDraft();
       setMaskCreateOpen(false);
+      setCreatureCreateOpen(false);
       setItemCreateOpen(false);
       setSceneCreateOpen(true);
       return;
@@ -1414,6 +1484,336 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
   }
 
+  function closeCreatureCreateDialog() {
+    setCreatureCreateOpen(false);
+    resetCreatureCreateDraft();
+  }
+
+  function resetCreatureCreateDraft() {
+    setCreatureCreateDraft((current) => {
+      revokeCreatureBoardPreview(current.boardImagePreviewUrl);
+
+      return createDefaultCreatureDraft();
+    });
+    setCreatureAiInput("");
+    setCreatureEditingMaterialId("");
+  }
+
+  function openCreatureEditDialog(material: WorkspaceMaterial) {
+    if (material.category !== "creature" || material.librarySource !== "SELF_CREATED") {
+      return;
+    }
+
+    setMaterialCreateMenuOpen(false);
+    setCreatureCreateDraft((current) => {
+      revokeCreatureBoardPreview(current.boardImagePreviewUrl);
+
+      return createCreatureDraftFromMaterial(material);
+    });
+    setCreatureAiInput("");
+    setCreatureEditingMaterialId(material.id);
+    setCreatureCreateOpen(true);
+  }
+
+  function updateCreatureName(name: string) {
+    setCreatureCreateDraft((current) => ({ ...current, name }));
+  }
+
+  function updateCreatureDescription(description: string) {
+    setCreatureCreateDraft((current) => ({ ...current, description }));
+  }
+
+  function updateCreatureStyle(style: WorkspaceMaterialStyle) {
+    setCreatureCreateDraft((current) => ({ ...current, style }));
+  }
+
+  function updateCreatureTaxonomyField(fieldId: CreatureTaxonomyFieldId, value: string) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      taxonomy: {
+        ...current.taxonomy,
+        [fieldId]: value
+      }
+    }));
+  }
+
+  function updateCreatureMorphologyField(fieldId: CreatureMorphologyFieldId, value: string) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      morphology: {
+        ...current.morphology,
+        [fieldId]: value
+      }
+    }));
+  }
+
+  function updateCreatureColorField(fieldId: CreatureColorFieldId, value: string) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      colors: {
+        ...current.colors,
+        [fieldId]: value.toUpperCase()
+      }
+    }));
+  }
+
+  function updateCreatureVocalizationField(fieldId: CreatureVocalizationFieldId, value: number) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      vocalization: {
+        ...current.vocalization,
+        [fieldId]: value
+      }
+    }));
+  }
+
+  function updateCreatureSenseField(fieldId: CreatureSenseFieldId, value: number) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      senses: {
+        ...current.senses,
+        [fieldId]: value
+      }
+    }));
+  }
+
+  function updateCreatureEcologyField(fieldId: CreatureEcologyFieldId, value: string) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      ecology: {
+        ...current.ecology,
+        [fieldId]: value
+      }
+    }));
+  }
+
+  function updateCreatureAbilityTags(fieldId: CreatureAbilityFieldId, values: string[]) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      abilities: {
+        ...current.abilities,
+        [fieldId]: values
+      }
+    }));
+  }
+
+  function updateCreatureBehaviorLogic(behaviorLogic: string) {
+    setCreatureCreateDraft((current) => ({ ...current, behaviorLogic }));
+  }
+
+  function updateCreatureBehaviorField(fieldId: CreatureBehaviorFieldId, value: number) {
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      behavior: {
+        ...current.behavior,
+        [fieldId]: value
+      }
+    }));
+  }
+
+  function updateCreatureBoardDrawingStyle(style: MaskBoardDrawingStyle) {
+    setCreatureCreateDraft((current) => ({ ...current, boardDrawingStyle: style }));
+  }
+
+  function applyCreatureDraftPatch(patch: CreatureDraftPatch) {
+    setCreatureCreateDraft((current) => applyPatchToCreatureDraft(current, patch));
+  }
+
+  function updateCreatureBoardImage(file: File, source: Exclude<MaskBoardImageSource, null>, previewUrl: string) {
+    setCreatureCreateDraft((current) => {
+      revokeCreatureBoardPreview(current.boardImagePreviewUrl);
+
+      return {
+        ...current,
+        boardImageFile: file,
+        boardImagePreviewUrl: previewUrl,
+        boardImageSource: source
+      };
+    });
+  }
+
+  function clearCreatureBoardImage() {
+    setCreatureCreateDraft((current) => {
+      revokeCreatureBoardPreview(current.boardImagePreviewUrl);
+
+      return {
+        ...current,
+        boardImageFile: null,
+        boardImagePreviewUrl: "",
+        boardImageSource: null
+      };
+    });
+  }
+
+  function selectCreatureBoardImage(file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    if (!isValidMaskBoardImage(file)) {
+      toast.error(materialT("creatureForm.invalidBoardImage"));
+      return;
+    }
+
+    updateCreatureBoardImage(file, "uploaded", createPreviewUrl(file));
+  }
+
+  async function sendCreatureAiMessage(authenticatedViewer = viewer) {
+    const instruction = creatureAiInput.trim();
+
+    if (!instruction || creatureAiPending) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void sendCreatureAiMessage(nextViewer);
+      });
+      return;
+    }
+
+    setCreatureAiInput("");
+    setCreatureAiPending(true);
+    setCreatureCreateDraft((current) => ({
+      ...current,
+      aiMessages: [...current.aiMessages, { id: createClientId("creature-ai-user"), role: "user", content: instruction }]
+    }));
+
+    try {
+      const result = await assistHomeCreatureDraft(serializeCreatureDraft(creatureCreateDraft), instruction, locale);
+
+      applyCreatureDraftPatch(result.patch);
+      setCreatureCreateDraft((current) => ({
+        ...current,
+        aiMessages: [
+          ...current.aiMessages,
+          { id: createClientId("creature-ai-assistant"), role: "assistant", content: result.message }
+        ]
+      }));
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void sendCreatureAiMessage(nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveCreatureAiError(error, materialT));
+      setCreatureAiInput(instruction);
+    } finally {
+      setCreatureAiPending(false);
+    }
+  }
+
+  async function generateCreatureBoard(authenticatedViewer = viewer) {
+    if (creatureBoardPending) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void generateCreatureBoard(nextViewer);
+      });
+      return;
+    }
+
+    setCreatureBoardPending(true);
+
+    try {
+      const result = await generateHomeCreatureBoard(serializeCreatureDraft(creatureCreateDraft), locale);
+      const file = await dataUrlToFile(result.dataUrl, result.fileName, result.contentType);
+
+      if (!isValidMaskBoardImage(file)) {
+        toast.error(materialT("creatureForm.invalidBoardImage"));
+        return;
+      }
+
+      updateCreatureBoardImage(file, "generated", result.dataUrl);
+      toast.success(materialT("creatureForm.boardGenerated"));
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void generateCreatureBoard(nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveCreatureBoardError(error, materialT));
+    } finally {
+      setCreatureBoardPending(false);
+    }
+  }
+
+  async function submitCreatureCreateDraft(authenticatedViewer = viewer) {
+    if (!creatureCreateDraft.name.trim()) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void submitCreatureCreateDraft(nextViewer);
+      });
+      return;
+    }
+
+    if (!persistenceAvailable) {
+      toast.error(t("errors.persistence"));
+      return;
+    }
+
+    setCreatureSavePending(true);
+
+    try {
+      const isEditing = Boolean(creatureEditingMaterialId);
+      const formData = new FormData();
+
+      formData.append("draft", JSON.stringify(serializeCreatureDraft(creatureCreateDraft)));
+
+      if (creatureCreateDraft.boardImageFile) {
+        if (!isValidMaskBoardImage(creatureCreateDraft.boardImageFile)) {
+          toast.error(materialT("creatureForm.invalidBoardImage"));
+          return;
+        }
+
+        formData.append("boardImage", creatureCreateDraft.boardImageFile);
+      }
+
+      if (isEditing) {
+        formData.append("boardImageMode", getCreatureBoardImageMode(creatureCreateDraft));
+      }
+
+      const material = isEditing
+        ? await updateHomeCreatureMaterial(creatureEditingMaterialId, formData, locale)
+        : await createHomeCreatureMaterial(formData, locale);
+
+      setMyMaterials((current) => upsertMaterialList(current, material));
+      setCommunityMaterials((current) =>
+        isEditing && current.some((item) => item.id === material.id) ? upsertMaterialList(current, material) : current
+      );
+      setMaterialStyle(material.style);
+      toast.success(materialT(isEditing ? "creatureForm.updateSuccess" : "creatureForm.saveSuccess"));
+      closeCreatureCreateDialog();
+      router.refresh();
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void submitCreatureCreateDraft(nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveCreatureSaveError(error, materialT, Boolean(creatureEditingMaterialId)));
+    } finally {
+      setCreatureSavePending(false);
+    }
+  }
+
   function closeItemCreateDialog() {
     setItemCreateOpen(false);
     resetItemCreateDraft();
@@ -1426,6 +1826,16 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       return createDefaultItemDraft();
     });
     setItemAiInput("");
+    setItemAiReferenceImages((current) => {
+      current.forEach(revokeSceneReferenceImagePreview);
+
+      return [];
+    });
+    setItemBoardReferenceImages((current) => {
+      current.forEach(revokeSceneReferenceImagePreview);
+
+      return [];
+    });
     setItemEditingMaterialId("");
     setItemModelProgress(null);
   }
@@ -1442,6 +1852,16 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       return createItemDraftFromMaterial(material);
     });
     setItemAiInput("");
+    setItemAiReferenceImages((current) => {
+      current.forEach(revokeSceneReferenceImagePreview);
+
+      return [];
+    });
+    setItemBoardReferenceImages((current) => {
+      current.forEach(revokeSceneReferenceImagePreview);
+
+      return [];
+    });
     setItemModelProgress(null);
     setItemEditingMaterialId(material.id);
     setMaskCreateOpen(false);
@@ -1548,10 +1968,94 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setItemModelProgress(null);
   }
 
+  function addItemReferenceImages(
+    files: FileList | File[],
+    setImages: Dispatch<SetStateAction<SceneReferenceImageDraft[]>>
+  ) {
+    const { images: nextImages, invalidCount } = createSceneReferenceImageDrafts(Array.from(files));
+
+    if (invalidCount > 0) {
+      toast.error(materialT("itemForm.invalidReferenceImage"));
+    }
+
+    if (nextImages.length === 0) {
+      return;
+    }
+
+    setImages((current) => {
+      const availableSlots = Math.max(0, maxSceneReferenceImages - current.length);
+      const accepted = nextImages.slice(0, availableSlots);
+      const rejected = nextImages.slice(availableSlots);
+
+      rejected.forEach(revokeSceneReferenceImagePreview);
+
+      if (accepted.length < nextImages.length) {
+        toast.error(materialT("itemForm.referenceImageLimit"));
+      }
+
+      return [...current, ...accepted];
+    });
+  }
+
+  function addItemAiReferenceImages(files: FileList | File[]) {
+    addItemReferenceImages(files, setItemAiReferenceImages);
+  }
+
+  function addItemBoardReferenceImages(files: FileList | File[]) {
+    addItemReferenceImages(files, setItemBoardReferenceImages);
+  }
+
+  function removeItemAiReferenceImage(imageId: string) {
+    setItemAiReferenceImages((current) => {
+      const removed = current.find((image) => image.id === imageId);
+
+      if (removed) {
+        revokeSceneReferenceImagePreview(removed);
+      }
+
+      return current.filter((image) => image.id !== imageId);
+    });
+  }
+
+  function removeItemBoardReferenceImage(imageId: string) {
+    setItemBoardReferenceImages((current) => {
+      const removed = current.find((image) => image.id === imageId);
+
+      if (removed) {
+        revokeSceneReferenceImagePreview(removed);
+      }
+
+      return current.filter((image) => image.id !== imageId);
+    });
+  }
+
+  function buildItemAiAssistFormData(draft: ItemCreateDraft, instruction: string, referenceImages: SceneReferenceImageDraft[]) {
+    const formData = new FormData();
+
+    formData.append("draft", JSON.stringify(serializeItemDraft(draft)));
+    formData.append("instruction", instruction);
+    referenceImages.forEach((image) => {
+      formData.append("referenceImages", image.file);
+    });
+
+    return formData;
+  }
+
+  function buildItemBoardGenerationFormData(draft: ItemCreateDraft, referenceImages: SceneReferenceImageDraft[]) {
+    const formData = new FormData();
+
+    formData.append("draft", JSON.stringify(serializeItemDraft(draft)));
+    referenceImages.forEach((image) => {
+      formData.append("referenceImages", image.file);
+    });
+
+    return formData;
+  }
+
   async function sendItemAiMessage(authenticatedViewer = viewer) {
     const instruction = itemAiInput.trim();
 
-    if (!instruction || itemAiPending) {
+    if ((!instruction && itemAiReferenceImages.length === 0) || itemAiPending) {
       return;
     }
 
@@ -1567,13 +2071,27 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setItemAiPending(true);
     setItemCreateDraft((current) => ({
       ...current,
-      aiMessages: [...current.aiMessages, { id: createClientId("item-ai-user"), role: "user", content: instruction }]
+      aiMessages: [
+        ...current.aiMessages,
+        {
+          id: createClientId("item-ai-user"),
+          role: "user",
+          content: instruction || materialT("itemForm.aiReferenceOnlyMessage")
+        }
+      ]
     }));
 
     try {
-      const result = await assistHomeItemDraft(serializeItemDraft(itemCreateDraft), instruction, locale);
+      const result = itemAiReferenceImages.length > 0
+        ? await assistHomeItemDraftWithImages(buildItemAiAssistFormData(itemCreateDraft, instruction, itemAiReferenceImages), locale)
+        : await assistHomeItemDraft(serializeItemDraft(itemCreateDraft), instruction, locale);
 
       applyItemDraftPatch(result.patch);
+      setItemAiReferenceImages((current) => {
+        current.forEach(revokeSceneReferenceImagePreview);
+
+        return [];
+      });
       setItemCreateDraft((current) => ({
         ...current,
         aiMessages: [
@@ -1613,7 +2131,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setItemBoardPending(true);
 
     try {
-      const result = await generateHomeItemBoard(serializeItemDraft(itemCreateDraft), locale);
+      const result = itemBoardReferenceImages.length > 0
+        ? await generateHomeItemBoardWithImages(buildItemBoardGenerationFormData(itemCreateDraft, itemBoardReferenceImages), locale)
+        : await generateHomeItemBoard(serializeItemDraft(itemCreateDraft), locale);
       const file = await dataUrlToFile(result.dataUrl, result.fileName, result.contentType);
 
       if (!isValidMaskBoardImage(file)) {
@@ -1622,6 +2142,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       }
 
       updateItemBoardImage(file, "generated", result.dataUrl);
+      setItemBoardReferenceImages((current) => {
+        current.forEach(revokeSceneReferenceImagePreview);
+
+        return [];
+      });
       toast.success(materialT("itemForm.boardGenerated"));
     } catch (error) {
       if (isAuthRequiredError(error)) {
@@ -1883,6 +2408,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   function openMaterialEditDialog(material: WorkspaceMaterial) {
     if (material.category === "mask") {
       openMaskEditDialog(material);
+      return;
+    }
+
+    if (material.category === "creature") {
+      openCreatureEditDialog(material);
       return;
     }
 
@@ -2909,7 +3439,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             canEdit={
               !isCommunityMaterialView &&
               detailMaterial.librarySource === "SELF_CREATED" &&
-              (detailMaterial.category === "mask" || detailMaterial.category === "item" || detailMaterial.category === "scene")
+              (detailMaterial.category === "mask" ||
+                detailMaterial.category === "creature" ||
+                detailMaterial.category === "item" ||
+                detailMaterial.category === "scene")
             }
             canExport={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED"}
             canShare={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED"}
@@ -2974,11 +3507,46 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             title={materialT(isEditingMask ? "maskForm.editTitle" : "maskForm.title")}
           />
         ) : null}
+        {creatureCreateOpen ? (
+          <CreatureCreateDialog
+            aiInput={creatureAiInput}
+            aiPending={creatureAiPending}
+            boardPending={creatureBoardPending}
+            description={materialT(isEditingCreature ? "creatureForm.editDescription" : "creatureForm.description")}
+            draft={creatureCreateDraft}
+            isPending={isPending || isCreatureActionPending}
+            onCancel={closeCreatureCreateDialog}
+            onChangeAbilityTags={updateCreatureAbilityTags}
+            onChangeAiInput={setCreatureAiInput}
+            onChangeBehaviorField={updateCreatureBehaviorField}
+            onChangeBehaviorLogic={updateCreatureBehaviorLogic}
+            onChangeBoardDrawingStyle={updateCreatureBoardDrawingStyle}
+            onChangeColorField={updateCreatureColorField}
+            onChangeDescription={updateCreatureDescription}
+            onChangeEcologyField={updateCreatureEcologyField}
+            onChangeMorphologyField={updateCreatureMorphologyField}
+            onChangeName={updateCreatureName}
+            onChangeSenseField={updateCreatureSenseField}
+            onChangeStyle={updateCreatureStyle}
+            onChangeTaxonomyField={updateCreatureTaxonomyField}
+            onChangeVocalizationField={updateCreatureVocalizationField}
+            onClearBoardImage={clearCreatureBoardImage}
+            onGenerateBoard={() => void generateCreatureBoard()}
+            onSelectBoardImage={selectCreatureBoardImage}
+            onSendAiMessage={() => void sendCreatureAiMessage()}
+            onSubmit={submitCreatureCreateDraft}
+            saveLabel={materialT(isEditingCreature ? "creatureForm.saveEdit" : "saveCreature")}
+            t={materialT}
+            title={materialT(isEditingCreature ? "creatureForm.editTitle" : "creatureForm.title")}
+          />
+        ) : null}
         {itemCreateOpen ? (
           <ItemCreateDialog
             aiInput={itemAiInput}
             aiPending={itemAiPending}
+            aiReferenceImages={itemAiReferenceImages}
             boardPending={itemBoardPending}
+            boardReferenceImages={itemBoardReferenceImages}
             description={materialT(isEditingItem ? "itemForm.editDescription" : "itemForm.description")}
             draft={itemCreateDraft}
             isPending={isPending || isItemActionPending}
@@ -2988,6 +3556,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             title={materialT(isEditingItem ? "itemForm.editTitle" : "itemForm.title")}
             modelInputPending={itemModelInputPending}
             onCancel={closeItemCreateDialog}
+            onAddAiReferenceImages={addItemAiReferenceImages}
+            onAddBoardReferenceImages={addItemBoardReferenceImages}
             onChangeAiInput={setItemAiInput}
             onChangeBoardDrawingStyle={updateItemBoardDrawingStyle}
             onChangeField={updateItemField}
@@ -2999,6 +3569,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onGenerateBoard={() => void generateItemBoard()}
             onGenerateModel={() => void generateItemModel()}
             onGenerateModelInputImage={() => void generateItemModelInputImage()}
+            onRemoveAiReferenceImage={removeItemAiReferenceImage}
+            onRemoveBoardReferenceImage={removeItemBoardReferenceImage}
             onSelectBoardImage={selectItemBoardImage}
             onSelectModelInputImage={selectItemModelInputImage}
             onSendAiMessage={() => void sendItemAiMessage()}

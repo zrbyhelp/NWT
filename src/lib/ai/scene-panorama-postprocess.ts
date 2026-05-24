@@ -171,6 +171,8 @@ const colorLowFrequencyMaxDelta = 60;
 const colorDetailPreservation = 1.5;
 const colorReferenceEdgeAnchorStrength = 0.74;
 const colorReferenceEdgeAnchorWidthRatio = 0.003;
+const faceStitchingReferenceAnchorStrength = 0.92;
+const faceStitchingReferenceAnchorWidthRatio = 1 / 18;
 const seamBlendStrength = 0.58;
 const seamBlendWidthRatio = 1 / 32;
 const seamSmoothRadiusRatio = 1 / 80;
@@ -221,7 +223,7 @@ type ColorStats = {
 };
 
 export async function stabilizeScenePanoramaFaces(
-  _referenceFaces: ScenePanoramaPostprocessImage[],
+  referenceFaces: ScenePanoramaPostprocessImage[],
   candidateFaces: ScenePanoramaPostprocessImage[],
   options: ScenePanoramaPostprocessOptions = {}
 ): Promise<ScenePanoramaPostprocessImage[]> {
@@ -235,11 +237,14 @@ export async function stabilizeScenePanoramaFaces(
       throw new Error(`SCENE_PANORAMA_FACE_MISSING_${face}`);
     }
 
+    const reference = getPostprocessFace(referenceFaces, face);
+    const referenceImage = await decodeFaceToRgba(reference.bytes, faceSize);
     const candidateImage = await decodeFaceToRgba(candidate.bytes, faceSize);
+    const anchoredImage = anchorFaceStitchingBandToReference(referenceImage, candidateImage, faceSize);
 
     stabilizedFaces.push({
       ...candidate,
-      bytes: await encodeRgbaToWebp(candidateImage.pixels, candidateImage.width, candidateImage.height),
+      bytes: await encodeRgbaToWebp(anchoredImage.pixels, anchoredImage.width, anchoredImage.height),
       contentType: "image/webp",
       fileName: candidate.fileName.replace(/\.[a-z0-9]+$/i, ".webp")
     });
@@ -853,7 +858,7 @@ function measureHorizontalWrapBandDelta(image: RgbaImage, bandWidth: number) {
   for (let depth = 0; depth < bandWidth; depth += 1) {
     for (let y = 0; y < image.height; y += 1) {
       const leftIndex = (y * image.width + depth) * 4;
-      const rightIndex = (y * image.width + image.width - bandWidth + depth) * 4;
+      const rightIndex = (y * image.width + image.width - 1 - depth) * 4;
 
       for (let channel = 0; channel < 3; channel += 1) {
         total += Math.abs(image.pixels[leftIndex + channel] - image.pixels[rightIndex + channel]);
@@ -872,7 +877,7 @@ function measureHorizontalWrapLumaDelta(image: RgbaImage, bandWidth: number) {
   for (let depth = 0; depth < bandWidth; depth += 1) {
     for (let y = 0; y < image.height; y += 1) {
       const leftIndex = (y * image.width + depth) * 4;
-      const rightIndex = (y * image.width + image.width - bandWidth + depth) * 4;
+      const rightIndex = (y * image.width + image.width - 1 - depth) * 4;
       const leftLuma = measureRgbLuma([image.pixels[leftIndex], image.pixels[leftIndex + 1], image.pixels[leftIndex + 2]]);
       const rightLuma = measureRgbLuma([image.pixels[rightIndex], image.pixels[rightIndex + 1], image.pixels[rightIndex + 2]]);
 
@@ -947,17 +952,27 @@ function measureBandLumaComplexity(image: RgbaImage, startX: number, width: numb
 }
 
 function getProfilePeakIndex(values: number[]) {
+  const smoothed = smoothNumberSeries(values, Math.max(2, Math.round(values.length / 96)));
+  const sorted = [...smoothed].sort((first, second) => first - second);
+  const threshold = getPercentile(sorted, 0.82);
+  let weightedIndexTotal = 0;
+  let weightTotal = 0;
   let peak = 0;
   let peakValue = Number.NEGATIVE_INFINITY;
 
-  values.forEach((value, index) => {
+  smoothed.forEach((value, index) => {
+    const weight = Math.max(0, value - threshold);
+
+    weightedIndexTotal += index * weight;
+    weightTotal += weight;
+
     if (value > peakValue) {
       peak = index;
       peakValue = value;
     }
   });
 
-  return peak;
+  return weightTotal > 0 ? Math.round(weightedIndexTotal / weightTotal) : peak;
 }
 
 async function decodeScenePanoramaFaces(faces: ScenePanoramaPostprocessImage[], faceSize: number) {
@@ -1111,6 +1126,37 @@ function anchorFaceEdgesToReference(reference: RgbaImage, candidate: RgbaImage, 
   };
 }
 
+function anchorFaceStitchingBandToReference(reference: RgbaImage, candidate: RgbaImage, faceSize: number): RgbaImage {
+  const output = Buffer.from(candidate.pixels);
+  const anchorWidth = Math.max(2, Math.min(256, Math.round(faceSize * faceStitchingReferenceAnchorWidthRatio)));
+  const edges: ScenePanoramaPostprocessEdge[] = ["top", "right", "bottom", "left"];
+
+  edges.forEach((edge) => {
+    for (let depth = 0; depth < anchorWidth; depth += 1) {
+      const depthRatio = depth / Math.max(1, anchorWidth - 1);
+      const depthWeight = faceStitchingReferenceAnchorStrength * Math.pow(1 - depthRatio, 1.75);
+
+      for (let offset = 0; offset < faceSize; offset += 1) {
+        const [x, y] = getInnerBandPixelPosition(edge, offset, depth, faceSize, faceSize);
+        const index = (y * faceSize + x) * 4;
+
+        for (let channel = 0; channel < 3; channel += 1) {
+          const candidateValue = output[index + channel];
+          const referenceValue = reference.pixels[index + channel];
+
+          output[index + channel] = Math.round(clamp(candidateValue + (referenceValue - candidateValue) * depthWeight, 0, 255));
+        }
+      }
+    }
+  });
+
+  return {
+    pixels: output,
+    height: faceSize,
+    width: faceSize
+  };
+}
+
 function getExtremeLumaProtection(luma: number) {
   if (luma < 18 || luma > 238) {
     return 0.35;
@@ -1219,19 +1265,21 @@ async function decodeEquirectangularToRgba(bytes: Buffer, width: number, height:
 }
 
 function stabilizeEquirectangularWrapSeam(image: RgbaImage): RgbaImage {
-  const output = Buffer.from(image.pixels);
-  const bandWidth = Math.max(8, Math.round(image.width * motherWrapBlendWidthRatio));
-  const smoothRadius = Math.max(2, Math.round(image.height * motherWrapSmoothRadiusRatio));
+  const seamX = findLowestComplexityVerticalSeamX(image);
+  const rotated = rotateEquirectangularToSeam(image, seamX);
+  const output = Buffer.from(rotated.pixels);
+  const bandWidth = Math.max(8, Math.round(rotated.width * motherWrapBlendWidthRatio));
+  const smoothRadius = Math.max(2, Math.round(rotated.height * motherWrapSmoothRadiusRatio));
 
   for (let depth = 0; depth < bandWidth; depth += 1) {
     const weight = motherWrapBlendStrength * Math.pow(1 - depth / bandWidth, 2);
-    const deltas = Array.from({ length: image.height }, () => [0, 0, 0] as [number, number, number]);
+    const deltas = Array.from({ length: rotated.height }, () => [0, 0, 0] as [number, number, number]);
 
-    for (let y = 0; y < image.height; y += 1) {
+    for (let y = 0; y < rotated.height; y += 1) {
       const leftX = depth;
-      const rightX = image.width - 1 - depth;
-      const leftIndex = (y * image.width + leftX) * 4;
-      const rightIndex = (y * image.width + rightX) * 4;
+      const rightX = rotated.width - 1 - depth;
+      const leftIndex = (y * rotated.width + leftX) * 4;
+      const rightIndex = (y * rotated.width + rightX) * 4;
 
       for (let channel = 0; channel < 3; channel += 1) {
         deltas[y][channel] = output[rightIndex + channel] - output[leftIndex + channel];
@@ -1240,11 +1288,11 @@ function stabilizeEquirectangularWrapSeam(image: RgbaImage): RgbaImage {
 
     const smoothedDeltas = smoothRgbSeries(deltas, smoothRadius);
 
-    for (let y = 0; y < image.height; y += 1) {
+    for (let y = 0; y < rotated.height; y += 1) {
       const leftX = depth;
-      const rightX = image.width - 1 - depth;
-      const leftIndex = (y * image.width + leftX) * 4;
-      const rightIndex = (y * image.width + rightX) * 4;
+      const rightX = rotated.width - 1 - depth;
+      const leftIndex = (y * rotated.width + leftX) * 4;
+      const rightIndex = (y * rotated.width + rightX) * 4;
 
       for (let channel = 0; channel < 3; channel += 1) {
         const correction = clamp(
@@ -1258,6 +1306,146 @@ function stabilizeEquirectangularWrapSeam(image: RgbaImage): RgbaImage {
         output[leftIndex + channel] = Math.round(clamp(left + correction, 0, 255));
         output[rightIndex + channel] = Math.round(clamp(right - correction, 0, 255));
       }
+    }
+  }
+
+  return {
+    ...rotated,
+    pixels: output
+  };
+}
+
+function findLowestComplexityVerticalSeamX(image: RgbaImage) {
+  const step = Math.max(1, Math.round(image.width / 512));
+  let bestX = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let x = 0; x < image.width; x += step) {
+    const score = measureVerticalSeamScore(image, x);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestX = x;
+    }
+  }
+
+  const refineStart = bestX - step;
+  const refineEnd = bestX + step;
+
+  for (let offset = refineStart; offset <= refineEnd; offset += 1) {
+    const x = ((offset % image.width) + image.width) % image.width;
+    const score = measureVerticalSeamScore(image, x);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestX = x;
+    }
+  }
+
+  return bestX;
+}
+
+function measureVerticalSeamScore(image: RgbaImage, seamX: number) {
+  const leftX = (seamX - 1 + image.width) % image.width;
+  const rightX = seamX;
+  const bandWidth = Math.max(4, Math.round(image.width * 0.1));
+  const depthStep = Math.max(1, Math.round(bandWidth / 40));
+  const yStep = Math.max(1, Math.round(image.height / 256));
+  let edgeDelta = 0;
+  let structureDelta = 0;
+  let bandColorDelta = 0;
+  let bandLumaDelta = 0;
+  let bandStructureDelta = 0;
+  let bandCount = 0;
+  let count = 0;
+
+  for (let y = 0; y < image.height; y += 1) {
+    const leftIndex = (y * image.width + leftX) * 4;
+    const rightIndex = (y * image.width + rightX) * 4;
+    const leftLuma = measureRgbLuma([image.pixels[leftIndex], image.pixels[leftIndex + 1], image.pixels[leftIndex + 2]]);
+    const rightLuma = measureRgbLuma([image.pixels[rightIndex], image.pixels[rightIndex + 1], image.pixels[rightIndex + 2]]);
+
+    edgeDelta += Math.abs(image.pixels[leftIndex] - image.pixels[rightIndex]);
+    edgeDelta += Math.abs(image.pixels[leftIndex + 1] - image.pixels[rightIndex + 1]);
+    edgeDelta += Math.abs(image.pixels[leftIndex + 2] - image.pixels[rightIndex + 2]);
+
+    if (y < image.height - 1) {
+      const nextLeftIndex = ((y + 1) * image.width + leftX) * 4;
+      const nextRightIndex = ((y + 1) * image.width + rightX) * 4;
+      const nextLeftLuma = measureRgbLuma([
+        image.pixels[nextLeftIndex],
+        image.pixels[nextLeftIndex + 1],
+        image.pixels[nextLeftIndex + 2]
+      ]);
+      const nextRightLuma = measureRgbLuma([
+        image.pixels[nextRightIndex],
+        image.pixels[nextRightIndex + 1],
+        image.pixels[nextRightIndex + 2]
+      ]);
+
+      structureDelta += Math.abs(nextLeftLuma - leftLuma) + Math.abs(nextRightLuma - rightLuma);
+    }
+
+    count += 1;
+  }
+
+  for (let depth = 0; depth < bandWidth; depth += depthStep) {
+    const leftBandX = (seamX + depth) % image.width;
+    const rightBandX = (seamX - 1 - depth + image.width) % image.width;
+
+    for (let y = 0; y < image.height - 1; y += yStep) {
+      const leftIndex = (y * image.width + leftBandX) * 4;
+      const rightIndex = (y * image.width + rightBandX) * 4;
+      const nextLeftIndex = ((y + 1) * image.width + leftBandX) * 4;
+      const nextRightIndex = ((y + 1) * image.width + rightBandX) * 4;
+      const leftLuma = measureRgbLuma([image.pixels[leftIndex], image.pixels[leftIndex + 1], image.pixels[leftIndex + 2]]);
+      const rightLuma = measureRgbLuma([image.pixels[rightIndex], image.pixels[rightIndex + 1], image.pixels[rightIndex + 2]]);
+      const nextLeftLuma = measureRgbLuma([
+        image.pixels[nextLeftIndex],
+        image.pixels[nextLeftIndex + 1],
+        image.pixels[nextLeftIndex + 2]
+      ]);
+      const nextRightLuma = measureRgbLuma([
+        image.pixels[nextRightIndex],
+        image.pixels[nextRightIndex + 1],
+        image.pixels[nextRightIndex + 2]
+      ]);
+
+      bandColorDelta += Math.abs(image.pixels[leftIndex] - image.pixels[rightIndex]);
+      bandColorDelta += Math.abs(image.pixels[leftIndex + 1] - image.pixels[rightIndex + 1]);
+      bandColorDelta += Math.abs(image.pixels[leftIndex + 2] - image.pixels[rightIndex + 2]);
+      bandLumaDelta += Math.abs(leftLuma - rightLuma);
+      bandStructureDelta += Math.abs((nextLeftLuma - leftLuma) - (nextRightLuma - rightLuma));
+      bandCount += 1;
+    }
+  }
+
+  return (
+    edgeDelta / Math.max(1, count * 3) * 0.4 +
+    structureDelta / Math.max(1, count * 2) * 0.2 +
+    bandColorDelta / Math.max(1, bandCount * 3) +
+    bandLumaDelta / Math.max(1, bandCount) * 0.8 +
+    bandStructureDelta / Math.max(1, bandCount) * 0.5
+  );
+}
+
+function rotateEquirectangularToSeam(image: RgbaImage, seamX: number): RgbaImage {
+  if (seamX <= 0) {
+    return image;
+  }
+
+  const output = Buffer.alloc(image.pixels.length);
+
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const sourceX = (x + seamX) % image.width;
+      const sourceIndex = (y * image.width + sourceX) * 4;
+      const targetIndex = (y * image.width + x) * 4;
+
+      output[targetIndex] = image.pixels[sourceIndex];
+      output[targetIndex + 1] = image.pixels[sourceIndex + 1];
+      output[targetIndex + 2] = image.pixels[sourceIndex + 2];
+      output[targetIndex + 3] = image.pixels[sourceIndex + 3];
     }
   }
 
@@ -1424,6 +1612,26 @@ function smoothRgbSeries(values: Array<[number, number, number]>, radius: number
     smoothed[2] /= Math.max(1, count);
 
     return smoothed;
+  });
+}
+
+function smoothNumberSeries(values: number[], radius: number) {
+  if (values.length === 0 || radius <= 0) {
+    return values;
+  }
+
+  return values.map((_, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length - 1, index + radius);
+    let total = 0;
+    let count = 0;
+
+    for (let sampleIndex = start; sampleIndex <= end; sampleIndex += 1) {
+      total += values[sampleIndex];
+      count += 1;
+    }
+
+    return total / Math.max(1, count);
   });
 }
 

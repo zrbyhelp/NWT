@@ -5,6 +5,9 @@ import {
 import type {
   ItemDraftPatch,
   ItemMaterialCreateInput,
+  CreatureDraftPatch,
+  CreatureMaterialCreateInput,
+  WorkspaceCreatureMaterialMetadata,
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceItemMaterialMetadata,
@@ -20,6 +23,14 @@ import {
   defaultScenePanoramaView,
   defaultSceneScalePreset,
   defaultScenePanoramaMaxRedrawAttempts,
+  creatureAbilityFields,
+  creatureBehaviorGroups,
+  creatureColorFields,
+  creatureEcologyFields,
+  creatureMorphologyFields,
+  creatureSenseFields,
+  creatureTaxonomyFields,
+  creatureVocalizationFields,
   itemTagFields,
   maskBoardAcceptedTypes,
   maskBoardDrawingStyles,
@@ -53,6 +64,15 @@ import {
   type ItemTagFieldId,
   type ItemViewFace,
   type ItemViewImageDraft,
+  type CreatureAbilityFieldId,
+  type CreatureBehaviorFieldId,
+  type CreatureColorFieldId,
+  type CreatureCreateDraft,
+  type CreatureEcologyFieldId,
+  type CreatureMorphologyFieldId,
+  type CreatureSenseFieldId,
+  type CreatureTaxonomyFieldId,
+  type CreatureVocalizationFieldId,
   type MaskAiMessage,
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource,
@@ -86,16 +106,19 @@ import {
 } from "./shared";
 
 export {
+  applyPatchToCreatureDraft,
   applyPatchToItemDraft,
   applyPatchToMaskDraft,
   applyPatchToSceneDraft,
   buildItemMaterialFormData,
   createClientId,
+  createDefaultCreatureDraft,
   createDefaultItemDraft,
   createDefaultMaskDraft,
   createDefaultSceneBlock,
   createDefaultSceneDraft,
   createInitialScenePanoramaGenerationDraft,
+  createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
   createMaskDraftFromMaterial,
   createPreviewUrl,
@@ -107,6 +130,8 @@ export {
   getCompleteScenePanoramaFaceUrls,
   readItemModelStream,
   normalizeSceneScalePreset,
+  getCreatureBoardImageMode,
+  getCreatureMaterialMetadata,
   getItemBoardFileForGeneration,
   getItemModelInputFileForModel,
   getItemBoardImageMode,
@@ -132,6 +157,7 @@ export {
   normalizeScenePanoramaMaxRedrawAttempts,
   readTransferErrorCode,
   revokeItemBoardPreview,
+  revokeCreatureBoardPreview,
   revokeItemDraftPreviews,
   revokeItemModelInputImagePreview,
   revokeItemViewPreview,
@@ -142,6 +168,7 @@ export {
   revokeScenePanoramaMotherPreview,
   revokeSceneReferenceImagePreview,
   sanitizeItemTags,
+  serializeCreatureDraft,
   serializeItemDraft,
   serializeMaskDraft,
   serializeSceneTextDraft,
@@ -206,6 +233,79 @@ function createDefaultMaskDraft(): MaskCreateDraft {
       action: 50,
       curiosity: 50,
       performative: 50
+    },
+    boardDrawingStyle: "realistic",
+    boardImagePreviewUrl: "",
+    boardImageFile: null,
+    boardImageSource: null,
+    aiMessages: []
+  };
+}
+
+function createDefaultCreatureDraft(): CreatureCreateDraft {
+  return {
+    name: "",
+    description: "",
+    style: "fantasy",
+    taxonomy: {
+      creatureType: ""
+    },
+    morphology: {
+      sizeClass: "",
+      length: "",
+      weight: "",
+      limbStructure: "",
+      bodyCovering: "",
+      headFeature: "",
+      tailAppendage: "",
+      movement: "",
+      specialOrgans: ""
+    },
+    colors: {
+      primaryColor: "#2F5D46",
+      secondaryColor: "#6E7F45",
+      markingColor: "#FACC15",
+      glowColor: "#67E8F9"
+    },
+    vocalization: {
+      frequency: 50,
+      rhythm: 50,
+      volume: 50,
+      emotionReadability: 50,
+      mimicry: 20
+    },
+    senses: {
+      sensoryAcuity: 55
+    },
+    ecology: {
+      habitat: "",
+      diet: "",
+      activityCycle: "",
+      socialStructure: "",
+      reproduction: ""
+    },
+    abilities: {
+      powers: [],
+      weaknesses: [],
+      resourceNeeds: [],
+      interactionUses: [],
+      dangerNotes: [],
+      keywords: []
+    },
+    behaviorLogic: "",
+    behavior: {
+      aggression: 45,
+      sociability: 45,
+      territoriality: 55,
+      curiosity: 50,
+      alertness: 60,
+      stealth: 35,
+      persistence: 55,
+      adaptability: 50,
+      tameability: 30,
+      bonding: 35,
+      threatResponse: 55,
+      resourceGuarding: 50
     },
     boardDrawingStyle: "realistic",
     boardImagePreviewUrl: "",
@@ -297,6 +397,68 @@ function createMaskDraftFromMaterial(material: WorkspaceMaterial): MaskCreateDra
     personality: personality ? { ...draft.personality, ...personality } : draft.personality,
     boardDrawingStyle:
       typeof metadata?.boardDrawingStyle === "string" && isMaskBoardDrawingStyle(metadata.boardDrawingStyle)
+        ? metadata.boardDrawingStyle
+        : draft.boardDrawingStyle,
+    boardImagePreviewUrl,
+    boardImageFile: null,
+    boardImageSource:
+      boardImageSource === "generated" || boardImageSource === "uploaded"
+        ? boardImageSource
+        : boardImagePreviewUrl
+          ? "uploaded"
+          : null,
+    aiMessages: []
+  };
+}
+
+function createCreatureDraftFromMaterial(material: WorkspaceMaterial): CreatureCreateDraft {
+  const draft = createDefaultCreatureDraft();
+  const metadata = getCreatureMaterialMetadata(material.metadata);
+
+  if (!metadata || metadata.kind !== "creature") {
+    return {
+      ...draft,
+      name: material.title,
+      description: material.description,
+      style: material.style
+    };
+  }
+
+  const taxonomy = pickKnownStringPatch(getNestedRecord(metadata.taxonomy) ?? {}, creatureTaxonomyFields.map((field) => field.id));
+  const morphology = pickKnownStringPatch(getNestedRecord(metadata.morphology) ?? {}, creatureMorphologyFields.map((field) => field.id));
+  const colors = pickKnownColorPatch(getNestedRecord(metadata.colors) ?? {}, creatureColorFields.map((field) => field.id));
+  const vocalization = pickKnownNumberPatch(getNestedRecord(metadata.vocalization) ?? {}, creatureVocalizationFields);
+  const senses = pickKnownNumberPatch(getNestedRecord(metadata.senses) ?? {}, creatureSenseFields);
+  const ecology = pickKnownStringPatch(getNestedRecord(metadata.ecology) ?? {}, creatureEcologyFields.map((field) => field.id));
+  const behavior = pickKnownNumberPatch(
+    getNestedRecord(metadata.behavior) ?? {},
+    creatureBehaviorGroups.flatMap((group) => group.fields).map((id) => ({ id, min: 0, max: 100 }))
+  );
+  const boardImage = getNestedRecord(metadata.boardImage);
+  const boardImagePreviewUrl =
+    typeof boardImage?.url === "string" && boardImage.url ? boardImage.url : material.previewUrl ?? "";
+  const boardImageSource = boardImage?.source;
+
+  return {
+    ...draft,
+    name: metadata.name || material.title,
+    description: metadata.description || material.description,
+    style: typeof metadata.style === "string" && isWorkspaceMaterialStyle(metadata.style) ? metadata.style : material.style,
+    taxonomy: taxonomy ? { ...draft.taxonomy, ...taxonomy } : draft.taxonomy,
+    morphology: morphology ? { ...draft.morphology, ...morphology } : draft.morphology,
+    colors: colors ? { ...draft.colors, ...colors } : draft.colors,
+    vocalization: vocalization ? { ...draft.vocalization, ...vocalization } : draft.vocalization,
+    senses: senses ? { ...draft.senses, ...senses } : draft.senses,
+    ecology: ecology ? { ...draft.ecology, ...ecology } : draft.ecology,
+    abilities: creatureAbilityFields.reduce<CreatureCreateDraft["abilities"]>((result, field) => {
+      result[field] = sanitizeItemTags(metadata.abilities?.[field]);
+
+      return result;
+    }, { ...draft.abilities }),
+    behaviorLogic: metadata.behaviorLogic || "",
+    behavior: behavior ? { ...draft.behavior, ...behavior } : draft.behavior,
+    boardDrawingStyle:
+      typeof metadata.boardDrawingStyle === "string" && isMaskBoardDrawingStyle(metadata.boardDrawingStyle)
         ? metadata.boardDrawingStyle
         : draft.boardDrawingStyle,
     boardImagePreviewUrl,
@@ -452,6 +614,29 @@ function serializeMaskDraft(draft: MaskCreateDraft) {
   };
 }
 
+function serializeCreatureDraft(draft: CreatureCreateDraft): CreatureMaterialCreateInput {
+  return {
+    name: draft.name,
+    description: draft.description,
+    style: draft.style,
+    taxonomy: draft.taxonomy,
+    morphology: draft.morphology,
+    colors: draft.colors,
+    vocalization: draft.vocalization,
+    senses: draft.senses,
+    ecology: draft.ecology,
+    abilities: creatureAbilityFields.reduce<CreatureMaterialCreateInput["abilities"]>((result, field) => {
+      result[field] = sanitizeItemTags(draft.abilities[field]);
+
+      return result;
+    }, {} as CreatureMaterialCreateInput["abilities"]),
+    behaviorLogic: draft.behaviorLogic,
+    behavior: draft.behavior,
+    boardDrawingStyle: draft.boardDrawingStyle,
+    boardImageSource: draft.boardImageSource
+  };
+}
+
 function serializeItemDraft(draft: ItemCreateDraft): ItemMaterialCreateInput {
   return {
     name: draft.name,
@@ -521,6 +706,18 @@ function getMaskBoardImageMode(draft: MaskCreateDraft): "keep" | "replace" | "cl
   return "clear";
 }
 
+function getCreatureBoardImageMode(draft: CreatureCreateDraft): "keep" | "replace" | "clear" {
+  if (draft.boardImageFile) {
+    return "replace";
+  }
+
+  if (draft.boardImagePreviewUrl) {
+    return "keep";
+  }
+
+  return "clear";
+}
+
 function applyPatchToSceneDraft(draft: SceneCreateDraft, patch: SceneDraftPatch): SceneCreateDraft {
   const removeIds = new Set(patch.removeBlockIds ?? []);
   const updatedBlocks = draft.blocks
@@ -569,6 +766,55 @@ function applyPatchToMaskDraft(draft: MaskCreateDraft, patch: MaskDraftPatch): M
     personality: patch.personality
       ? { ...draft.personality, ...pickKnownNumberPatch(patch.personality, maskPersonalityGroups.flatMap((group) => group.fields).map((id) => ({ id, min: 0, max: 100 }))) }
       : draft.personality
+  };
+}
+
+function applyPatchToCreatureDraft(draft: CreatureCreateDraft, patch: CreatureDraftPatch): CreatureCreateDraft {
+  return {
+    ...draft,
+    ...(typeof patch.name === "string" ? { name: patch.name } : {}),
+    ...(typeof patch.description === "string" ? { description: patch.description } : {}),
+    ...(patch.style ? { style: patch.style } : {}),
+    taxonomy: patch.taxonomy
+      ? { ...draft.taxonomy, ...pickKnownStringPatch(patch.taxonomy, creatureTaxonomyFields.map((field) => field.id)) }
+      : draft.taxonomy,
+    morphology: patch.morphology
+      ? { ...draft.morphology, ...pickKnownStringPatch(patch.morphology, creatureMorphologyFields.map((field) => field.id)) }
+      : draft.morphology,
+    colors: patch.colors
+      ? { ...draft.colors, ...pickKnownColorPatch(patch.colors, creatureColorFields.map((field) => field.id)) }
+      : draft.colors,
+    vocalization: patch.vocalization
+      ? { ...draft.vocalization, ...pickKnownNumberPatch(patch.vocalization, creatureVocalizationFields) }
+      : draft.vocalization,
+    senses: patch.senses
+      ? { ...draft.senses, ...pickKnownNumberPatch(patch.senses, creatureSenseFields) }
+      : draft.senses,
+    ecology: patch.ecology
+      ? { ...draft.ecology, ...pickKnownStringPatch(patch.ecology, creatureEcologyFields.map((field) => field.id)) }
+      : draft.ecology,
+    abilities: patch.abilities
+      ? {
+          ...draft.abilities,
+          ...creatureAbilityFields.reduce<Partial<CreatureCreateDraft["abilities"]>>((result, field) => {
+            if (Array.isArray(patch.abilities?.[field])) {
+              result[field] = sanitizeItemTags(patch.abilities[field]);
+            }
+
+            return result;
+          }, {})
+        }
+      : draft.abilities,
+    ...(typeof patch.behaviorLogic === "string" ? { behaviorLogic: patch.behaviorLogic } : {}),
+    behavior: patch.behavior
+      ? {
+          ...draft.behavior,
+          ...pickKnownNumberPatch(
+            patch.behavior,
+            creatureBehaviorGroups.flatMap((group) => group.fields).map((id) => ({ id, min: 0, max: 100 }))
+          )
+        }
+      : draft.behavior
   };
 }
 
@@ -637,6 +883,16 @@ function getMaskMaterialMetadata(metadata: WorkspaceMaterialMetadata | undefined
   }
 
   return metadata as Record<string, unknown>;
+}
+
+function getCreatureMaterialMetadata(metadata: WorkspaceMaterialMetadata | undefined | null): WorkspaceCreatureMaterialMetadata | null {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const record = metadata as Partial<WorkspaceCreatureMaterialMetadata>;
+
+  return record.kind === "creature" ? record as WorkspaceCreatureMaterialMetadata : null;
 }
 
 function getSceneMaterialMetadata(metadata: WorkspaceMaterialMetadata | undefined | null): WorkspaceSceneMaterialMetadata | null {
@@ -1208,6 +1464,10 @@ function revokeMaskBoardPreview(url: string) {
   if (url.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
     URL.revokeObjectURL(url);
   }
+}
+
+function revokeCreatureBoardPreview(url: string) {
+  revokeMaskBoardPreview(url);
 }
 
 function revokeItemDraftPreviews(draft: ItemCreateDraft) {

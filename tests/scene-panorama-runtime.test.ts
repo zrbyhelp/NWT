@@ -412,6 +412,7 @@ describe("scene panorama runtime", () => {
     });
     runtimeMocks.analyzeScenePanoramaFaces
       .mockResolvedValueOnce(createQualityReport(72, 72))
+      .mockResolvedValueOnce(createQualityReport(64, 64))
       .mockResolvedValueOnce(createQualityReport(64, 64));
 
     const result = await streamDefaultScenePanorama(
@@ -510,7 +511,8 @@ describe("scene panorama runtime", () => {
     runtimeMocks.analyzeScenePanoramaFaces
       .mockResolvedValueOnce(createQualityReport(96, 96))
       .mockResolvedValueOnce(createQualityReport(40, 40))
-      .mockResolvedValueOnce(createQualityReport(72, 72));
+      .mockResolvedValueOnce(createQualityReport(72, 72))
+      .mockResolvedValueOnce(createQualityReport(40, 40));
 
     const result = await streamDefaultScenePanorama(
       createGenerationInput(),
@@ -800,7 +802,8 @@ describe("scene panorama runtime", () => {
     runtimeMocks.analyzeScenePanoramaFaces
       .mockResolvedValueOnce(createQualityReport(96, 96))
       .mockResolvedValueOnce(createQualityReport(40, 40))
-      .mockResolvedValueOnce(createQualityReport(72, 72));
+      .mockResolvedValueOnce(createQualityReport(72, 72))
+      .mockResolvedValueOnce(createQualityReport(40, 40));
 
     const result = await generateDefaultScenePanorama(createGenerationInput(), "reader-id", undefined, { maxRedrawAttempts: 3 });
 

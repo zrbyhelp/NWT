@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateDefaultScenePanorama, generateDefaultScenePanoramaMother } from "@/lib/ai/image-runtime";
+import { generateDefaultItemBoardImage, generateDefaultMaskBoardImage, generateDefaultScenePanorama, generateDefaultScenePanoramaMother } from "@/lib/ai/image-runtime";
 import { getScenePanoramaFaceSourceCoordinate, splitEquirectangularToCubemap } from "@/lib/ai/scene-panorama-projection";
 import {
   analyzeScenePanoramaFaces,
@@ -12,11 +12,14 @@ import {
 import {
   deleteMaterialImagesByUrls,
   isValidScenePanoramaImageBytes,
+  uploadCreatureBoardImage,
+  uploadItemBoardImage,
   uploadItemModelBytes,
+  uploadItemModelInputImage,
   uploadMaskBoardImage,
   uploadMaterialImageBytes
 } from "@/lib/storage/material";
-import type { MaskMaterialCreateInput, SceneMaterialCreateInput } from "@/lib/home-workspace";
+import type { CreatureMaterialCreateInput, ItemMaterialCreateInput, MaskMaterialCreateInput, SceneMaterialCreateInput } from "@/lib/home-workspace";
 
 type ScriptRecord = {
   id: string;
@@ -96,6 +99,7 @@ vi.mock("@/lib/ai/runtime", () => ({
 }));
 
 vi.mock("@/lib/ai/image-runtime", () => ({
+  generateDefaultItemBoardImage: vi.fn(),
   generateDefaultMaskBoardImage: vi.fn(),
   generateDefaultScenePanorama: vi.fn(),
   generateDefaultScenePanoramaMother: vi.fn(),
@@ -136,6 +140,11 @@ vi.mock("@/lib/storage/material", () => ({
 
     return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) && bytes.byteLength > 0 && bytes.byteLength <= 10 * 1024 * 1024;
   }),
+  isValidMaterialImageFile: vi.fn((file: File) => {
+    const normalizedContentType = file.type.toLowerCase().split(";")[0]?.trim();
+
+    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) && file.size > 0 && file.size <= 10 * 1024 * 1024;
+  }),
   isValidScenePanoramaImageBytes: vi.fn((bytes: Uint8Array, contentType: string) => {
     const normalizedContentType = contentType.toLowerCase().split(";")[0]?.trim();
 
@@ -154,6 +163,7 @@ vi.mock("@/lib/storage/material", () => ({
     return (normalizedContentType === "model/gltf-binary" || fileName.endsWith(".glb")) && bytes.byteLength > 0 && bytes.byteLength <= 100 * 1024 * 1024;
   }),
   deleteMaterialImagesByUrls: vi.fn(),
+  uploadCreatureBoardImage: vi.fn(async () => "https://cdn.example.com/materials/creature-board.png"),
   uploadItemBoardImage: vi.fn(async () => "https://cdn.example.com/materials/item-board.png"),
   uploadItemModelBytes: vi.fn(async () => "https://cdn.example.com/materials/imported-model.glb"),
   uploadItemModelInputImage: vi.fn(async () => "https://cdn.example.com/materials/item-model-input.png"),
@@ -475,6 +485,381 @@ describe("home workspace data", () => {
       style: "mystery",
       title: "银发旅人"
     });
+  });
+
+  it("creates a self-created creature material with full species metadata and a board image", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { createCreatureMaterial } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+
+    const material = await createCreatureMaterial(
+      createCreatureInput(),
+      new File(["board"], "creature-board.png", { type: "image/png" }),
+      "zh-CN"
+    );
+
+    expect(uploadCreatureBoardImage).toHaveBeenCalledWith("reader-id", expect.any(File));
+    expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          category: "CREATURE",
+          communityVisible: false,
+          descriptionZh: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+          metadata: expect.objectContaining({
+            behavior: expect.objectContaining({
+              alertness: 86,
+              resourceGuarding: 78
+            }),
+            behaviorLogic: "发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。",
+            boardImage: {
+              source: "generated",
+              url: "https://cdn.example.com/materials/creature-board.png"
+            },
+            kind: "creature",
+            name: "雾卫兽",
+            subject: "species",
+            version: 1
+          }),
+          previewUrl: "https://cdn.example.com/materials/creature-board.png",
+          style: "FANTASY",
+          titleZh: "雾卫兽"
+        })
+      })
+    );
+    expect(material).toMatchObject({
+      category: "creature",
+      communityVisible: false,
+      inLibrary: true,
+      librarySource: "SELF_CREATED",
+      previewUrl: "https://cdn.example.com/materials/creature-board.png",
+      style: "fantasy",
+      title: "雾卫兽"
+    });
+  });
+
+  it("creates a self-created item material with uploaded board and model input metadata", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { createItemMaterial } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+
+    const material = await createItemMaterial(
+      createItemInput(),
+      new File(["board"], "item-board.png", { type: "image/png" }),
+      new File(["model-input"], "item-model-input.png", { type: "image/png" }),
+      "zh-CN"
+    );
+
+    expect(uploadItemBoardImage).toHaveBeenCalledWith("reader-id", expect.any(File));
+    expect(uploadItemModelInputImage).toHaveBeenCalledWith("reader-id", expect.any(File));
+    expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          category: "ITEM",
+          communityVisible: false,
+          metadata: expect.objectContaining({
+            boardImage: expect.objectContaining({
+              source: "generated",
+              url: "https://cdn.example.com/materials/item-board.png"
+            }),
+            kind: "item",
+            modelInputImage: expect.objectContaining({
+              source: "generated",
+              url: "https://cdn.example.com/materials/item-model-input.png"
+            }),
+            version: 2
+          }),
+          previewUrl: "https://cdn.example.com/materials/item-board.png",
+          titleZh: "灵犀扫描器"
+        })
+      })
+    );
+    expect(material).toMatchObject({
+      category: "item",
+      communityVisible: false,
+      inLibrary: true,
+      librarySource: "SELF_CREATED",
+      previewUrl: "https://cdn.example.com/materials/item-board.png",
+      title: "灵犀扫描器"
+    });
+  });
+
+  it("cleans up uploaded item images when the item record cannot be saved", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { createItemMaterial } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    mocks.prisma.storyMaterial.create.mockRejectedValueOnce(Object.assign(new Error("Database is unreachable"), { code: "P1001" }));
+
+    await expect(createItemMaterial(
+      createItemInput(),
+      new File(["board"], "item-board.png", { type: "image/png" }),
+      new File(["model-input"], "item-model-input.png", { type: "image/png" }),
+      "zh-CN"
+    )).rejects.toThrow("ITEM_MATERIAL_DATABASE_FAILED");
+    expect(deleteMaterialImagesByUrls).toHaveBeenCalledWith([
+      "https://cdn.example.com/materials/item-board.png",
+      "https://cdn.example.com/materials/item-model-input.png"
+    ]);
+  });
+
+  it("reports item upload failures before writing the item record", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { createItemMaterial } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(uploadItemBoardImage).mockRejectedValueOnce(new Error("AccessDenied"));
+
+    await expect(createItemMaterial(
+      createItemInput(),
+      new File(["board"], "item-board.png", { type: "image/png" }),
+      null,
+      "zh-CN"
+    )).rejects.toThrow("ITEM_MATERIAL_UPLOAD_FAILED");
+    expect(mocks.prisma.storyMaterial.create).not.toHaveBeenCalled();
+    expect(deleteMaterialImagesByUrls).not.toHaveBeenCalled();
+  });
+
+  it("assists an item draft from image-only references", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateDefaultLlmReply } = await import("@/lib/ai/runtime");
+    const { assistItemDraft, prepareItemAssistReferenceImages } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(generateDefaultLlmReply).mockResolvedValueOnce({
+      content: JSON.stringify({
+        message: "已根据参考图同步物品。",
+        patch: {
+          itemCategory: "设备",
+          materials: ["半透明树脂"]
+        }
+      }),
+      usage: { completionTokens: 0, estimated: true, promptTokens: 0 }
+    });
+    const referenceImages = await prepareItemAssistReferenceImages([
+      new File(["reference"], "reference.png", { type: "image/png" })
+    ]);
+
+    const result = await assistItemDraft(createItemInput(), "", "zh-CN", referenceImages);
+    const messages = vi.mocked(generateDefaultLlmReply).mock.calls[0][0];
+    const userContent = messages[1].content;
+
+    expect(Array.isArray(userContent)).toBe(true);
+    expect(userContent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text" }),
+      expect.objectContaining({ type: "image_url" })
+    ]));
+    expect(result.patch).toMatchObject({
+      itemCategory: "设备",
+      materials: ["半透明树脂"]
+    });
+  });
+
+  it("limits item reference images to three and rejects invalid files", async () => {
+    const { prepareItemAssistReferenceImages, prepareItemBoardReferenceImages } = await import("@/lib/home-workspace");
+    const images = await prepareItemBoardReferenceImages([
+      new File(["1"], "one.png", { type: "image/png" }),
+      new File(["2"], "two.jpg", { type: "image/jpeg" }),
+      new File(["3"], "three.webp", { type: "image/webp" }),
+      new File(["4"], "four.png", { type: "image/png" })
+    ]);
+
+    expect(images).toHaveLength(3);
+    expect(images.map((image) => image.fileName)).toEqual(["one.png", "two.jpg", "three.webp"]);
+    await expect(prepareItemAssistReferenceImages([
+      new File(["bad"], "bad.txt", { type: "text/plain" })
+    ])).rejects.toThrow("INVALID_ITEM_REFERENCE_IMAGE_FILE");
+  });
+
+  it("passes item board reference images to the image runtime", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateItemBoard, prepareItemBoardReferenceImages } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(generateDefaultItemBoardImage).mockResolvedValueOnce({
+      contentType: "image/png",
+      dataUrl: "data:image/png;base64,aXRlbS1ib2FyZA==",
+      fileName: "item-board.png"
+    });
+    const referenceImages = await prepareItemBoardReferenceImages([
+      new File(["reference"], "reference.png", { type: "image/png" })
+    ]);
+
+    await generateItemBoard(createItemInput(), "zh-CN", referenceImages);
+
+    expect(generateDefaultItemBoardImage).toHaveBeenCalledWith(
+      expect.stringContaining("如果提供了参考图"),
+      "reader-id",
+      expect.objectContaining({
+        input: expect.objectContaining({ referenceImageCount: 1 })
+      }),
+      expect.objectContaining({
+        referenceImages: [expect.objectContaining({ fileName: "reference.png" })]
+      })
+    );
+  });
+
+  it("sanitizes creature AI patches to the creature schema and safe ranges", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateDefaultLlmReply } = await import("@/lib/ai/runtime");
+    const { assistCreatureDraft } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(generateDefaultLlmReply).mockResolvedValueOnce({
+      content: JSON.stringify({
+        message: "已补全生物行为逻辑。",
+        patch: {
+          backgroundStory: "不应写入",
+          description: "雾卫兽会用低频鸣叫同步警戒，并依靠气味判断入侵者。",
+          style: "invalid-style",
+          taxonomy: {
+            creatureType: "雾生兽类",
+            humanRole: "守卫"
+          },
+          colors: {
+            primaryColor: "#12abef",
+            glowColor: "cyan"
+          },
+          vocalization: {
+            frequency: -20,
+            volume: 160
+          },
+          senses: {
+            sensoryAcuity: 101
+          },
+          ecology: {
+            habitat: "废墟边界"
+          },
+          abilities: {
+            powers: ["嗅出谎言", "嗅出谎言", ""],
+            dangerNotes: ["靠近巢穴会被驱赶"]
+          },
+          behaviorLogic: "先围绕观察，确认威胁后低频警告，持续逼近才集体驱赶。",
+          behavior: {
+            alertness: 120,
+            resourceGuarding: -5,
+            romance: 88
+          }
+        }
+      }),
+      usage: { completionTokens: 0, estimated: true, promptTokens: 0 }
+    });
+
+    const result = await assistCreatureDraft(createCreatureInput(), "补全生态和行为逻辑", "zh-CN");
+    const messages = vi.mocked(generateDefaultLlmReply).mock.calls[0][0];
+
+    expect(String(messages[0].content)).toContain("species or population");
+    expect(String(messages[0].content)).toContain("not a human facade");
+    expect(result.message).toBe("已补全生物行为逻辑。");
+    expect(result.patch).toMatchObject({
+      abilities: {
+        dangerNotes: ["靠近巢穴会被驱赶"],
+        powers: ["嗅出谎言"]
+      },
+      behavior: {
+        alertness: 100,
+        resourceGuarding: 0
+      },
+      behaviorLogic: "先围绕观察，确认威胁后低频警告，持续逼近才集体驱赶。",
+      colors: {
+        primaryColor: "#12ABEF"
+      },
+      description: "雾卫兽会用低频鸣叫同步警戒，并依靠气味判断入侵者。",
+      ecology: {
+        habitat: "废墟边界"
+      },
+      senses: {
+        sensoryAcuity: 100
+      },
+      taxonomy: {
+        creatureType: "雾生兽类"
+      },
+      vocalization: {
+        frequency: 0,
+        volume: 100
+      }
+    });
+    expect(result.patch).not.toHaveProperty("backgroundStory");
+    expect(result.patch).not.toHaveProperty("style");
+  });
+
+  it("generates creature boards with species, morphology, habitat, and behavior prompt data", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateCreatureBoard } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    vi.mocked(generateDefaultMaskBoardImage).mockResolvedValueOnce({
+      contentType: "image/png",
+      dataUrl: "data:image/png;base64,Y3JlYXR1cmU=",
+      fileName: "creature-board.png"
+    });
+
+    const result = await generateCreatureBoard(createCreatureInput(), "zh-CN");
+    const prompt = vi.mocked(generateDefaultMaskBoardImage).mock.calls[0][0];
+
+    expect(prompt).toContain("16:9 横版生物设定板");
+    expect(prompt).toContain("物种/族群素材");
+    expect(prompt).toContain("行为逻辑");
+    expect(prompt).toContain("废墟边界");
+    expect(prompt).toContain("形态/解剖标注");
+    expect(result.fileName).toBe("creature-board.png");
   });
 
   it("creates a self-created scene material with panorama metadata and first block scene preview", async () => {
@@ -880,6 +1265,96 @@ describe("home workspace data", () => {
     });
   });
 
+  it("updates only the current user's self-created creature material", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { updateCreatureMaterial } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+
+    const existingMaterial = {
+      ...createMaterial("creature-mistguard", "CREATURE", "雾卫兽", "Mistguard", "FANTASY"),
+      id: "created-creature-id",
+      previewUrl: "https://cdn.example.com/materials/old-creature-board.png",
+      metadata: createCreatureMetadata()
+    };
+
+    mocks.prisma.storyMaterialLibraryEntry.findFirst.mockResolvedValue({
+      id: "entry-id",
+      userId: "reader-id",
+      materialId: "created-creature-id",
+      source: "SELF_CREATED",
+      createdAt,
+      updatedAt: createdAt,
+      material: existingMaterial
+    });
+
+    const material = await updateCreatureMaterial(
+      "created-creature-id",
+      createCreatureInput({
+        behaviorLogic: "改后逻辑：先远距离警戒，只在巢穴受威胁时群体驱赶。",
+        name: "雾卫兽·改"
+      }),
+      null,
+      "keep",
+      "zh-CN"
+    );
+
+    expect(mocks.prisma.storyMaterial.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "created-creature-id" },
+        data: expect.objectContaining({
+          category: "CREATURE",
+          metadata: expect.objectContaining({
+            behaviorLogic: "改后逻辑：先远距离警戒，只在巢穴受威胁时群体驱赶。",
+            boardImage: {
+              source: "generated",
+              url: "https://cdn.example.com/materials/old-creature-board.png"
+            },
+            kind: "creature",
+            name: "雾卫兽·改",
+            subject: "species"
+          }),
+          previewUrl: "https://cdn.example.com/materials/old-creature-board.png",
+          titleZh: "雾卫兽·改"
+        })
+      })
+    );
+    expect(material).toMatchObject({
+      category: "creature",
+      id: "created-creature-id",
+      librarySource: "SELF_CREATED",
+      previewUrl: "https://cdn.example.com/materials/old-creature-board.png",
+      title: "雾卫兽·改"
+    });
+  });
+
+  it("rejects creature edits without a matching self-created library entry", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { updateCreatureMaterial } = await import("@/lib/home-workspace");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    mocks.prisma.storyMaterialLibraryEntry.findFirst.mockResolvedValue(null);
+
+    await expect(updateCreatureMaterial("community-creature-id", createCreatureInput(), null, "keep", "zh-CN")).rejects.toThrow(
+      "MATERIAL_NOT_EDITABLE"
+    );
+    expect(mocks.prisma.storyMaterial.update).not.toHaveBeenCalled();
+  });
+
   it("deletes a self-created material after ownership is confirmed", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { deleteSelfCreatedMaterial } = await import("@/lib/home-workspace");
@@ -1019,6 +1494,66 @@ describe("home workspace data", () => {
       titleZh: "银发旅人"
     });
     expect(await zip.file("materials/mask-silver/material.md")!.async("text")).toContain("# 银发旅人");
+    expect(await zip.file(material.image.path)!.async("uint8array")).toHaveLength(3);
+  });
+
+  it("exports creature material archives with creature data markdown", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { exportSelfCreatedMaterialsZip } = await import("@/lib/material-transfer");
+    const existingMaterial = {
+      ...createMaterial("creature-mistguard", "CREATURE", "雾卫兽", "Mistguard", "FANTASY"),
+      id: "created-creature-id",
+      descriptionZh: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+      previewUrl: "https://cdn.example.com/materials/old-creature-board.png",
+      metadata: createCreatureMetadata()
+    };
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+    mocks.prisma.storyMaterialLibraryEntry.findFirst.mockResolvedValue({
+      id: "entry-id",
+      userId: "reader-id",
+      materialId: "created-creature-id",
+      source: "SELF_CREATED",
+      createdAt,
+      updatedAt: createdAt,
+      material: existingMaterial
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } }))
+    );
+
+    const archive = await exportSelfCreatedMaterialsZip({
+      locale: "zh-CN",
+      materialId: "created-creature-id",
+      origin: "http://localhost:3000"
+    });
+    const zip = await JSZip.loadAsync(archive.bytes);
+    const manifest = JSON.parse(await zip.file("manifest.json")!.async("text"));
+    const material = manifest.materials[0];
+    const markdown = await zip.file("materials/creature-mistguard/material.md")!.async("text");
+
+    expect(material).toMatchObject({
+      category: "creature",
+      image: expect.objectContaining({
+        contentType: "image/png",
+        path: expect.stringContaining("images/preview.png")
+      }),
+      metadata: expect.objectContaining({
+        kind: "creature",
+        subject: "species"
+      })
+    });
+    expect(markdown).toContain("## 生物数据");
+    expect(markdown).toContain("### 行为逻辑");
+    expect(markdown).toContain("发现陌生气味后先围绕观察");
     expect(await zip.file(material.image.path)!.async("uint8array")).toHaveLength(3);
   });
 
@@ -1239,6 +1774,54 @@ describe("home workspace data", () => {
     });
   });
 
+  it("imports creature archives and rewrites board image metadata urls", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { importMaterialsZip } = await import("@/lib/material-transfer");
+    const archive = await createCreatureMaterialArchiveBytes();
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      account: "reader",
+      avatarUrl: null,
+      displayName: "reader",
+      id: "reader-id",
+      role: "USER",
+      showAiThinking: false
+    });
+
+    const result = await importMaterialsZip(archive, "zh-CN");
+
+    expect(uploadMaterialImageBytes).toHaveBeenCalledWith("reader-id", expect.any(Uint8Array), "image/png", "imports");
+    expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          category: "CREATURE",
+          communityVisible: false,
+          metadata: expect.objectContaining({
+            boardImage: {
+              source: "generated",
+              url: "https://cdn.example.com/materials/imported-board.png"
+            },
+            kind: "creature",
+            subject: "species"
+          }),
+          previewUrl: "https://cdn.example.com/materials/imported-board.png",
+          slug: expect.not.stringMatching(/^creature-mistguard$/)
+        })
+      })
+    );
+    expect(result).toMatchObject({
+      importedCount: 1,
+      materials: [
+        {
+          category: "creature",
+          inLibrary: true,
+          librarySource: "SELF_CREATED",
+          title: "雾卫兽"
+        }
+      ]
+    });
+  });
+
   it("imports scene panorama faces and rewrites metadata urls", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { importMaterialsZip } = await import("@/lib/material-transfer");
@@ -1334,7 +1917,7 @@ describe("home workspace data", () => {
     expect(result.importedCount).toBe(1);
   });
 
-  it("stabilizes panorama faces without copying reference pixels back into AI output", async () => {
+  it("anchors panorama face edge pixels to the mother reference while preserving the center", async () => {
     const referenceFaces = await Promise.all(
       scenePanoramaPostprocessFaces.map(async (face, index) => ({
         face,
@@ -1353,12 +1936,15 @@ describe("home workspace data", () => {
     );
 
     const stabilized = await stabilizeScenePanoramaFaces(referenceFaces, candidateFaces, { faceSize: 64 });
-    const stabilizedPixel = await readImagePixel(stabilized[0].bytes, 0, 0);
-    const candidatePixel = await readImagePixel(candidateFaces[0].bytes, 0, 0);
-    const referencePixel = await readImagePixel(referenceFaces[0].bytes, 0, 0);
+    const stabilizedEdgePixel = await readImagePixel(stabilized[0].bytes, 0, 0);
+    const candidateEdgePixel = await readImagePixel(candidateFaces[0].bytes, 0, 0);
+    const referenceEdgePixel = await readImagePixel(referenceFaces[0].bytes, 0, 0);
+    const stabilizedCenterPixel = await readImagePixel(stabilized[0].bytes, 32, 32);
+    const candidateCenterPixel = await readImagePixel(candidateFaces[0].bytes, 32, 32);
 
-    expect(averageRgbDelta(stabilizedPixel, candidatePixel)).toBeLessThan(8);
-    expect(averageRgbDelta(stabilizedPixel, referencePixel)).toBeGreaterThan(40);
+    expect(averageRgbDelta(stabilizedEdgePixel, referenceEdgePixel)).toBeLessThan(30);
+    expect(averageRgbDelta(stabilizedEdgePixel, candidateEdgePixel)).toBeGreaterThan(40);
+    expect(averageRgbDelta(stabilizedCenterPixel, candidateCenterPixel)).toBeLessThan(8);
     expect(stabilized.every((face) => face.contentType === "image/webp" && face.fileName.endsWith(".webp"))).toBe(true);
   });
 
@@ -1423,7 +2009,7 @@ describe("home workspace data", () => {
     expect(quality.edgeDeltas.find((edge) => edge.firstFace === "back" && edge.secondFace === "bottom")?.delta).toBeLessThan(12);
   });
 
-  it("preserves AI face details during stabilization instead of blending reference seams", async () => {
+  it("keeps AI face details away from the anchored stitching band", async () => {
     const candidateBytes = await createCheckerFacePng();
     const referenceBytes = await createCheckerFacePng({ edgeColor: [128, 128, 128], edgeWidth: 12 });
     const candidateFaces = scenePanoramaPostprocessFaces.map((face) => ({
@@ -1443,9 +2029,11 @@ describe("home workspace data", () => {
     const originalEdgePixel = await readImagePixel(candidateBytes, 4, 4);
     const stabilizedEdgePixel = await readImagePixel(stabilized[0].bytes, 4, 4);
     const referenceEdgePixel = await readImagePixel(referenceBytes, 4, 4);
+    const originalCenterPixel = await readImagePixel(candidateBytes, 512, 512);
+    const stabilizedCenterPixel = await readImagePixel(stabilized[0].bytes, 512, 512);
 
-    expect(averageRgbDelta(originalEdgePixel, stabilizedEdgePixel)).toBeLessThan(35);
-    expect(averageRgbDelta(referenceEdgePixel, stabilizedEdgePixel)).toBeGreaterThan(35);
+    expect(averageRgbDelta(referenceEdgePixel, stabilizedEdgePixel)).toBeLessThan(averageRgbDelta(referenceEdgePixel, originalEdgePixel));
+    expect(averageRgbDelta(originalCenterPixel, stabilizedCenterPixel)).toBeLessThan(18);
   });
 
   it("uses pixel-faithful face prompts without mask or seam-protection wording", async () => {
@@ -1596,6 +2184,129 @@ function createMaskInput(overrides: Partial<MaskMaterialCreateInput> = {}): Mask
       volume: 40
     },
     ...overrides
+  };
+}
+
+function createCreatureInput(overrides: Partial<CreatureMaterialCreateInput> = {}): CreatureMaterialCreateInput {
+  return {
+    name: "雾卫兽",
+    description: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+    style: "fantasy",
+    taxonomy: {
+      creatureType: "雾生兽类"
+    },
+    morphology: {
+      sizeClass: "中型",
+      length: "2.4",
+      weight: "120",
+      limbStructure: "四足，前肢较长",
+      bodyCovering: "雾化短毛",
+      headFeature: "多眼冠状额骨",
+      tailAppendage: "分叉尾",
+      movement: "低伏奔跑",
+      specialOrgans: "喉部低频共鸣囊"
+    },
+    colors: {
+      primaryColor: "#2F5D46",
+      secondaryColor: "#6E7F45",
+      markingColor: "#FACC15",
+      glowColor: "#67E8F9"
+    },
+    vocalization: {
+      frequency: 50,
+      rhythm: 50,
+      volume: 50,
+      emotionReadability: 50,
+      mimicry: 20
+    },
+    senses: {
+      sensoryAcuity: 55
+    },
+    ecology: {
+      habitat: "废墟边界",
+      diet: "杂食，偏食菌毯与小型腐食生物",
+      activityCycle: "黄昏与雾夜活跃",
+      socialStructure: "小群协作守巢",
+      reproduction: "雾季分巢扩散"
+    },
+    abilities: {
+      powers: ["嗅出谎言"],
+      weaknesses: ["强光会打断雾化"],
+      resourceNeeds: ["潮湿巢穴", "菌毯"],
+      interactionUses: ["边界预警", "追踪陌生气味"],
+      dangerNotes: ["靠近巢穴会被驱赶"],
+      keywords: ["守卫", "低频鸣叫", "护巢"]
+    },
+    behaviorLogic: "发现陌生气味后先围绕观察；靠近巢穴时发出低频警告；持续逼近才集体驱赶。",
+    behavior: {
+      aggression: 45,
+      sociability: 45,
+      territoriality: 55,
+      curiosity: 50,
+      alertness: 86,
+      stealth: 35,
+      persistence: 55,
+      adaptability: 50,
+      tameability: 30,
+      bonding: 35,
+      threatResponse: 55,
+      resourceGuarding: 78
+    },
+    boardDrawingStyle: "realistic",
+    boardImageSource: "generated",
+    ...overrides
+  };
+}
+
+function createItemInput(overrides: Partial<ItemMaterialCreateInput> = {}): ItemMaterialCreateInput {
+  return {
+    name: "灵犀扫描器",
+    itemCategory: "设备",
+    description: "半透明的便携扫描装置。",
+    traits: ["半透明外壳"],
+    uses: ["医疗检查"],
+    functions: ["扫描"],
+    materials: ["半透明树脂"],
+    colors: ["青色"],
+    styles: ["赛博"],
+    brand: "",
+    model: "",
+    keywords: ["扫描仪"],
+    scaleHint: "约 18cm",
+    style: "sciFi",
+    boardDrawingStyle: "realistic",
+    boardImageSource: "generated",
+    modelInputImage: null,
+    viewImages: {},
+    model3d: null,
+    ...overrides
+  };
+}
+
+function createCreatureMetadata() {
+  const input = createCreatureInput();
+
+  return {
+    kind: "creature",
+    version: 1,
+    subject: "species",
+    name: input.name,
+    description: input.description,
+    style: input.style,
+    taxonomy: input.taxonomy,
+    morphology: input.morphology,
+    colors: input.colors,
+    vocalization: input.vocalization,
+    senses: input.senses,
+    ecology: input.ecology,
+    abilities: input.abilities,
+    behaviorLogic: input.behaviorLogic,
+    behavior: input.behavior,
+    boardDrawingStyle: input.boardDrawingStyle,
+    boardImage: {
+      source: "generated",
+      url: "https://cdn.example.com/materials/old-creature-board.png"
+    }
   };
 }
 
@@ -1874,6 +2585,41 @@ async function createMaterialArchiveBytes({
             fileName: "preview.png",
             contentType: imageContentType,
             byteSize: imageBytes.byteLength
+          }
+        }
+      ]
+    })
+  );
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function createCreatureMaterialArchiveBytes() {
+  const zip = new JSZip();
+  const imagePath = "materials/creature-mistguard/images/preview.png";
+
+  zip.file(imagePath, new Uint8Array([1, 2, 3]));
+  zip.file(
+    "manifest.json",
+    JSON.stringify({
+      exportedAt: "2026-05-21T00:00:00.000Z",
+      format: "nwt.materials",
+      version: 1,
+      materials: [
+        {
+          slug: "creature-mistguard",
+          category: "creature",
+          style: "fantasy",
+          titleZh: "雾卫兽",
+          titleEn: "Mistguard",
+          descriptionZh: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
+          descriptionEn: "A social guardian species on ruin borders.",
+          metadata: createCreatureMetadata(),
+          image: {
+            path: imagePath,
+            fileName: "preview.png",
+            contentType: "image/png",
+            byteSize: 3
           }
         }
       ]

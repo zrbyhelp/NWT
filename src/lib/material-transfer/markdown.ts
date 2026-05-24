@@ -1,5 +1,5 @@
 import type { Locale } from "@/i18n/routing";
-import { getItemMetadataRecord, getMaskMetadataRecord, getSceneMetadataRecord } from "./metadata";
+import { getCreatureMetadataRecord, getItemMetadataRecord, getMaskMetadataRecord, getSceneMetadataRecord } from "./metadata";
 import type { MaterialArchiveItem } from "./types";
 
 export function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale) {
@@ -27,6 +27,22 @@ export function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale
     pushRecordMarkdown(lines, isEnglish ? "Colors" : "颜色", maskMetadata.colors);
     pushRecordMarkdown(lines, isEnglish ? "Voice" : "语音", maskMetadata.voice);
     pushRecordMarkdown(lines, isEnglish ? "Personality" : "性格", maskMetadata.personality);
+  }
+
+  const creatureMetadata = getCreatureMetadataRecord(item.metadata);
+
+  if (creatureMetadata) {
+    lines.push(`## ${isEnglish ? "Creature Data" : "生物数据"}`, "");
+    pushOptionalMarkdownBlock(lines, isEnglish ? "Definition" : "完整定义", creatureMetadata.description);
+    pushRecordMarkdown(lines, isEnglish ? "Taxonomy" : "分类", creatureMetadata.taxonomy);
+    pushRecordMarkdown(lines, isEnglish ? "Morphology" : "形态结构", creatureMetadata.morphology);
+    pushRecordMarkdown(lines, isEnglish ? "Colors" : "颜色标记", creatureMetadata.colors);
+    pushRecordMarkdown(lines, isEnglish ? "Vocalization" : "发声", creatureMetadata.vocalization);
+    pushRecordMarkdown(lines, isEnglish ? "Senses" : "感知", creatureMetadata.senses);
+    pushRecordMarkdown(lines, isEnglish ? "Ecology" : "生态", creatureMetadata.ecology);
+    pushRecordMarkdown(lines, isEnglish ? "Abilities and Limits" : "能力与限制", creatureMetadata.abilities);
+    pushOptionalMarkdownBlock(lines, isEnglish ? "Behavior Logic" : "行为逻辑", creatureMetadata.behaviorLogic);
+    pushRecordMarkdown(lines, isEnglish ? "Behavior Tendencies" : "行为倾向", creatureMetadata.behavior);
   }
 
   const sceneMetadata = getSceneMetadataRecord(item.metadata);

@@ -30,9 +30,11 @@ import {
 } from "@/lib/ai/model-config";
 import {
   addMaterialToLibrary,
+  assistCreatureDraft,
   assistItemDraft,
   assistMaskDraft,
   assistSceneDraft,
+  createCreatureMaterial,
   createConversation,
   createItemMaterial,
   createMaskMaterial,
@@ -40,13 +42,17 @@ import {
   deleteSelfCreatedMaterial,
   deleteConversation,
   cleanupUploadedMaterialImages,
+  generateCreatureBoard,
   generateItemBoard,
   generateItemModelInputImage,
   generateMaskBoard,
   generateSceneBlockPanorama,
+  prepareItemAssistReferenceImages,
+  prepareItemBoardReferenceImages,
   prepareSceneAssistReferenceImages,
   sendConversationMessage,
   setMaterialCommunitySharing,
+  updateCreatureMaterial,
   updateItemMaterial,
   updateMaskMaterial,
   updateSceneMaterial,
@@ -54,6 +60,7 @@ import {
   uploadScenePanoramaMother,
   type ItemMaterialCreateInput,
   type ItemMaterialImageMode,
+  type CreatureMaterialCreateInput,
   type MaskMaterialBoardImageMode,
   type MaskMaterialCreateInput,
   type SceneMaterialCreateInput
@@ -85,12 +92,54 @@ export async function generateHomeMaskBoard(input: MaskMaterialCreateInput, loca
   return generateMaskBoard(input, locale);
 }
 
+export async function assistHomeCreatureDraft(input: CreatureMaterialCreateInput, instruction: string, locale: Locale) {
+  return assistCreatureDraft(input, instruction, locale);
+}
+
+export async function generateHomeCreatureBoard(input: CreatureMaterialCreateInput, locale: Locale) {
+  return generateCreatureBoard(input, locale);
+}
+
 export async function assistHomeItemDraft(input: ItemMaterialCreateInput, instruction: string, locale: Locale) {
   return assistItemDraft(input, instruction, locale);
 }
 
+export async function assistHomeItemDraftWithImages(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const instructionValue = formData.get("instruction");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("ITEM_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as ItemMaterialCreateInput;
+  const instruction = typeof instructionValue === "string" ? instructionValue : "";
+  const referenceFiles = formData
+    .getAll("referenceImages")
+    .filter((value): value is File => value instanceof File && value.size > 0);
+  const referenceImages = await prepareItemAssistReferenceImages(referenceFiles);
+
+  return assistItemDraft(draft, instruction, locale, referenceImages);
+}
+
 export async function generateHomeItemBoard(input: ItemMaterialCreateInput, locale: Locale) {
   return generateItemBoard(input, locale);
+}
+
+export async function generateHomeItemBoardWithImages(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("ITEM_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as ItemMaterialCreateInput;
+  const referenceFiles = formData
+    .getAll("referenceImages")
+    .filter((value): value is File => value instanceof File && value.size > 0);
+  const referenceImages = await prepareItemBoardReferenceImages(referenceFiles);
+
+  return generateItemBoard(draft, locale, referenceImages);
 }
 
 export async function generateHomeItemModelInputImage(formData: FormData, locale: Locale) {
@@ -208,6 +257,20 @@ export async function createHomeMaskMaterial(formData: FormData, locale: Locale)
   return createMaskMaterial(draft, boardImageFile, locale);
 }
 
+export async function createHomeCreatureMaterial(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("CREATURE_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as CreatureMaterialCreateInput;
+  const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
+
+  return createCreatureMaterial(draft, boardImageFile, locale);
+}
+
 export async function createHomeItemMaterial(formData: FormData, locale: Locale) {
   const draftValue = formData.get("draft");
   const boardImageValue = formData.get("boardImage");
@@ -251,6 +314,22 @@ export async function updateHomeMaskMaterial(materialId: string, formData: FormD
   const boardImageMode = isMaskMaterialBoardImageMode(boardImageModeValue) ? boardImageModeValue : boardImageFile ? "replace" : "keep";
 
   return updateMaskMaterial(materialId, draft, boardImageFile, boardImageMode, locale);
+}
+
+export async function updateHomeCreatureMaterial(materialId: string, formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+  const boardImageValue = formData.get("boardImage");
+  const boardImageModeValue = formData.get("boardImageMode");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("CREATURE_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as CreatureMaterialCreateInput;
+  const boardImageFile = boardImageValue instanceof File && boardImageValue.size > 0 ? boardImageValue : null;
+  const boardImageMode = isMaskMaterialBoardImageMode(boardImageModeValue) ? boardImageModeValue : boardImageFile ? "replace" : "keep";
+
+  return updateCreatureMaterial(materialId, draft, boardImageFile, boardImageMode, locale);
 }
 
 export async function updateHomeItemMaterial(materialId: string, formData: FormData, locale: Locale) {

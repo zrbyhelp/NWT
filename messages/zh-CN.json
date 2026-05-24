@@ -443,6 +443,7 @@
       "createSoon": "素材创建功能将在后续版本开放。",
       "cancel": "取消",
       "saveMask": "保存假面",
+      "saveCreature": "保存生物",
       "saveItem": "保存物品",
       "saveScene": "保存场景",
       "edit": "编辑",
@@ -767,6 +768,319 @@
           "performative": { "label": "表演欲", "low": "克制、不抢镜", "high": "戏精、镜头感强、情绪表达丰富" }
         }
       },
+      "creatureForm": {
+        "title": "新建生物",
+        "editTitle": "编辑生物",
+        "description": "定义可复用的物种或族群，包含形态、生态、能力限制、行为逻辑和互动规则。",
+        "editDescription": "修改已保存的生物素材，更新完整生物定义、行为逻辑和设定板。",
+        "basicTitle": "基础信息",
+        "name": "名称",
+        "namePlaceholder": "输入生物名称",
+        "style": "内容风格",
+        "fullDefinition": "完整定义",
+        "fullDefinitionPlaceholder": "概述这个物种/族群的外形、生理、生态位、互动价值和叙事用途",
+        "fullDefinitionHint": "第一版生物素材定义物种或族群，不写成单个角色的传记。",
+        "taxonomyTitle": "分类与生态",
+        "morphologyTitle": "形态结构",
+        "morphologyDescription": "记录可观察的身体结构、生理外观和移动方式。",
+        "colorTitle": "颜色标记",
+        "vocalTitle": "发声与感知",
+        "abilityTitle": "能力与限制",
+        "behaviorLogicTitle": "行为逻辑",
+        "behaviorTendencyTitle": "行为倾向",
+        "behaviorLogicPlaceholder": "描述觅食、巡逻、警戒、攻击、退避、驯化、社群协作和资源守护等触发条件与优先级",
+        "inputPlaceholder": "直接输入",
+        "numericPlaceholder": "输入数值",
+        "suggestionsLabel": "建议：{values}",
+        "suggestionsEmpty": "没有匹配的建议，可继续直接输入。",
+        "openSuggestions": "展开{field}建议",
+        "scoreValue": "{value}/100",
+        "lowValueLabel": "低值：",
+        "highValueLabel": "高值：",
+        "detailTraitLevels": {
+          "veryLow": "很低，{description}",
+          "low": "偏低，{description}",
+          "balanced": "表现适中",
+          "high": "偏高，{description}",
+          "veryHigh": "很高，{description}"
+        },
+        "saveSuccess": "生物已创建并加入我的素材。",
+        "saveFailed": "生物创建失败，请稍后再试。",
+        "saveEdit": "保存修改",
+        "updateSuccess": "生物修改已保存。",
+        "updateFailed": "生物修改失败，请稍后再试。",
+        "missingProviderSecret": "默认模型的供应商缺少 API Key，请先在体验设置中补全配置。",
+        "aiTitle": "AI 辅助",
+        "aiEmpty": "可以让 AI 帮你补全生态位、能力限制、行为逻辑和互动规则。",
+        "aiPlaceholder": "例如：把它改成废墟群居生物，强调警戒、护巢和可驯化边界",
+        "aiSend": "发送 AI 辅助消息",
+        "aiMissingDefaultLlm": "还没有可用的默认 LLM 模型，请先在体验设置中配置。",
+        "aiFailed": "AI 辅助失败，请稍后再试。",
+        "boardTitle": "生物设定板",
+        "boardEmpty": "点击上传横版生物设定板",
+        "boardUpload": "上传生物设定板",
+        "boardDrawingStyle": "绘制风格",
+        "boardGenerate": "生成",
+        "boardGenerated": "生物设定板已生成。",
+        "boardGenerateFailed": "生物设定板生成失败，请稍后再试。",
+        "boardMissingDefaultImage": "还没有可用的默认图片模型，请先在体验设置中配置。",
+        "invalidBoardImage": "设定板仅支持 PNG/JPG/WebP，且不能超过 10MB。",
+        "boardPreviewOpen": "放大生物设定板",
+        "boardPreviewClose": "关闭预览",
+        "boardPreviewAlt": "生物设定板预览",
+        "boardRemove": "删除生物设定板",
+        "boardSource": {
+          "uploaded": "上传图片",
+          "generated": "AI 生成"
+        },
+        "boardDrawingStyles": {
+          "photo": "真人拍摄",
+          "realistic": "写实",
+          "anime": "二次元",
+          "painterly": "厚涂",
+          "cel": "赛璐璐",
+          "guofeng": "国风",
+          "comic": "漫画",
+          "concept": "概念设定"
+        },
+        "pickColor": "拾色",
+        "colorSwatchLabel": "选择{field} {color}",
+        "colorPickerLabel": "{field}颜色选择器",
+        "removeTag": "移除标签",
+        "errors": {
+          "nameRequired": "请先填写生物名称。"
+        },
+        "units": {
+          "m": "m",
+          "kg": "kg"
+        },
+        "taxonomyFields": {
+          "creatureType": { "label": "生物类型" }
+        },
+        "ecologyFields": {
+          "habitat": { "label": "栖息地" },
+          "diet": { "label": "食性" },
+          "activityCycle": { "label": "活动周期" },
+          "socialStructure": { "label": "社会结构" },
+          "reproduction": { "label": "繁殖/扩散方式" }
+        },
+        "morphologyFields": {
+          "sizeClass": { "label": "体型等级" },
+          "length": { "label": "身长/高度" },
+          "weight": { "label": "体重" },
+          "limbStructure": { "label": "肢体结构" },
+          "bodyCovering": { "label": "覆盖物" },
+          "headFeature": { "label": "头部特征" },
+          "tailAppendage": { "label": "尾部/附肢" },
+          "movement": { "label": "移动方式" },
+          "specialOrgans": { "label": "特殊器官" }
+        },
+        "colorFields": {
+          "primaryColor": { "label": "主体色" },
+          "secondaryColor": { "label": "辅助色" },
+          "markingColor": { "label": "标记色" },
+          "glowColor": { "label": "发光/能量色" }
+        },
+        "options": {
+          "creatureType": {
+            "beast": "兽类",
+            "spirit": "灵体",
+            "insectoid": "虫形",
+            "aquatic": "水生",
+            "avian": "飞禽",
+            "plantlike": "植物态",
+            "construct": "构装体",
+            "swarm": "群落/蜂群"
+          },
+          "sizeClass": {
+            "tiny": "微型",
+            "small": "小型",
+            "medium": "中型",
+            "large": "大型",
+            "giant": "巨型",
+            "colossal": "超巨型"
+          },
+          "limbStructure": {
+            "quadruped": "四足",
+            "biped": "双足",
+            "multiLimbed": "多肢",
+            "winged": "翼肢",
+            "serpentine": "蛇形",
+            "tentacled": "触手"
+          },
+          "bodyCovering": {
+            "fur": "毛皮",
+            "scales": "鳞片",
+            "feathers": "羽毛",
+            "shell": "甲壳",
+            "skin": "裸皮",
+            "chitin": "几丁质",
+            "bark": "树皮质",
+            "mist": "雾质"
+          },
+          "headFeature": {
+            "horns": "角冠",
+            "crest": "头冠",
+            "mandibles": "颚钳",
+            "beak": "喙",
+            "maskFace": "面甲",
+            "multipleEyes": "复眼/多眼",
+            "noVisibleHead": "无明显头部"
+          },
+          "tailAppendage": {
+            "tail": "尾巴",
+            "stinger": "毒刺",
+            "fins": "鳍",
+            "tendrils": "卷须",
+            "none": "无",
+            "multipleTails": "多尾"
+          },
+          "movement": {
+            "walk": "步行",
+            "run": "奔跑",
+            "fly": "飞行",
+            "swim": "游动",
+            "burrow": "掘地",
+            "crawl": "爬行",
+            "float": "漂浮",
+            "phase": "相位穿行"
+          },
+          "specialOrgans": {
+            "glowCore": "发光核心",
+            "scentGlands": "气味腺",
+            "sonarSac": "声呐囊",
+            "sporePouch": "孢子囊",
+            "venomGland": "毒腺",
+            "crystalGrowth": "晶体增生"
+          },
+          "habitat": {
+            "forest": "森林",
+            "ruins": "废墟",
+            "cave": "洞穴",
+            "wetland": "湿地",
+            "desert": "荒漠",
+            "deepSea": "深海",
+            "urban": "城市夹缝",
+            "void": "虚空/异域"
+          },
+          "diet": {
+            "herbivore": "植食",
+            "carnivore": "肉食",
+            "omnivore": "杂食",
+            "photosynthetic": "光合作用",
+            "mineral": "矿物摄取",
+            "energy": "能量摄取",
+            "parasitic": "寄生"
+          },
+          "activityCycle": {
+            "diurnal": "昼行",
+            "nocturnal": "夜行",
+            "crepuscular": "晨昏活动",
+            "seasonal": "季节性",
+            "triggered": "触发式活动",
+            "dormant": "长期休眠"
+          },
+          "socialStructure": {
+            "solitary": "独居",
+            "pair": "成对",
+            "pack": "小群",
+            "hive": "蜂巢",
+            "herd": "群居",
+            "colony": "殖群",
+            "symbiotic": "共生"
+          },
+          "reproduction": {
+            "eggs": "产卵",
+            "liveBirth": "胎生",
+            "spores": "孢子",
+            "budding": "出芽",
+            "fragmentation": "分裂",
+            "ritual": "仪式性扩散",
+            "manufactured": "人工制造"
+          }
+        },
+        "vocalFields": {
+          "frequency": {
+            "label": "发声频率",
+            "description": "决定叫声偏低频震动还是高频尖啸。",
+            "low": "低频、沉闷、震动感",
+            "high": "高频、尖锐、穿透感",
+            "ticks": { "first": "极低频", "second": "偏低", "third": "中频", "fourth": "偏高", "fifth": "极高频" }
+          },
+          "rhythm": {
+            "label": "叫声节律",
+            "description": "决定发声是零散、规律还是复杂编码。",
+            "low": "零散、短促",
+            "high": "复杂、节律强",
+            "ticks": { "first": "零散", "second": "简单", "third": "稳定", "fourth": "复杂", "fifth": "近似语言" }
+          },
+          "volume": {
+            "label": "音量",
+            "description": "决定声音传播范围和压迫感。",
+            "low": "轻微、贴近才可闻",
+            "high": "响亮、远距离可闻",
+            "ticks": { "first": "极轻", "second": "偏轻", "third": "普通", "fourth": "响亮", "fifth": "震耳" }
+          },
+          "emotionReadability": {
+            "label": "情绪可读性",
+            "description": "决定互动者能否从声音判断情绪。",
+            "low": "难以读懂",
+            "high": "情绪明显",
+            "ticks": { "first": "不可读", "second": "模糊", "third": "一般", "fourth": "明显", "fifth": "非常明确" }
+          },
+          "mimicry": {
+            "label": "拟声/模仿度",
+            "description": "决定是否会模仿环境、人声或其他生物。",
+            "low": "几乎不模仿",
+            "high": "高度拟声",
+            "ticks": { "first": "无拟声", "second": "轻微", "third": "有限", "fourth": "熟练", "fifth": "以假乱真" }
+          }
+        },
+        "senseFields": {
+          "sensoryAcuity": {
+            "label": "感知敏锐度",
+            "description": "综合描述嗅觉、听觉、热感、灵能或异常感知。",
+            "low": "感知迟钝、容易被绕开",
+            "high": "感知敏锐、难以接近",
+            "ticks": { "first": "迟钝", "second": "偏弱", "third": "普通", "fourth": "敏锐", "fifth": "超常" }
+          }
+        },
+        "abilityFields": {
+          "powers": "能力",
+          "weaknesses": "弱点",
+          "resourceNeeds": "资源需求",
+          "interactionUses": "互动用途",
+          "dangerNotes": "危险提示",
+          "keywords": "关键词"
+        },
+        "abilityPlaceholders": {
+          "powers": "输入能力后回车",
+          "weaknesses": "输入弱点后回车",
+          "resourceNeeds": "输入资源需求后回车",
+          "interactionUses": "输入互动用途后回车",
+          "dangerNotes": "输入危险提示后回车",
+          "keywords": "输入关键词后回车"
+        },
+        "behaviorGroups": {
+          "survival": "生存行为",
+          "social": "社群与互动",
+          "interaction": "威胁与资源"
+        },
+        "behaviorFields": {
+          "aggression": { "label": "攻击性", "low": "回避冲突", "high": "主动攻击" },
+          "sociability": { "label": "社交性", "low": "独来独往", "high": "强群体协作" },
+          "territoriality": { "label": "领地性", "low": "迁徙游荡", "high": "强领地防御" },
+          "curiosity": { "label": "好奇心", "low": "保守避新", "high": "主动探索" },
+          "alertness": { "label": "警觉性", "low": "迟钝松懈", "high": "高度警戒" },
+          "stealth": { "label": "潜伏性", "low": "显眼直接", "high": "隐蔽伏击" },
+          "persistence": { "label": "持续追踪", "low": "很快放弃", "high": "长时间追踪" },
+          "adaptability": { "label": "适应性", "low": "依赖固定环境", "high": "快速适应变化" },
+          "tameability": { "label": "可驯化度", "low": "几乎不可驯化", "high": "可建立训练反馈" },
+          "bonding": { "label": "羁绊倾向", "low": "关系淡薄", "high": "容易形成依附" },
+          "threatResponse": { "label": "威胁反应", "low": "退避或冻结", "high": "快速反击" },
+          "resourceGuarding": { "label": "护食/护巢", "low": "不强保护资源", "high": "强烈守护资源" }
+        }
+      },
       "itemForm": {
         "title": "新建物品",
         "editTitle": "编辑物品",
@@ -812,9 +1126,19 @@
         "aiPlaceholder": "例如：把它改成赛博医疗道具，强调半透明材质和扫描功能",
         "aiSend": "发送物品 AI 辅助消息",
         "aiMissingDefaultLlm": "还没有可用的默认 LLM 模型，请先在体验设置中配置。",
+        "aiReferenceImages": "物品 AI 参考图",
+        "aiReferenceEmpty": "可上传最多 3 张参考图，让 AI 根据画面同步完善物品草稿。",
+        "aiReferenceOnlyMessage": "根据参考图片同步完善物品草稿",
+        "aiReferenceUnsupported": "当前默认 LLM 不支持图片输入，请在体验设置中切换支持读图的模型。",
         "aiFailed": "物品 AI 辅助失败，请稍后再试。",
         "boardTitle": "物品设定板",
         "boardDescription": "横版 16:9 视觉稿，用于展示物品外观、说明和比例尺。",
+        "boardReferenceImages": "设定板参考图",
+        "boardReferenceEmpty": "可上传最多 3 张参考图，仅用于本次物品设定板生成。",
+        "referenceImageAdd": "上传参考",
+        "referenceImageRemove": "移除参考图",
+        "referenceImageLimit": "每处最多上传 3 张参考图。",
+        "invalidReferenceImage": "参考图仅支持 PNG/JPG/WebP，不能超过 10MB。",
         "boardEmpty": "点击上传物品设定板",
         "boardUpload": "上传物品设定板",
         "boardDrawingStyle": "绘制风格",
@@ -822,6 +1146,7 @@
         "boardGenerated": "物品设定板已生成。",
         "boardGenerateFailed": "物品设定板生成失败，请稍后再试。",
         "boardMissingDefaultImage": "还没有可用的默认图片模型，请先在体验设置中配置。",
+        "boardReferenceUnsupported": "当前默认图片模型不支持参考图生成，请在体验设置中切换支持图片参考的模型。",
         "invalidBoardImage": "设定板仅支持 PNG/JPG/WebP，且不能超过 10MB。",
         "boardRemove": "删除设定板",
         "modelInputTitle": "AI 模型输入图",
@@ -881,6 +1206,9 @@
         "modelProgressFailed": "3D 模型生成失败",
         "saveSuccess": "物品已创建并加入我的素材。",
         "saveFailed": "物品保存失败，请稍后再试。",
+        "imageUploadFailed": "物品图片上传失败，请检查 R2 存储配置后重试。",
+        "metadataTooLarge": "物品数据过大，无法写入素材记录，请减少标签或图片后再保存。",
+        "recordSaveFailed": "物品素材记录写入失败；若本次上传了图片，系统已尝试清理，请检查数据库连接或迁移后重试。",
         "saveEdit": "保存修改",
         "updateSuccess": "物品修改已保存。",
         "updateFailed": "物品保存失败，请稍后再试。",

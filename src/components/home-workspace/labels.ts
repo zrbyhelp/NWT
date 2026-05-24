@@ -90,6 +90,9 @@ export {
   getScriptChats,
   getScriptRank,
   getScriptRating,
+  resolveCreatureAiError,
+  resolveCreatureBoardError,
+  resolveCreatureSaveError,
   resolveItemAiError,
   resolveItemBoardError,
   resolveItemModelError,
@@ -143,6 +146,48 @@ function resolveMaskSaveError(error: unknown, t: (key: string) => string, isEdit
   return t(isEditing ? "maskForm.updateFailed" : "maskForm.saveFailed");
 }
 
+function resolveCreatureAiError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("missing-default-llm")) {
+    return t("creatureForm.aiMissingDefaultLlm");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("creatureForm.missingProviderSecret");
+  }
+
+  return t("creatureForm.aiFailed");
+}
+
+function resolveCreatureBoardError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("missing-default-image")) {
+    return t("creatureForm.boardMissingDefaultImage");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("creatureForm.missingProviderSecret");
+  }
+
+  return t("creatureForm.boardGenerateFailed");
+}
+
+function resolveCreatureSaveError(error: unknown, t: (key: string) => string, isEditing = false) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("INVALID_MATERIAL_IMAGE_FILE")) {
+    return t("creatureForm.invalidBoardImage");
+  }
+
+  if (message.includes("CREATURE_NAME_REQUIRED")) {
+    return t("creatureForm.errors.nameRequired");
+  }
+
+  return t(isEditing ? "creatureForm.updateFailed" : "creatureForm.saveFailed");
+}
+
 function resolveItemAiError(error: unknown, t: (key: string) => string) {
   const message = error instanceof Error ? error.message : "";
 
@@ -152,6 +197,14 @@ function resolveItemAiError(error: unknown, t: (key: string) => string) {
 
   if (message.includes("missing-provider-secret")) {
     return t("itemForm.missingProviderSecret");
+  }
+
+  if (message.includes("ITEM_ASSIST_REFERENCE_IMAGE_UNSUPPORTED")) {
+    return t("itemForm.aiReferenceUnsupported");
+  }
+
+  if (message.includes("INVALID_ITEM_REFERENCE_IMAGE_FILE")) {
+    return t("itemForm.invalidReferenceImage");
   }
 
   return t("itemForm.aiFailed");
@@ -166,6 +219,14 @@ function resolveItemBoardError(error: unknown, t: (key: string) => string) {
 
   if (message.includes("missing-provider-secret")) {
     return t("itemForm.missingProviderSecret");
+  }
+
+  if (message.includes("ITEM_BOARD_REFERENCE_IMAGE_UNSUPPORTED")) {
+    return t("itemForm.boardReferenceUnsupported");
+  }
+
+  if (message.includes("INVALID_ITEM_REFERENCE_IMAGE_FILE")) {
+    return t("itemForm.invalidReferenceImage");
   }
 
   return t("itemForm.boardGenerateFailed");
@@ -240,6 +301,18 @@ function resolveItemSaveError(error: unknown, t: (key: string) => string, isEdit
 
   if (message.includes("ITEM_NAME_REQUIRED")) {
     return t("itemForm.errors.nameRequired");
+  }
+
+  if (message.includes("ITEM_MATERIAL_UPLOAD_FAILED")) {
+    return t("itemForm.imageUploadFailed");
+  }
+
+  if (message.includes("ITEM_MATERIAL_METADATA_TOO_LARGE")) {
+    return t("itemForm.metadataTooLarge");
+  }
+
+  if (message.includes("ITEM_MATERIAL_DATABASE_FAILED") || message.includes("ITEM_MATERIAL_PERSISTENCE_FAILED")) {
+    return t("itemForm.recordSaveFailed");
   }
 
   return t(isEditing ? "itemForm.updateFailed" : "itemForm.saveFailed");

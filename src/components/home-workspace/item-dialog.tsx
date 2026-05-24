@@ -82,6 +82,7 @@ import {
   type StreamingReply
 } from "./shared";
 import { isCompleteItemModelInputImageDraft } from "./drafts";
+import { ReferenceImageStrip } from "./reference-image-strip";
 import { ItemModelViewer } from "./viewers";
 
 export { ItemCreateDialog };
@@ -89,7 +90,9 @@ export { ItemCreateDialog };
 function ItemCreateDialog({
   aiInput,
   aiPending,
+  aiReferenceImages,
   boardPending,
+  boardReferenceImages,
   draft,
   description,
   isPending,
@@ -99,6 +102,8 @@ function ItemCreateDialog({
   title,
   modelInputPending,
   onCancel,
+  onAddAiReferenceImages,
+  onAddBoardReferenceImages,
   onChangeAiInput,
   onChangeBoardDrawingStyle,
   onChangeField,
@@ -112,13 +117,17 @@ function ItemCreateDialog({
   onGenerateModelInputImage,
   onSelectBoardImage,
   onSelectModelInputImage,
+  onRemoveAiReferenceImage,
+  onRemoveBoardReferenceImage,
   onSendAiMessage,
   onSubmit,
   t
 }: {
   aiInput: string;
   aiPending: boolean;
+  aiReferenceImages: SceneReferenceImageDraft[];
   boardPending: boolean;
+  boardReferenceImages: SceneReferenceImageDraft[];
   draft: ItemCreateDraft;
   description: string;
   isPending: boolean;
@@ -128,6 +137,8 @@ function ItemCreateDialog({
   title: string;
   modelInputPending: boolean;
   onCancel: () => void;
+  onAddAiReferenceImages: (files: FileList | File[]) => void;
+  onAddBoardReferenceImages: (files: FileList | File[]) => void;
   onChangeAiInput: (value: string) => void;
   onChangeBoardDrawingStyle: (style: MaskBoardDrawingStyle) => void;
   onChangeField: (field: "brand" | "description" | "itemCategory" | "model" | "name" | "scaleHint", value: string) => void;
@@ -139,6 +150,8 @@ function ItemCreateDialog({
   onGenerateBoard: () => void;
   onGenerateModel: () => void;
   onGenerateModelInputImage: () => void;
+  onRemoveAiReferenceImage: (imageId: string) => void;
+  onRemoveBoardReferenceImage: (imageId: string) => void;
   onSelectBoardImage: (file: File | null) => void;
   onSelectModelInputImage: (file: File | null) => void;
   onSendAiMessage: () => void;
@@ -260,16 +273,22 @@ function ItemCreateDialog({
               input={aiInput}
               isPending={aiPending}
               messages={draft.aiMessages}
+              referenceImages={aiReferenceImages}
+              onAddReferenceImages={onAddAiReferenceImages}
               onChangeInput={onChangeAiInput}
+              onRemoveReferenceImage={onRemoveAiReferenceImage}
               onSend={onSendAiMessage}
               t={t}
             />
             <ItemBoardPanel
               draft={draft}
               isPending={boardPending}
+              referenceImages={boardReferenceImages}
+              onAddReferenceImages={onAddBoardReferenceImages}
               onChangeDrawingStyle={onChangeBoardDrawingStyle}
               onClearImage={onClearBoardImage}
               onGenerate={onGenerateBoard}
+              onRemoveReferenceImage={onRemoveBoardReferenceImage}
               onSelectImage={onSelectBoardImage}
               t={t}
             />
@@ -411,14 +430,20 @@ function ItemAssistantPanel({
   input,
   isPending,
   messages,
+  referenceImages,
+  onAddReferenceImages,
   onChangeInput,
+  onRemoveReferenceImage,
   onSend,
   t
 }: {
   input: string;
   isPending: boolean;
   messages: MaskAiMessage[];
+  referenceImages: SceneReferenceImageDraft[];
+  onAddReferenceImages: (files: FileList | File[]) => void;
   onChangeInput: (value: string) => void;
+  onRemoveReferenceImage: (imageId: string) => void;
   onSend: () => void;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
@@ -443,6 +468,18 @@ function ItemAssistantPanel({
           ))
         )}
       </div>
+      <div className="mt-3">
+        <ReferenceImageStrip
+          addLabel={t("itemForm.referenceImageAdd")}
+          emptyLabel={t("itemForm.aiReferenceEmpty")}
+          images={referenceImages}
+          isDisabled={isPending}
+          removeLabel={t("itemForm.referenceImageRemove")}
+          title={t("itemForm.aiReferenceImages")}
+          onAddImages={onAddReferenceImages}
+          onRemoveImage={onRemoveReferenceImage}
+        />
+      </div>
       <div className="mt-3 flex gap-2">
         <textarea
           value={input}
@@ -460,7 +497,7 @@ function ItemAssistantPanel({
         <button
           type="button"
           onClick={onSend}
-          disabled={!input.trim() || isPending}
+          disabled={(!input.trim() && referenceImages.length === 0) || isPending}
           className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-foreground text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
           aria-label={t("itemForm.aiSend")}
         >
@@ -474,17 +511,23 @@ function ItemAssistantPanel({
 function ItemBoardPanel({
   draft,
   isPending,
+  referenceImages,
+  onAddReferenceImages,
   onChangeDrawingStyle,
   onClearImage,
   onGenerate,
+  onRemoveReferenceImage,
   onSelectImage,
   t
 }: {
   draft: ItemCreateDraft;
   isPending: boolean;
+  referenceImages: SceneReferenceImageDraft[];
+  onAddReferenceImages: (files: FileList | File[]) => void;
   onChangeDrawingStyle: (style: MaskBoardDrawingStyle) => void;
   onClearImage: () => void;
   onGenerate: () => void;
+  onRemoveReferenceImage: (imageId: string) => void;
   onSelectImage: (file: File | null) => void;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
@@ -513,6 +556,18 @@ function ItemBoardPanel({
           {isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
           {t("itemForm.boardGenerate")}
         </button>
+      </div>
+      <div className="mb-3">
+        <ReferenceImageStrip
+          addLabel={t("itemForm.referenceImageAdd")}
+          emptyLabel={t("itemForm.boardReferenceEmpty")}
+          images={referenceImages}
+          isDisabled={isPending}
+          removeLabel={t("itemForm.referenceImageRemove")}
+          title={t("itemForm.boardReferenceImages")}
+          onAddImages={onAddReferenceImages}
+          onRemoveImage={onRemoveReferenceImage}
+        />
       </div>
       <label className="group relative flex aspect-video w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-border bg-background/70 text-left transition hover:border-primary/40">
         {draft.boardImagePreviewUrl ? (

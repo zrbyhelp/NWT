@@ -80,8 +80,10 @@ export function buildItemModelInputPrompt(basePrompt: string) {
       basePrompt,
       "根据参考设定图生成同一件物品的一张模型输入图，用于 InstantMesh 单图重建 GLB。",
       "让模型自动选择最能表达物品结构、轮廓、材质、关键功能和厚度关系的三分之四展示角度；不要固定为 45 度。",
-      "输出单张图片：纯白或浅中性纯色背景，完整物品居中，边缘留出适度安全距离，光照清晰均匀。",
-      "不要多图拼版，不要前后左右上下六视图，不要文字、标注、比例尺、UI 边框、人物手持、复杂场景背景或裁切。"
+      "只提取设定板中的主物品本体，忽略文字标注、比例尺、材质色块、二级视图、小窗、图标和版面装饰。",
+      "保持关键部件数量、左右不对称标记、主色/辅色分区、材质边界、开口/孔洞/按键/灯带位置和可读厚度关系。",
+      "输出单张图片：纯白或浅中性纯色背景，完整物品居中，所有外轮廓四周留出清楚安全边距，光照清晰均匀。",
+      "不要多图拼版，不要前后左右上下六视图，不要第二件物品、底座、支架、零件爆炸图、文字、标注、比例尺、UI 边框、人物手持或使用、真实伤害、血迹、威胁或攻击场景、复杂场景背景或裁切。"
     ].join("\n");
   }
 
@@ -89,8 +91,10 @@ export function buildItemModelInputPrompt(basePrompt: string) {
     basePrompt,
     "Generate one model input image of the same item for InstantMesh single-image GLB reconstruction.",
     "Let the model choose the best three-quarter presentation angle that explains the item's structure, silhouette, materials, key function, and thickness; do not force a fixed 45-degree view.",
-    "Output a single image: pure white or light neutral solid background, complete object centered, safe margins around the object, clean and even lighting.",
-    "No multi-image sheet, no front/back/left/right/top/bottom six views, no text, labels, ruler, UI frame, hand-held presentation, busy scene background, or cropping."
+    "Extract only the main item body from the design board, ignoring text labels, rulers, material swatches, secondary views, inset panels, icons, and layout decoration.",
+    "Preserve key part counts, asymmetry marks, primary/secondary color zones, material boundaries, openings/holes/buttons/light strips, and readable thickness relationships.",
+    "Output a single image: pure white or light neutral solid background, complete object centered, clear safe margins around every outer silhouette, clean and even lighting.",
+    "No multi-image sheet, no front/back/left/right/top/bottom six views, no second item, pedestal, stand, exploded parts, text, labels, ruler, UI frame, hand-held or in-use presentation, injury, blood, threat or attack scene, busy scene background, or cropping."
   ].join("\n");
 }
 
@@ -114,8 +118,10 @@ export function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInp
       "Preserve strong but believable lighting: clear key lights, ambient shadows, local highlights, and material reflections without flattening the scene.",
       "The left and right edges must join perfectly as one continuous world; the leftmost 8% and rightmost 8% must be the same continuous wall, floor, ceiling, terrain, lighting gradient, and perspective flow.",
       "Keep the horizontal wrap seam intentionally boring and low-detail: continuous blank wall, floor, ceiling, sky, terrain, or soft atmosphere is preferred over props or strong silhouettes near the seam.",
+      "Reserve at least one low-complexity vertical seam corridor, about 12%-16% of the panorama width, containing only continuous background surfaces and no focal objects, so the panorama can be horizontally rolled to the cleanest cut.",
       "The first 12% and last 12% should be visually interchangeable in color temperature, exposure, material pattern, horizon height, and perspective direction.",
       "Do not place doors, windows, mirrors, posters, characters, bright lamps, large props, text, or high-contrast silhouettes crossing the horizontal wrap seam.",
+      "Keep important furniture, doors, windows, machinery, signs, characters, lamps, and readable props away from the outermost 15% of the panorama unless they are repeated continuously across both sides.",
       "Avoid objects, light bands, color-temperature changes, shadow cuts, or perspective lines that break at the wrap seam.",
       "Use one global exposure, white balance, color grading, lighting direction, and material language across the entire image.",
       "Keep one fixed camera height, one horizon level, one focal length feeling, and one time-of-day across the full 360 degrees.",
@@ -143,8 +149,10 @@ export function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInp
     "保留可信但有质感的光照：明确主光、环境阴影、局部高光和材质反射，不要把画面压成平光或脏灰。",
     "左右边缘必须能无缝闭合成同一个连续世界；最左 8% 和最右 8% 必须延续同一面墙、地面、天花、地形、光照渐变和透视走向。",
     "水平环绕接缝要刻意保持低复杂度：优先让连续空墙、地面、天花、天空、地形或柔和氛围经过接缝，不要把强主体放在接缝附近。",
+    "请预留至少一条可作为环绕切口的低复杂度竖向过渡带，宽度约为全景的 12%-16%，只包含连续背景表面，不放视觉主体，方便后处理把全景水平滚动到最干净的切口。",
     "最左 12% 和最右 12% 在色温、曝光、材质纹理、地平线高度和透视方向上要看起来可以互换。",
     "不要让门、窗、镜子、海报、人物、强光灯、大型道具、文字或高对比轮廓跨过水平环绕接缝。",
+    "重要家具、门窗、机械、招牌、人物、灯具和可读道具不要贴近画面最外侧 15%，除非它们能在左右两侧连续重复。",
     "避免物体、光带、色温变化、阴影切口或透视线在环绕接缝处断裂。",
     "整张图必须使用统一曝光、统一白平衡、统一调色、统一光照方向和统一材质语言。",
     "完整 360 度空间必须保持同一机位高度、同一地平线、同一镜头透视感和同一时间光照。",
@@ -192,6 +200,7 @@ export function buildScenePanoramaFacePrompt(
       "Keep dark scenes dark. Do not brighten one face independently, add artificial fill light, cool/warm only this face, or turn the face into a separate corrected photograph.",
       "This face is one side of a shared 360-degree cubemap. Its four edges connect directly to other AI-upscaled faces and must remain sharp, continuous, and stitchable.",
       "The outer 8% of every edge is a stitching zone: preserve the input pixels' structures, colors, brightness, line directions, and object cuts especially strictly there.",
+      "The outermost 4% of every edge should be almost a faithful copy of the input edge, with only tiny cleanup; center detail may improve more than edge detail.",
       "Do not invent new geometry within the stitching zone. Restore clarity there, but keep the mother panorama's edge layout more important than creative detail.",
       "Do not add edge-only glow, haze, vignette, blur, shadow, color wash, or new detail that is not present in the input edge region.",
       "Match the reference global exposure, white balance, color grading, lighting direction, time-of-day, material palette, camera height, and spatial scale.",
@@ -224,6 +233,7 @@ export function buildScenePanoramaFacePrompt(
     "暗光场景要保持暗光氛围。不要单独提亮某一面、添加补光、只让这一面变冷或变暖，也不要把它修成一张独立校色照片。",
     "这张图是同一个 360 度六面体空间的一面，四条边会直接连接其他 AI 高清升级后的面，边缘必须清晰、连续、可拼接。",
     "每条边外侧 8% 是拼接保护区：这里必须特别严格保留输入图的结构、颜色、亮度、线条方向和物体切口。",
+    "每条边最外侧 4% 应接近逐像素复制输入边缘，只允许极轻微清理；画面中央可以比边缘做更多细节增强。",
     "不要在拼接区域发明新几何结构。这里可以恢复清晰度，但母图边缘布局优先级高于创意细节。",
     "不要在边缘单独添加辉光、雾化、暗角、模糊、阴影、色块或输入边缘区域不存在的新细节。",
     "必须匹配参考图的统一曝光、白平衡、调色、光照方向、时间光线、材质色板、机位高度和空间比例。",

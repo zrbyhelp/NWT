@@ -77,6 +77,16 @@ export async function uploadMaskBoardImage(userId: string, file: File) {
   return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "mask-boards");
 }
 
+export async function uploadCreatureBoardImage(userId: string, file: File) {
+  const contentType = file.type.toLowerCase();
+
+  if (!isValidMaterialImageFile(file)) {
+    throw new Error("INVALID_MATERIAL_IMAGE_FILE");
+  }
+
+  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "creature-boards");
+}
+
 export async function uploadScenePanoramaFaceImage(userId: string, file: File, options: { allowOversize?: boolean } = {}) {
   const contentType = file.type.toLowerCase();
 
