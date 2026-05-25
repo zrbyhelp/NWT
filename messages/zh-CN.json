@@ -558,6 +558,8 @@
         "edgeDescriptionPlaceholder": "补充这条关系的说明",
         "source": "起点",
         "target": "终点",
+        "swapEdgeEndpoints": "互换起点终点",
+        "edgeSameEndpoint": "起点和终点不能是同一个节点。",
         "canvasTitle": "图谱画布",
         "canvasDescription": "拖拽节点调整坐标，保存时会同步到素材 metadata 和 Neo4j 投影。",
         "canvasLoading": "画布正在加载",

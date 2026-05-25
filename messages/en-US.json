@@ -558,6 +558,8 @@
         "edgeDescriptionPlaceholder": "Add a note for this relation",
         "source": "Source",
         "target": "Target",
+        "swapEdgeEndpoints": "Swap Source and Target",
+        "edgeSameEndpoint": "Source and target cannot be the same node.",
         "canvasTitle": "Graph Canvas",
         "canvasDescription": "Drag nodes to adjust coordinates. Saving syncs the draft to material metadata and the Neo4j projection.",
         "canvasLoading": "Loading canvas",

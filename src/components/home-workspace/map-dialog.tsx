@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState, type ReactNode } from "react";
-import { Bot, Loader2, Pencil, SendHorizontal, X } from "lucide-react";
+import { ArrowLeftRight, Bot, Loader2, Pencil, SendHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MapCreateDraft, WorkspaceMapMaterialNodeType, WorkspaceMapMaterialRelationType, WorkspaceMaterialStyle } from "@/lib/home-workspace";
 import { mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
@@ -215,6 +215,7 @@ export function MapGraphDialog({
       description={description}
       isPending={isPending}
       cancelLabel={t("cancel")}
+      saveDisabled={derivePending}
       saveLabel={saveLabel}
       title={title}
       widthClassName="max-w-[88rem]"
@@ -243,7 +244,7 @@ export function MapGraphDialog({
             onSelectNode={onSelectNode}
             onStartDerive={onStartDerive}
             onStopDerive={onStopDerive}
-            readOnly={isPending}
+            readOnly={isPending || derivePending}
             relationLabel={(relation) => t(`mapForm.relationTypes.${relation}`)}
             selectedEdgeId={selectedEdgeId}
             selectedNodeId={selectedNodeId}
@@ -256,7 +257,7 @@ export function MapGraphDialog({
             <button
               type="button"
               onClick={onEditBasicInfo}
-              disabled={isPending}
+              disabled={isPending || derivePending}
               className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-border bg-background/96 px-3 text-sm font-medium text-foreground shadow-lg shadow-foreground/10 backdrop-blur transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
             >
               <Pencil className="h-4 w-4" aria-hidden="true" />
@@ -415,6 +416,7 @@ export function MapEdgeDialog({
 
   const canRemove = Boolean(editingEdgeId && onRemove);
   const saveDisabled = draft.nodes.length < 2 || !form.source || !form.target || form.source === form.target;
+  const canSwapEndpoints = Boolean(form.source && form.target);
   const nodeNameById = useMemo(() => new Map(draft.nodes.map((node) => [node.id, node.name || t("mapForm.nodeUntitled")])), [draft.nodes, t]);
 
   return (
@@ -467,7 +469,7 @@ export function MapEdgeDialog({
           </label>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
           <label className="block space-y-2 text-sm">
             <span className="text-foreground/64">{t("mapForm.source")}</span>
             <select
@@ -483,6 +485,17 @@ export function MapEdgeDialog({
               ))}
             </select>
           </label>
+          <button
+            type="button"
+            onClick={() => setForm((current) => ({ ...current, source: current.target, target: current.source }))}
+            disabled={!canSwapEndpoints}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+            aria-label={t("mapForm.swapEdgeEndpoints")}
+            title={t("mapForm.swapEdgeEndpoints")}
+          >
+            <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
+            <span className="md:sr-only">{t("mapForm.swapEdgeEndpoints")}</span>
+          </button>
           <label className="block space-y-2 text-sm">
             <span className="text-foreground/64">{t("mapForm.target")}</span>
             <select
@@ -499,6 +512,11 @@ export function MapEdgeDialog({
             </select>
           </label>
         </div>
+        {form.source && form.target && form.source === form.target ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+            {t("mapForm.edgeSameEndpoint")}
+          </p>
+        ) : null}
       </div>
     </MapDialogShell>
   );
@@ -624,6 +642,10 @@ function MapDialogShell({
           className={cn("scrollbar-autohide min-h-0 flex-1 overflow-y-auto px-5 py-5", bodyClassName)}
           onSubmit={(event) => {
             event.preventDefault();
+            if (isPending || saveDisabled) {
+              return;
+            }
+
             onSubmit();
           }}
         >

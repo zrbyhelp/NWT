@@ -34,6 +34,7 @@ import {
   HomeWorkspace,
   clampScenePanoramaView
 } from "@/components/home-workspace";
+import { MapEdgeDialog, MapNodeDialog } from "@/components/home-workspace/map-dialog";
 import { MapGraphEditor } from "@/components/home-workspace/map-graph-editor";
 import { buildItemMaterialFormData, createDefaultItemDraft } from "@/components/home-workspace/drafts";
 import type { WorkspaceConversation, WorkspaceData, WorkspaceMaterial, WorkspaceScript } from "@/lib/home-workspace";
@@ -175,6 +176,88 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.getByRole("button", { name: "新增节点" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新增关系" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton", { name: "最多衍生轮次" })).not.toBeInTheDocument();
+  });
+
+  it("blocks node and relation form submission when the save button is disabled", () => {
+    const onNodeSave = vi.fn();
+    const onEdgeSave = vi.fn();
+
+    render(
+      <div>
+        <MapNodeDialog
+          draft={{
+            name: "空白地图",
+            description: "尚未添加任何节点",
+            communityVisible: true,
+            style: "realistic",
+            nodes: [],
+            edges: []
+          }}
+          editingNodeId=""
+          isPending={false}
+          saveLabel="新增节点"
+          title="新增节点"
+          description="新增节点描述"
+          onCancel={vi.fn()}
+          onSave={onNodeSave}
+          t={(key, values) => readMaterialMessage(key, values)}
+        />
+        <MapEdgeDialog
+          draft={{
+            name: "空白地图",
+            description: "尚未添加任何节点",
+            communityVisible: true,
+            style: "realistic",
+            nodes: [
+              {
+                id: "node-a",
+                name: "节点 A",
+                description: "",
+                type: "landmark",
+                x: 0,
+                y: 0
+              },
+              {
+                id: "node-b",
+                name: "节点 B",
+                description: "",
+                type: "landmark",
+                x: 1,
+                y: 1
+              }
+            ],
+            edges: [
+              {
+                id: "edge-invalid",
+                relation: "connects",
+                source: "node-a",
+                target: "node-a",
+                description: ""
+              }
+            ]
+          }}
+          editingEdgeId="edge-invalid"
+          isPending={false}
+          saveLabel="保存关系"
+          selectedNodeId=""
+          title="编辑关系"
+          description="编辑关系描述"
+          onCancel={vi.fn()}
+          onSave={onEdgeSave}
+          t={(key, values) => readMaterialMessage(key, values)}
+        />
+      </div>
+    );
+
+    expect(screen.getByRole("button", { name: "新增节点" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存关系" })).toBeDisabled();
+    expect(screen.getByText("起点和终点不能是同一个节点。")).toBeInTheDocument();
+
+    fireEvent.submit(screen.getByRole("heading", { name: "新增节点" }).closest("section")?.querySelector("form") as HTMLFormElement);
+    fireEvent.submit(screen.getByRole("heading", { name: "编辑关系" }).closest("section")?.querySelector("form") as HTMLFormElement);
+
+    expect(onNodeSave).not.toHaveBeenCalled();
+    expect(onEdgeSave).not.toHaveBeenCalled();
   });
 
   it("allows oversized generated item images when building the save payload", () => {
@@ -780,9 +863,12 @@ describe("HomeWorkspace script manager", () => {
     const edgeDialog = screen.getByRole("heading", { name: "新增关系" }).closest("section") as HTMLElement;
     expect(within(edgeDialog).getByRole("combobox", { name: "起点" })).toHaveValue("node-country");
     expect(within(edgeDialog).getByRole("combobox", { name: "终点" })).toHaveValue("map-node-observatory");
+    fireEvent.click(within(edgeDialog).getByRole("button", { name: "互换起点终点" }));
+    expect(within(edgeDialog).getByRole("combobox", { name: "起点" })).toHaveValue("map-node-observatory");
+    expect(within(edgeDialog).getByRole("combobox", { name: "终点" })).toHaveValue("node-country");
     fireEvent.click(within(edgeDialog).getByRole("button", { name: "新增关系" }));
     await waitFor(() => {
-      expect(screen.getAllByText("悬空城 → 观测塔").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("观测塔 → 悬空城").length).toBeGreaterThan(0);
     });
     expect(screen.queryByRole("heading", { name: "新增关系" })).not.toBeInTheDocument();
 
