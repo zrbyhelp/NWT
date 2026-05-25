@@ -84,6 +84,7 @@ import {
 import { isCompleteItemModelInputImageDraft } from "./drafts";
 import { ReferenceImageStrip } from "./reference-image-strip";
 import { ItemModelViewer } from "./viewers";
+import { MaterialVisibilityField } from "./form-fields";
 
 export { ItemCreateDialog };
 
@@ -106,6 +107,7 @@ function ItemCreateDialog({
   onAddBoardReferenceImages,
   onChangeAiInput,
   onChangeBoardDrawingStyle,
+  onChangeCommunityVisible,
   onChangeField,
   onChangeModelExtraParams,
   onChangeStyle,
@@ -141,6 +143,7 @@ function ItemCreateDialog({
   onAddBoardReferenceImages: (files: FileList | File[]) => void;
   onChangeAiInput: (value: string) => void;
   onChangeBoardDrawingStyle: (style: MaskBoardDrawingStyle) => void;
+  onChangeCommunityVisible: (checked: boolean) => void;
   onChangeField: (field: "brand" | "description" | "itemCategory" | "model" | "name" | "scaleHint", value: string) => void;
   onChangeModelExtraParams: (value: string) => void;
   onChangeStyle: (style: WorkspaceMaterialStyle) => void;
@@ -249,6 +252,16 @@ function ItemCreateDialog({
                   />
                 </div>
               </section>
+
+              <MaterialVisibilityField
+                checked={draft.communityVisible}
+                description={t("shareHint")}
+                disabled={isPending}
+                disabledLabel={t("shareDisabled")}
+                enabledLabel={t("shareEnabled")}
+                label={t("shareToCommunity")}
+                onChange={onChangeCommunityVisible}
+              />
 
               <section className="space-y-3">
                 <h3 className="text-sm font-semibold text-foreground/70">{t("itemForm.tagTitle")}</h3>

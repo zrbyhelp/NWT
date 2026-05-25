@@ -9,6 +9,7 @@ import {
   scenePanoramaPostprocessFaces,
   stabilizeScenePanoramaFaces
 } from "@/lib/ai/scene-panorama-postprocess";
+import { buildMapMaterialProjectionPayload } from "@/lib/graph/map-material";
 import {
   deleteMaterialImagesByUrls,
   isValidScenePanoramaImageBytes,
@@ -19,7 +20,29 @@ import {
   uploadMaskBoardImage,
   uploadMaterialImageBytes
 } from "@/lib/storage/material";
-import type { CreatureMaterialCreateInput, ItemMaterialCreateInput, MaskMaterialCreateInput, SceneMaterialCreateInput } from "@/lib/home-workspace";
+import type {
+  CreatureMaterialCreateInput,
+  ItemMaterialCreateInput,
+  MapMaterialCreateInput,
+  MaskMaterialCreateInput,
+  SceneMaterialCreateInput
+} from "@/lib/home-workspace";
+import {
+  assistMapDraft,
+  buildMapAssistMessages,
+  buildMapDeriveRoundMessages,
+  deriveMapGraphRound,
+  sanitizeMapDeriveRoundPatch,
+  sanitizeMapDraftPatch
+} from "@/lib/home-workspace";
+import {
+  buildMapMaterialMetadata,
+  createDefaultMapDraft,
+  applyPatchToMapDraft,
+  validateMapDraftForGraphSave,
+  validateMapDraftForSave
+} from "@/lib/home-workspace/map";
+import { formatMaterialMarkdown } from "@/lib/material-transfer/markdown";
 
 type ScriptRecord = {
   id: string;
@@ -135,15 +158,19 @@ vi.mock("@/lib/storage/material", () => ({
           ? "webp"
           : null;
   }),
-  isValidMaterialImageBytes: vi.fn((bytes: Uint8Array, contentType: string) => {
+  isValidMaterialImageBytes: vi.fn((bytes: Uint8Array, contentType: string, options: { allowOversize?: boolean } = {}) => {
     const normalizedContentType = contentType.toLowerCase().split(";")[0]?.trim();
 
-    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) && bytes.byteLength > 0 && bytes.byteLength <= 10 * 1024 * 1024;
+    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) &&
+      bytes.byteLength > 0 &&
+      (options.allowOversize || bytes.byteLength <= 10 * 1024 * 1024);
   }),
-  isValidMaterialImageFile: vi.fn((file: File) => {
+  isValidMaterialImageFile: vi.fn((file: File, options: { allowOversize?: boolean } = {}) => {
     const normalizedContentType = file.type.toLowerCase().split(";")[0]?.trim();
 
-    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) && file.size > 0 && file.size <= 10 * 1024 * 1024;
+    return ["image/jpeg", "image/png", "image/webp"].includes(normalizedContentType) &&
+      file.size > 0 &&
+      (options.allowOversize || file.size <= 10 * 1024 * 1024);
   }),
   isValidScenePanoramaImageBytes: vi.fn((bytes: Uint8Array, contentType: string) => {
     const normalizedContentType = contentType.toLowerCase().split(";")[0]?.trim();
@@ -214,7 +241,7 @@ describe("home workspace data", () => {
       descriptionZh: "银发旅人描述",
       descriptionEn: "银发旅人描述",
       previewUrl: null,
-      communityVisible: false,
+      communityVisible: true,
       createdAt,
       updatedAt: createdAt,
       ...args.data
@@ -229,7 +256,7 @@ describe("home workspace data", () => {
       descriptionZh: "银发旅人描述",
       descriptionEn: "银发旅人描述",
       previewUrl: null,
-      communityVisible: false,
+      communityVisible: true,
       createdAt,
       updatedAt: createdAt
     }));
@@ -397,6 +424,7 @@ describe("home workspace data", () => {
         name: "银发旅人",
         intro: "疏离冷静，说话简短。",
         features: "标志动作：抬手整理银发\n说话习惯：句子短，停顿长",
+        communityVisible: true,
         style: "mystery",
         body: {
           ageStage: "青年",
@@ -461,7 +489,7 @@ describe("home workspace data", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           category: "MASK",
-          communityVisible: false,
+          communityVisible: true,
           descriptionZh: "疏离冷静，说话简短。",
           metadata: expect.objectContaining({
             boardImage: expect.objectContaining({ source: "uploaded" }),
@@ -478,7 +506,7 @@ describe("home workspace data", () => {
     );
     expect(material).toMatchObject({
       category: "mask",
-      communityVisible: false,
+      communityVisible: true,
       inLibrary: true,
       librarySource: "SELF_CREATED",
       previewUrl: "https://cdn.example.com/materials/mask-board.png",
@@ -506,12 +534,12 @@ describe("home workspace data", () => {
       "zh-CN"
     );
 
-    expect(uploadCreatureBoardImage).toHaveBeenCalledWith("reader-id", expect.any(File));
+    expect(uploadCreatureBoardImage).toHaveBeenCalledWith("reader-id", expect.any(File), { allowOversize: true });
     expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           category: "CREATURE",
-          communityVisible: false,
+          communityVisible: true,
           descriptionZh: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
           metadata: expect.objectContaining({
             behavior: expect.objectContaining({
@@ -536,7 +564,7 @@ describe("home workspace data", () => {
     );
     expect(material).toMatchObject({
       category: "creature",
-      communityVisible: false,
+      communityVisible: true,
       inLibrary: true,
       librarySource: "SELF_CREATED",
       previewUrl: "https://cdn.example.com/materials/creature-board.png",
@@ -545,7 +573,7 @@ describe("home workspace data", () => {
     });
   });
 
-  it("creates a self-created item material with uploaded board and model input metadata", async () => {
+  it("creates a self-created item material with generated board and model input metadata", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { createItemMaterial } = await import("@/lib/home-workspace");
 
@@ -565,13 +593,13 @@ describe("home workspace data", () => {
       "zh-CN"
     );
 
-    expect(uploadItemBoardImage).toHaveBeenCalledWith("reader-id", expect.any(File));
-    expect(uploadItemModelInputImage).toHaveBeenCalledWith("reader-id", expect.any(File));
+    expect(uploadItemBoardImage).toHaveBeenCalledWith("reader-id", expect.any(File), { allowOversize: true });
+    expect(uploadItemModelInputImage).toHaveBeenCalledWith("reader-id", expect.any(File), { allowOversize: true });
     expect(mocks.prisma.storyMaterial.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           category: "ITEM",
-          communityVisible: false,
+          communityVisible: true,
           metadata: expect.objectContaining({
             boardImage: expect.objectContaining({
               source: "generated",
@@ -591,7 +619,7 @@ describe("home workspace data", () => {
     );
     expect(material).toMatchObject({
       category: "item",
-      communityVisible: false,
+      communityVisible: true,
       inLibrary: true,
       librarySource: "SELF_CREATED",
       previewUrl: "https://cdn.example.com/materials/item-board.png",
@@ -882,7 +910,7 @@ describe("home workspace data", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           category: "SCENE",
-          communityVisible: false,
+          communityVisible: true,
           metadata: expect.objectContaining({
             kind: "scene",
             panoramaDrawingStyle: "photo",
@@ -1389,7 +1417,7 @@ describe("home workspace data", () => {
     expect(result).toEqual({ id: "created-mask-id" });
   });
 
-  it("toggles community sharing only for self-created materials", async () => {
+  it("keeps community sharing locked on for self-created materials", async () => {
     const { requireAuth } = await import("@/lib/auth");
     const { setMaterialCommunitySharing } = await import("@/lib/home-workspace");
 
@@ -1416,7 +1444,7 @@ describe("home workspace data", () => {
       }
     });
 
-    const material = await setMaterialCommunitySharing("created-mask-id", true, "zh-CN");
+    const material = await setMaterialCommunitySharing("created-mask-id", false, "zh-CN");
 
     expect(mocks.prisma.storyMaterial.update).toHaveBeenCalledWith({
       where: { id: "created-mask-id" },
@@ -1744,7 +1772,7 @@ describe("home workspace data", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           category: "MASK",
-          communityVisible: false,
+          communityVisible: true,
           libraryEntries: {
             create: {
               source: "SELF_CREATED",
@@ -1795,7 +1823,7 @@ describe("home workspace data", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           category: "CREATURE",
-          communityVisible: false,
+          communityVisible: true,
           metadata: expect.objectContaining({
             boardImage: {
               source: "generated",
@@ -2083,6 +2111,371 @@ describe("home workspace data", () => {
         "zh-CN"
       )
     ).rejects.toThrow("INVALID_MATERIAL_IMAGE_FILE");
+  });
+});
+
+describe("map materials", () => {
+  it("normalizes map drafts and builds markdown and projection payloads", () => {
+    const baseDraft = createDefaultMapDraft();
+    const seededDraft = applyPatchToMapDraft(baseDraft, {
+      addNodes: [
+        {
+          name: "悬空城",
+          description: "城市核心",
+          type: "country",
+          x: -0.25,
+          y: 0.1
+        },
+        {
+          name: "北境行省",
+          description: "主要行政区域",
+          type: "region",
+          x: 0.45,
+          y: 0.2
+        }
+      ]
+    });
+    const patchedDraft = applyPatchToMapDraft(seededDraft, {
+      name: "悬空城地图",
+      description: "记录悬空城各层关系的地图素材。",
+      communityVisible: true,
+      style: "sciFi",
+      addNodes: [
+        {
+          name: "风道",
+          description: "贯穿城市的高空风道",
+          type: "path",
+          x: 1.25,
+          y: 0.45
+        }
+      ],
+      addEdges: [
+        {
+          source: seededDraft.nodes[0].id,
+          target: seededDraft.nodes[1].id,
+          relation: "connects",
+          description: "主城连通行省"
+        }
+      ]
+    });
+    const metadata = buildMapMaterialMetadata(patchedDraft);
+
+    expect(validateMapDraftForSave(patchedDraft)).toBe("");
+    expect(validateMapDraftForGraphSave(patchedDraft)).toBe("");
+    expect(validateMapDraftForSave({ ...patchedDraft, name: "" } as typeof patchedDraft)).toBe("mapForm.errors.nameRequired");
+    expect(patchedDraft.nodes).toHaveLength(3);
+    expect(patchedDraft.edges).toHaveLength(1);
+    expect(metadata).toMatchObject({
+      kind: "map",
+      name: "悬空城地图",
+      style: "sciFi"
+    });
+
+    const markdown = formatMaterialMarkdown(
+      {
+        slug: "floating-city-map",
+        category: "map",
+        style: "sciFi",
+        titleZh: "悬空城地图",
+        titleEn: "Floating City Map",
+        descriptionZh: "记录悬空城各层关系的地图素材。",
+        descriptionEn: "A map of the floating city.",
+        metadata,
+        image: null
+      },
+      "zh-CN"
+    );
+    const payload = buildMapMaterialProjectionPayload("map-city", metadata);
+
+    expect(markdown).toContain("地图数据");
+    expect(markdown).toContain("节点");
+    expect(markdown).toContain("关系");
+    expect(markdown).toContain("悬空城");
+    expect(markdown).toContain("主城连通行省");
+    expect(payload).toMatchObject({
+      materialId: "map-city",
+      name: "悬空城地图",
+      description: "记录悬空城各层关系的地图素材。",
+      style: "sciFi"
+    });
+    expect(payload.nodes).toHaveLength(3);
+    expect(payload.edges).toHaveLength(1);
+  });
+
+  it("builds and sanitizes map AI patches", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateDefaultLlmReply } = await import("@/lib/ai/runtime");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      id: "viewer-id"
+    } as never);
+    vi.mocked(generateDefaultLlmReply).mockResolvedValueOnce({
+      content: JSON.stringify({
+        message: "已补全图谱结构。",
+        patch: {
+          communityVisible: true,
+          addNodes: [
+            {
+              id: "Wind Route",
+              type: "path",
+              name: " 风道 ",
+              description: " 贯穿城内的高空风道 "
+            }
+          ],
+          addEdges: [
+            {
+              id: "Route Link",
+              relation: "connects",
+              source: "Wind Route",
+              target: "node-city",
+              description: " 连接路径 "
+            }
+          ],
+        }
+      }),
+      usage: {
+        promptTokens: 12,
+        completionTokens: 18,
+        estimated: false
+      }
+    });
+
+    const input: MapMaterialCreateInput = {
+      ...createDefaultMapDraft(),
+      name: "悬空城地图",
+      description: "记录环层街区和风道关系。",
+      style: "sciFi"
+    };
+    const messages = buildMapAssistMessages(input, "补充一个风道节点和关系", "zh-CN");
+    const sanitized = sanitizeMapDraftPatch({
+      addNodes: [
+        {
+          id: "Node 1",
+          type: "not-a-type",
+          name: "  观测塔  ",
+          description: " 监测点 "
+        }
+      ],
+      addEdges: [
+        {
+          id: "Edge 1",
+          relation: "invalid",
+          source: "Node 1",
+          target: "node-city",
+          description: "  连接 "
+        }
+      ],
+      removeNodeIds: [" Node 1 "]
+    });
+    const result = await assistMapDraft(input, "补充一个风道节点和关系", "zh-CN");
+
+    expect(messages[0].content).toContain("Node types must be one of country");
+    expect(messages[0].content).not.toContain("communityVisible");
+    expect(messages[1].content).toContain("补充一个风道节点和关系");
+    expect(sanitized).toMatchObject({
+      addNodes: [
+        {
+          id: "node-1",
+          type: "landmark",
+          name: "观测塔"
+        }
+      ],
+      addEdges: [
+        {
+          id: "edge-1",
+          relation: "connects",
+          source: "node-1",
+          target: "node-city"
+        }
+      ],
+      removeNodeIds: ["node-1"]
+    });
+    expect(result).toMatchObject({
+      message: "已补全图谱结构。",
+      patch: {
+        addNodes: [
+          {
+            id: "wind-route",
+            type: "path",
+            name: "风道"
+          }
+        ],
+        addEdges: [
+          {
+            id: "route-link",
+            relation: "connects",
+            source: "wind-route",
+            target: "node-city"
+          }
+        ]
+      }
+    });
+  });
+
+  it("builds derive round prompts and remaps conflicting ids", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { generateDefaultLlmReply } = await import("@/lib/ai/runtime");
+
+    vi.mocked(requireAuth).mockResolvedValue({
+      id: "viewer-id"
+    } as never);
+    vi.mocked(generateDefaultLlmReply).mockResolvedValueOnce({
+      content: JSON.stringify({
+        message: "已围绕王城继续生长。",
+        addNodes: [
+          {
+            id: "node-city",
+            type: "city",
+            name: "王港",
+            description: "从王城生长出的港湾节点。"
+          },
+          {
+            id: "wind-route",
+            type: "path",
+            name: "风道",
+            description: "贯穿城区上空的风道。"
+          }
+        ],
+        addEdges: [
+          {
+            id: "node-city-link",
+            relation: "connects",
+            source: "node-city",
+            target: "wind-route",
+            description: "新旧节点相连"
+          },
+          {
+            id: "wind-route-link",
+            relation: "connects",
+            source: "wind-route",
+            target: "node-country",
+            description: "风道接回旧城"
+          },
+          {
+            id: "invalid-loop",
+            relation: "invalid",
+            source: "wind-route",
+            target: "wind-route",
+            description: "无效关系"
+          }
+        ],
+        updateNodes: [
+          {
+            id: "node-city",
+            name: "should drop"
+          }
+        ]
+      }),
+      usage: {
+        promptTokens: 18,
+        completionTokens: 22,
+        estimated: false
+      }
+    });
+
+    const input: MapMaterialCreateInput = {
+      ...createDefaultMapDraft(),
+      name: "悬空城地图",
+      description: "记录环层街区和风道关系。",
+      style: "sciFi",
+      nodes: [
+        {
+          id: "node-country",
+          type: "country",
+          name: "悬空城",
+          description: "环层都市的核心。",
+          x: -0.2,
+          y: -0.1
+        },
+        {
+          id: "node-city",
+          type: "city",
+          name: "上层街区",
+          description: "高空商业与居住区。",
+          x: 0.8,
+          y: 0.15
+        }
+      ],
+      edges: [
+        {
+          id: "edge-connects",
+          relation: "connects",
+          source: "node-country",
+          target: "node-city",
+          description: "升降塔连接上下层"
+        }
+      ]
+    };
+
+    const prompt = buildMapDeriveRoundMessages(input, "node-city", 2, 5, "zh-CN");
+    const sanitized = sanitizeMapDeriveRoundPatch(
+      {
+        addNodes: [
+          {
+            id: "node-city",
+            type: "city",
+            name: "王港",
+            description: "从王城生长出的港湾节点。"
+          },
+          {
+            id: "wind-route",
+            type: "path",
+            name: "风道",
+            description: "贯穿城区上空的风道。"
+          }
+        ],
+        addEdges: [
+          {
+            id: "node-city-link",
+            relation: "connects",
+            source: "node-city",
+            target: "wind-route",
+            description: "新旧节点相连"
+          },
+          {
+            id: "wind-route-link",
+            relation: "connects",
+            source: "wind-route",
+            target: "node-country",
+            description: "风道接回旧城"
+          }
+        ]
+      },
+      input
+    );
+    const result = await deriveMapGraphRound(input, "node-city", 2, 5, "zh-CN");
+
+    expect(prompt[0].content).toContain("Only add new nodes and new edges.");
+    expect(prompt[1].content).toContain('"roundIndex":2');
+    expect(prompt[1].content).toContain('"maxRounds":5');
+    expect(prompt[1].content).toContain('"seedNodeId":"node-city"');
+    expect(sanitized.addNodes).toHaveLength(2);
+    expect(sanitized.addEdges).toHaveLength(2);
+    expect(sanitized.addNodes?.[0]?.id).not.toBe("node-city");
+    expect(sanitized.addEdges?.[0]).toMatchObject({
+      source: sanitized.addNodes?.[0]?.id,
+      target: sanitized.addNodes?.[1]?.id
+    });
+    expect(sanitizeMapDeriveRoundPatch({
+      addNodes: [
+        {
+          id: "isolated",
+          type: "landmark",
+          name: "孤点",
+          description: "没有接回旧节点。"
+        }
+      ],
+      addEdges: []
+    }, input)).toEqual({});
+    expect(result).toMatchObject({
+      message: "已围绕王城继续生长。",
+      patch: {
+        addNodes: expect.any(Array),
+        addEdges: expect.any(Array)
+      }
+    });
+    expect(result.patch.addNodes).toHaveLength(2);
+    expect(result.patch.addEdges).toHaveLength(2);
   });
 });
 

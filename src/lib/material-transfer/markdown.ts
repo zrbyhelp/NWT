@@ -1,5 +1,11 @@
 import type { Locale } from "@/i18n/routing";
-import { getCreatureMetadataRecord, getItemMetadataRecord, getMaskMetadataRecord, getSceneMetadataRecord } from "./metadata";
+import {
+  getCreatureMetadataRecord,
+  getItemMetadataRecord,
+  getMapMetadataRecord,
+  getMaskMetadataRecord,
+  getSceneMetadataRecord
+} from "./metadata";
 import type { MaterialArchiveItem } from "./types";
 
 export function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale) {
@@ -67,6 +73,60 @@ export function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale
         }
         pushOptionalMarkdownBlock(lines, isEnglish ? "Description" : "说明", blockRecord.description);
       });
+    }
+  }
+
+  const mapMetadata = getMapMetadataRecord(item.metadata);
+
+  if (mapMetadata) {
+    lines.push(`## ${isEnglish ? "Map Data" : "地图数据"}`, "");
+    pushOptionalMarkdownBlock(lines, isEnglish ? "Map Description" : "地图说明", mapMetadata.description);
+
+    if (Array.isArray(mapMetadata.nodes) && mapMetadata.nodes.length > 0) {
+      lines.push(`### ${isEnglish ? "Nodes" : "节点"}`, "");
+      mapMetadata.nodes.forEach((node: unknown, index: number) => {
+        if (!node || typeof node !== "object") {
+          return;
+        }
+
+        const nodeRecord = node as Record<string, unknown>;
+        const title = typeof nodeRecord.name === "string" && nodeRecord.name ? nodeRecord.name : `${isEnglish ? "Node" : "节点"} ${index + 1}`;
+        const nodeType = typeof nodeRecord.type === "string" ? nodeRecord.type : "";
+        const positionX = typeof nodeRecord.x === "number" && Number.isFinite(nodeRecord.x) ? nodeRecord.x.toFixed(2) : "-";
+        const positionY = typeof nodeRecord.y === "number" && Number.isFinite(nodeRecord.y) ? nodeRecord.y.toFixed(2) : "-";
+
+        lines.push(`- ${title} (${typeof nodeRecord.id === "string" ? nodeRecord.id : "-"})`);
+        lines.push(`  - ${isEnglish ? "Type" : "类型"}: ${nodeType || "-"}`);
+        lines.push(`  - ${isEnglish ? "Position" : "位置"}: ${positionX}, ${positionY}`);
+
+        if (typeof nodeRecord.description === "string" && nodeRecord.description.trim()) {
+          lines.push(`  - ${isEnglish ? "Description" : "说明"}: ${nodeRecord.description.trim()}`);
+        }
+      });
+      lines.push("");
+    }
+
+    if (Array.isArray(mapMetadata.edges) && mapMetadata.edges.length > 0) {
+      lines.push(`### ${isEnglish ? "Relations" : "关系"}`, "");
+      mapMetadata.edges.forEach((edge: unknown, index: number) => {
+        if (!edge || typeof edge !== "object") {
+          return;
+        }
+
+        const edgeRecord = edge as Record<string, unknown>;
+        const title = typeof edgeRecord.relation === "string" && edgeRecord.relation
+          ? edgeRecord.relation
+          : `${isEnglish ? "Edge" : "关系"} ${index + 1}`;
+        const source = typeof edgeRecord.source === "string" ? edgeRecord.source : "-";
+        const target = typeof edgeRecord.target === "string" ? edgeRecord.target : "-";
+
+        lines.push(`- ${title}: ${source} -> ${target}`);
+
+        if (typeof edgeRecord.description === "string" && edgeRecord.description.trim()) {
+          lines.push(`  - ${isEnglish ? "Description" : "说明"}: ${edgeRecord.description.trim()}`);
+        }
+      });
+      lines.push("");
     }
   }
 

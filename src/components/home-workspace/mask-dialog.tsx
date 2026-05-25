@@ -82,7 +82,7 @@ import {
   type MaterialManagerView,
   type StreamingReply
 } from "./shared";
-import { BodyTextField, ColorField, MaskRangeField } from "./form-fields";
+import { BodyTextField, ColorField, MaskRangeField, MaterialVisibilityField } from "./form-fields";
 import { getMaskBodyOptionLabel, getMaskVoiceValueLabel } from "./labels";
 
 export { MaskCreateDialog };
@@ -108,6 +108,7 @@ function MaskCreateDialog({
   onChangeVoiceField,
   onClearBoardImage,
   onChangeBoardDrawingStyle,
+  onChangeCommunityVisible,
   onGenerateBoard,
   onSelectBoardImage,
   onSendAiMessage,
@@ -134,6 +135,7 @@ function MaskCreateDialog({
   onChangeVoiceField: (fieldId: MaskVoiceFieldId, value: number) => void;
   onClearBoardImage: () => void;
   onChangeBoardDrawingStyle: (style: MaskBoardDrawingStyle) => void;
+  onChangeCommunityVisible: (checked: boolean) => void;
   onGenerateBoard: () => void;
   onSelectBoardImage: (file: File | null) => void;
   onSendAiMessage: () => void;
@@ -226,6 +228,16 @@ function MaskCreateDialog({
                   <span className="block text-xs text-foreground/42">{t("maskForm.featuresHint")}</span>
                 </div>
               </section>
+
+              <MaterialVisibilityField
+                checked={draft.communityVisible}
+                description={t("shareHint")}
+                disabled={isPending}
+                disabledLabel={t("shareDisabled")}
+                enabledLabel={t("shareEnabled")}
+                label={t("shareToCommunity")}
+                onChange={onChangeCommunityVisible}
+              />
 
             <section className="space-y-3">
               <h3 className="text-sm font-semibold text-foreground/70">{t("maskForm.bodyTitle")}</h3>

@@ -26,7 +26,7 @@ import {
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource
 } from "./shared";
-import { BodyTextField, ColorField, MaskRangeField } from "./form-fields";
+import { BodyTextField, ColorField, MaskRangeField, MaterialVisibilityField } from "./form-fields";
 
 export { CreatureCreateDialog };
 
@@ -43,6 +43,7 @@ function CreatureCreateDialog({
   onChangeBehaviorField,
   onChangeBehaviorLogic,
   onChangeBoardDrawingStyle,
+  onChangeCommunityVisible,
   onChangeColorField,
   onChangeDescription,
   onChangeEcologyField,
@@ -73,6 +74,7 @@ function CreatureCreateDialog({
   onChangeBehaviorField: (fieldId: CreatureBehaviorFieldId, value: number) => void;
   onChangeBehaviorLogic: (value: string) => void;
   onChangeBoardDrawingStyle: (style: MaskBoardDrawingStyle) => void;
+  onChangeCommunityVisible: (checked: boolean) => void;
   onChangeColorField: (fieldId: CreatureColorFieldId, value: string) => void;
   onChangeDescription: (value: string) => void;
   onChangeEcologyField: (fieldId: CreatureEcologyFieldId, value: string) => void;
@@ -163,6 +165,16 @@ function CreatureCreateDialog({
                   <span className="block text-xs text-foreground/42">{t("creatureForm.fullDefinitionHint")}</span>
                 </div>
               </section>
+
+              <MaterialVisibilityField
+                checked={draft.communityVisible}
+                description={t("shareHint")}
+                disabled={isPending}
+                disabledLabel={t("shareDisabled")}
+                enabledLabel={t("shareEnabled")}
+                label={t("shareToCommunity")}
+                onChange={onChangeCommunityVisible}
+              />
 
               <section className="space-y-3">
                 <h3 className="text-sm font-semibold text-foreground/70">{t("creatureForm.taxonomyTitle")}</h3>

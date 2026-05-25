@@ -103,8 +103,9 @@ import {
   type MaterialManagerView,
   type StreamingReply
 } from "./shared";
-import { getCreatureMaterialMetadata, getItemMaterialMetadata, getMaskMaterialMetadata, getNestedRecord, getSceneMaterialMetadata, isCompleteScenePanoramaFaceUrls, normalizeSceneScalePreset } from "./drafts";
+import { getCreatureMaterialMetadata, getItemMaterialMetadata, getMapMaterialMetadata, getMaskMaterialMetadata, getNestedRecord, getSceneMaterialMetadata, isCompleteScenePanoramaFaceUrls, normalizeSceneScalePreset } from "./drafts";
 import { getMaterialAccent, getScriptAccent, getScriptChats } from "./labels";
+import { MapGraphEditor } from "./map-graph-editor";
 import { ItemModelViewer, ScenePanoramaPreviewDialog, ScenePanoramaViewer } from "./viewers";
 
 export { MaterialDetailModal, MaterialExploreCard, ScriptExploreCard };
@@ -225,6 +226,7 @@ function MaterialDetailModal({
   canExport,
   canShare,
   deleteLabel,
+  editGraphLabel,
   editLabel,
   exportLabel,
   isCommunityView,
@@ -234,10 +236,10 @@ function MaterialDetailModal({
   material,
   onClose,
   onDelete,
+  onEditGraph,
   onEdit,
   onExport,
   onJoin,
-  onToggleShare,
   previewAlt,
   previewCloseLabel,
   previewOpenLabel,
@@ -256,6 +258,7 @@ function MaterialDetailModal({
   canExport: boolean;
   canShare: boolean;
   deleteLabel: string;
+  editGraphLabel?: string;
   editLabel: string;
   exportLabel: string;
   isCommunityView: boolean;
@@ -265,10 +268,10 @@ function MaterialDetailModal({
   material: WorkspaceMaterial;
   onClose: () => void;
   onDelete: (material: WorkspaceMaterial) => void;
+  onEditGraph?: (material: WorkspaceMaterial) => void;
   onEdit: (material: WorkspaceMaterial) => void;
   onExport: (material: WorkspaceMaterial) => void;
   onJoin: (materialId: string) => void;
-  onToggleShare: (material: WorkspaceMaterial, shared: boolean) => void;
   previewAlt: string;
   previewCloseLabel: string;
   previewOpenLabel: string;
@@ -283,6 +286,7 @@ function MaterialDetailModal({
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const detailPreviewUrl = getMaterialDetailPreviewUrl(material);
+  const shareVisible = canShare ? true : material.communityVisible;
 
   useEffect(() => {
     if (!previewOpen) {
@@ -305,10 +309,7 @@ function MaterialDetailModal({
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-foreground/18 p-3 backdrop-blur-sm">
       <section
-        className={cn(
-          "flex h-[53rem] max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl",
-          material.category === "item" ? "max-w-4xl" : "max-w-xl"
-        )}
+        className="flex h-[53rem] max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex h-12 shrink-0 justify-end px-3 pt-3">
@@ -357,6 +358,7 @@ function MaterialDetailModal({
             <p className="mt-4 text-xs text-foreground/42">{material.slug}</p>
           </div>
           {material.category === "mask" ? <MaskMaterialDetail metadata={material.metadata} t={t} /> : null}
+          {material.category === "map" ? <MapMaterialDetail metadata={material.metadata} t={t} /> : null}
           {material.category === "creature" ? <CreatureMaterialDetail metadata={material.metadata} t={t} /> : null}
           {material.category === "item" ? <ItemMaterialDetail metadata={material.metadata} t={t} /> : null}
           {material.category === "scene" ? <SceneMaterialDetail key={material.id} metadata={material.metadata} t={t} /> : null}
@@ -382,21 +384,20 @@ function MaterialDetailModal({
           ) : (
             <div className="space-y-2">
               {canShare ? (
-                <label className="flex cursor-pointer items-center justify-between gap-3 px-1 py-1.5 text-left">
+                <label className="flex cursor-not-allowed items-center justify-between gap-3 px-1 py-1.5 text-left">
                   <span className="min-w-0">
                     <span className="block text-sm font-medium text-foreground/76">{shareLabel}</span>
                     <span className="mt-0.5 block text-xs leading-5 text-foreground/48">{shareHint}</span>
                   </span>
                   <span className="inline-flex shrink-0 items-center gap-2">
                     <span className="text-xs text-foreground/52">
-                      {material.communityVisible ? shareEnabledLabel : shareDisabledLabel}
+                      {shareVisible ? shareEnabledLabel : shareDisabledLabel}
                     </span>
                     <input
                       type="checkbox"
                       role="switch"
-                      checked={material.communityVisible}
-                      disabled={isPending}
-                      onChange={(event) => onToggleShare(material, event.target.checked)}
+                      checked={shareVisible}
+                      disabled
                       className="peer sr-only"
                       aria-label={shareLabel}
                     />
@@ -420,7 +421,19 @@ function MaterialDetailModal({
                       {exportLabel}
                     </button>
                   ) : null}
-                  {canEdit ? (
+                  {material.category === "map" && onEditGraph ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onEditGraph(material)}
+                        disabled={isPending}
+                        className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-full border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
+                        {editGraphLabel ?? editLabel}
+                      </button>
+                    </>
+                  ) : canEdit ? (
                     <button
                       type="button"
                       onClick={() => onEdit(material)}
@@ -877,6 +890,50 @@ function SceneMaterialDetail({
           t={t}
         />
       ) : null}
+    </div>
+  );
+}
+
+function MapMaterialDetail({
+  metadata,
+  t
+}: {
+  metadata: WorkspaceMaterialMetadata | undefined | null;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const record = getMapMaterialMetadata(metadata);
+  const [selectedNodeId, setSelectedNodeId] = useState(record?.nodes[0]?.id ?? "");
+  const [selectedEdgeId, setSelectedEdgeId] = useState(record?.edges[0]?.id ?? "");
+
+  if (!record || record.kind !== "map") {
+    return null;
+  }
+
+  const resolvedNodeId = record.nodes.some((node) => node.id === selectedNodeId) ? selectedNodeId : record.nodes[0]?.id ?? "";
+  const resolvedEdgeId = record.edges.some((edge) => edge.id === selectedEdgeId) ? selectedEdgeId : record.edges[0]?.id ?? "";
+
+  return (
+    <div className="mx-auto mt-8 w-full max-w-full space-y-4 text-left">
+      <div className="flex h-[34rem] w-full">
+        <MapGraphEditor
+          draft={{
+            name: record.name,
+            description: record.description,
+            communityVisible: true,
+            style: record.style,
+            nodes: record.nodes,
+            edges: record.edges
+          }}
+          readOnly
+          selectedEdgeId={resolvedEdgeId}
+          selectedNodeId={resolvedNodeId}
+          onSelectEdge={setSelectedEdgeId}
+          onSelectNode={setSelectedNodeId}
+          relationLabel={(relation) => t(`mapForm.relationTypes.${relation}`)}
+          showSelectionPanel={false}
+          t={t}
+        />
+      </div>
     </div>
   );
 }

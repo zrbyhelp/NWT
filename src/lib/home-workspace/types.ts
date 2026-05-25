@@ -119,6 +119,7 @@ export type MaskMaterialCreateInput = {
   name: string;
   intro: string;
   features: string;
+  communityVisible?: boolean;
   style: WorkspaceMaterialStyle;
   body: Record<WorkspaceMaskBodyFieldId, string>;
   colors: Record<WorkspaceMaskColorFieldId, string>;
@@ -131,6 +132,7 @@ export type MaskMaterialCreateInput = {
 export type CreatureMaterialCreateInput = {
   name: string;
   description: string;
+  communityVisible?: boolean;
   style: WorkspaceMaterialStyle;
   taxonomy: Record<WorkspaceCreatureTaxonomyFieldId, string>;
   morphology: Record<WorkspaceCreatureMorphologyFieldId, string>;
@@ -148,6 +150,7 @@ export type CreatureMaterialCreateInput = {
 export type SceneMaterialCreateInput = {
   name: string;
   description: string;
+  communityVisible?: boolean;
   style: WorkspaceMaterialStyle;
   panoramaDrawingStyle?: WorkspaceScenePanoramaDrawingStyle;
   blocks: SceneMaterialBlockInput[];
@@ -157,6 +160,7 @@ export type ItemMaterialCreateInput = {
   name: string;
   itemCategory: string;
   description: string;
+  communityVisible?: boolean;
   traits: string[];
   uses: string[];
   functions: string[];
@@ -179,6 +183,99 @@ export type ItemMaterialCreateInput = {
     source: "instantmesh" | "uploaded";
     url: string;
   } | null;
+};
+
+export type WorkspaceMapMaterialNodeType =
+  | "country"
+  | "region"
+  | "city"
+  | "village"
+  | "landmark"
+  | "path";
+
+export type WorkspaceMapMaterialRelationType =
+  | "contains"
+  | "belongs_to"
+  | "adjacent"
+  | "connects"
+  | "through"
+  | "north_of"
+  | "south_of"
+  | "east_of"
+  | "west_of";
+
+export type WorkspaceMapMaterialNode = {
+  id: string;
+  type: WorkspaceMapMaterialNodeType;
+  name: string;
+  description: string;
+  x: number;
+  y: number;
+};
+
+export type WorkspaceMapMaterialEdge = {
+  id: string;
+  relation: WorkspaceMapMaterialRelationType;
+  source: string;
+  target: string;
+  description: string;
+};
+
+export type MapMaterialCreateInput = {
+  name: string;
+  description: string;
+  communityVisible?: boolean;
+  style: WorkspaceMaterialStyle;
+  nodes: WorkspaceMapMaterialNode[];
+  edges: WorkspaceMapMaterialEdge[];
+};
+
+export type MapDraftPatch = {
+  name?: string;
+  description?: string;
+  communityVisible?: boolean;
+  style?: WorkspaceMaterialStyle;
+  addNodes?: Array<{
+    id?: string;
+    type?: WorkspaceMapMaterialNodeType;
+    name: string;
+    description: string;
+    x?: number;
+    y?: number;
+  }>;
+  updateNodes?: Array<{
+    id: string;
+    type?: WorkspaceMapMaterialNodeType;
+    name?: string;
+    description?: string;
+    x?: number;
+    y?: number;
+  }>;
+  removeNodeIds?: string[];
+  addEdges?: Array<{
+    id?: string;
+    relation?: WorkspaceMapMaterialRelationType;
+    source: string;
+    target: string;
+    description?: string;
+  }>;
+  updateEdges?: Array<{
+    id: string;
+    relation?: WorkspaceMapMaterialRelationType;
+    source?: string;
+    target?: string;
+    description?: string;
+  }>;
+  removeEdgeIds?: string[];
+};
+
+export type MapCreateDraft = MapMaterialCreateInput & {
+  communityVisible: boolean;
+};
+
+export type MapAiAssistResult = {
+  message: string;
+  patch: MapDraftPatch;
 };
 
 export type ItemDraftPatch = Partial<Pick<
@@ -464,11 +561,22 @@ export type WorkspaceSceneMaterialMetadata = {
   }>;
 };
 
+export type WorkspaceMapMaterialMetadata = {
+  kind: "map";
+  version: 1;
+  name: string;
+  description: string;
+  style: WorkspaceMaterialStyle;
+  nodes: WorkspaceMapMaterialNode[];
+  edges: WorkspaceMapMaterialEdge[];
+};
+
 export type WorkspaceMaterialMetadata =
   | WorkspaceMaskMaterialMetadata
   | WorkspaceCreatureMaterialMetadata
   | WorkspaceItemMaterialMetadata
   | WorkspaceSceneMaterialMetadata
+  | WorkspaceMapMaterialMetadata
   | Record<string, unknown>;
 
 export type MaskMaterialBoardImageMode = "keep" | "replace" | "clear";

@@ -8,9 +8,17 @@ import type {
   CreatureDraftPatch,
   CreatureMaterialCreateInput,
   WorkspaceCreatureMaterialMetadata,
+  MapCreateDraft,
+  MapDraftPatch,
+  MapMaterialCreateInput,
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceItemMaterialMetadata,
+  WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialMetadata,
+  WorkspaceMapMaterialNode,
+  WorkspaceMapMaterialNodeType,
+  WorkspaceMapMaterialRelationType,
   WorkspaceMaterial,
   WorkspaceMaterialCategory,
   WorkspaceMaterialMetadata,
@@ -19,6 +27,24 @@ import type {
   WorkspaceSceneScalePreset,
   WorkspaceScript
 } from "@/lib/home-workspace";
+import {
+  applyPatchToMapDraft,
+  buildMapMaterialMetadata,
+  createDefaultMapDraft,
+  createMapEdge,
+  createMapDraftFromMaterial,
+  createMapNode,
+  getMapMaterialMetadata,
+  isMapNodeType,
+  isMapRelationType,
+  mapNodeTypes,
+  mapRelationTypes,
+  normalizeMapMaterialInput,
+  serializeMapDraft,
+  validateMapDraftForGraphSave,
+  validateMapDraftForSave,
+  validateMapMaterialInput
+} from "@/lib/home-workspace/map";
 import {
   defaultScenePanoramaView,
   defaultSceneScalePreset,
@@ -111,15 +137,20 @@ export {
   applyPatchToMaskDraft,
   applyPatchToSceneDraft,
   buildItemMaterialFormData,
+  buildMapMaterialFormData,
   createClientId,
   createDefaultCreatureDraft,
   createDefaultItemDraft,
   createDefaultMaskDraft,
+  createDefaultMapDraft,
   createDefaultSceneBlock,
   createDefaultSceneDraft,
   createInitialScenePanoramaGenerationDraft,
   createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
+  createMapDraftFromMaterial,
+  createMapEdge,
+  createMapNode,
   createMaskDraftFromMaterial,
   createPreviewUrl,
   createSceneDraftFromMaterial,
@@ -137,6 +168,7 @@ export {
   getItemBoardImageMode,
   getItemImageStoredUrl,
   getItemMaterialMetadata,
+  getMapMaterialMetadata,
   getItemModelInputImageMode,
   getMaskBoardImageMode,
   getMaskMaterialMetadata,
@@ -147,6 +179,7 @@ export {
   hasAnyScenePanoramaFaceDraft,
   isCompleteItemModelInputImageDraft,
   isCompleteScenePanoramaFaceUrls,
+  isValidGeneratedMaterialImage,
   isValidMaskBoardImage,
   isValidGeneratedScenePanoramaImage,
   isValidScenePanoramaFace,
@@ -154,6 +187,7 @@ export {
   isValidSceneReferenceImage,
   isZipArchiveFile,
   normalizeSceneFaceSource,
+  normalizeMapMaterialInput,
   normalizeScenePanoramaMaxRedrawAttempts,
   readTransferErrorCode,
   revokeItemBoardPreview,
@@ -171,8 +205,18 @@ export {
   serializeCreatureDraft,
   serializeItemDraft,
   serializeMaskDraft,
+  serializeMapDraft,
   serializeSceneTextDraft,
+  applyPatchToMapDraft,
+  buildMapMaterialMetadata,
+  isMapNodeType,
+  isMapRelationType,
+  mapNodeTypes,
+  mapRelationTypes,
   uploadSceneDraftPanoramaFaces,
+  validateMapDraftForGraphSave,
+  validateMapDraftForSave,
+  validateMapMaterialInput,
   validateSceneBlockGeneration,
   validateSceneDraftForSave
 };
@@ -182,6 +226,7 @@ function createDefaultMaskDraft(): MaskCreateDraft {
     name: "",
     intro: "",
     features: "",
+    communityVisible: true,
     style: "realistic",
     body: {
       hairStyle: "",
@@ -246,6 +291,7 @@ function createDefaultCreatureDraft(): CreatureCreateDraft {
   return {
     name: "",
     description: "",
+    communityVisible: true,
     style: "fantasy",
     taxonomy: {
       creatureType: ""
@@ -320,6 +366,7 @@ function createDefaultItemDraft(): ItemCreateDraft {
     name: "",
     itemCategory: "",
     description: "",
+    communityVisible: true,
     traits: [],
     uses: [],
     functions: [],
@@ -349,6 +396,7 @@ function createDefaultSceneDraft(): SceneCreateDraft {
   return {
     name: "",
     description: "",
+    communityVisible: true,
     style: "realistic",
     panoramaDrawingStyle: "realistic",
     blocks: [firstBlock]
@@ -390,6 +438,7 @@ function createMaskDraftFromMaterial(material: WorkspaceMaterial): MaskCreateDra
     name: typeof metadata?.name === "string" && metadata.name.trim() ? metadata.name : material.title,
     intro: typeof metadata?.intro === "string" ? metadata.intro : material.description,
     features: typeof metadata?.features === "string" ? metadata.features : "",
+    communityVisible: true,
     style: typeof metadata?.style === "string" && isWorkspaceMaterialStyle(metadata.style) ? metadata.style : material.style,
     body: body ? { ...draft.body, ...body } : draft.body,
     colors: colors ? { ...draft.colors, ...colors } : draft.colors,
@@ -443,6 +492,7 @@ function createCreatureDraftFromMaterial(material: WorkspaceMaterial): CreatureC
     ...draft,
     name: metadata.name || material.title,
     description: metadata.description || material.description,
+    communityVisible: true,
     style: typeof metadata.style === "string" && isWorkspaceMaterialStyle(metadata.style) ? metadata.style : material.style,
     taxonomy: taxonomy ? { ...draft.taxonomy, ...taxonomy } : draft.taxonomy,
     morphology: morphology ? { ...draft.morphology, ...morphology } : draft.morphology,
@@ -514,6 +564,7 @@ function createItemDraftFromMaterial(material: WorkspaceMaterial): ItemCreateDra
     name: metadata.name || material.title,
     itemCategory: metadata.itemCategory,
     description: metadata.description || material.description,
+    communityVisible: true,
     traits: sanitizeItemTags(metadata.traits),
     uses: sanitizeItemTags(metadata.uses),
     functions: sanitizeItemTags(metadata.functions),
@@ -590,6 +641,7 @@ function createSceneDraftFromMaterial(material: WorkspaceMaterial): SceneCreateD
   return {
     name: metadata.name || material.title,
     description: metadata.description || material.description,
+    communityVisible: true,
     style: typeof metadata.style === "string" && isWorkspaceMaterialStyle(metadata.style) ? metadata.style : material.style,
     panoramaDrawingStyle:
       typeof metadata.panoramaDrawingStyle === "string" && isScenePanoramaDrawingStyle(metadata.panoramaDrawingStyle)
@@ -604,6 +656,7 @@ function serializeMaskDraft(draft: MaskCreateDraft) {
     name: draft.name,
     intro: draft.intro,
     features: draft.features,
+    communityVisible: true,
     style: draft.style,
     body: draft.body,
     colors: draft.colors,
@@ -618,6 +671,7 @@ function serializeCreatureDraft(draft: CreatureCreateDraft): CreatureMaterialCre
   return {
     name: draft.name,
     description: draft.description,
+    communityVisible: true,
     style: draft.style,
     taxonomy: draft.taxonomy,
     morphology: draft.morphology,
@@ -642,6 +696,7 @@ function serializeItemDraft(draft: ItemCreateDraft): ItemMaterialCreateInput {
     name: draft.name,
     itemCategory: draft.itemCategory,
     description: draft.description,
+    communityVisible: true,
     traits: draft.traits,
     uses: draft.uses,
     functions: draft.functions,
@@ -682,6 +737,7 @@ function serializeSceneTextDraft(draft: SceneCreateDraft): SceneMaterialCreateIn
   return {
     name: draft.name,
     description: draft.description,
+    communityVisible: true,
     style: draft.style,
     panoramaDrawingStyle: draft.panoramaDrawingStyle,
     blocks: draft.blocks.map((block) => ({
@@ -941,8 +997,16 @@ function normalizeSceneScalePreset(value: unknown): WorkspaceSceneScalePreset {
     : defaultSceneScalePreset;
 }
 
-function isValidMaskBoardImage(file: File) {
-  return maskBoardAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0 && file.size <= maxMaskBoardImageBytes;
+function isValidMaskBoardImage(file: File, options: { allowOversize?: boolean } = {}) {
+  return (
+    maskBoardAcceptedTypes.includes(file.type.toLowerCase()) &&
+    file.size > 0 &&
+    (options.allowOversize || file.size <= maxMaskBoardImageBytes)
+  );
+}
+
+function isValidGeneratedMaterialImage(file: File) {
+  return maskBoardAcceptedTypes.includes(file.type.toLowerCase()) && file.size > 0;
 }
 
 function isValidScenePanoramaFace(file: File) {
@@ -1024,7 +1088,7 @@ function buildItemMaterialFormData(draft: ItemCreateDraft, isEditing: boolean) {
   formData.append("draft", JSON.stringify(serializeItemDraft(draft)));
 
   if (draft.boardImageFile) {
-    if (!isValidMaskBoardImage(draft.boardImageFile)) {
+    if (!isValidMaskBoardImage(draft.boardImageFile, { allowOversize: draft.boardImageSource === "generated" })) {
       throw new Error("INVALID_MATERIAL_IMAGE_FILE");
     }
 
@@ -1032,7 +1096,7 @@ function buildItemMaterialFormData(draft: ItemCreateDraft, isEditing: boolean) {
   }
 
   if (draft.modelInputImage?.file) {
-    if (!isValidMaskBoardImage(draft.modelInputImage.file)) {
+    if (!isValidMaskBoardImage(draft.modelInputImage.file, { allowOversize: draft.modelInputImage.source !== "uploaded" })) {
       throw new Error("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE");
     }
 
@@ -1043,6 +1107,14 @@ function buildItemMaterialFormData(draft: ItemCreateDraft, isEditing: boolean) {
     formData.append("boardImageMode", getItemBoardImageMode(draft));
     formData.append("modelInputImageMode", getItemModelInputImageMode(draft));
   }
+
+  return formData;
+}
+
+function buildMapMaterialFormData(draft: MapCreateDraft) {
+  const formData = new FormData();
+
+  formData.append("draft", JSON.stringify(serializeMapDraft(draft)));
 
   return formData;
 }
@@ -1325,7 +1397,7 @@ async function getItemModelInputFileForModel(draft: ItemCreateDraft): Promise<Fi
 
   const file = image.file ?? (image.previewUrl ? await fetchUrlAsFile(image.previewUrl, "item-model-input.png", "image/png") : null);
 
-  if (!file || !isValidMaskBoardImage(file)) {
+  if (!file || !isValidMaskBoardImage(file, { allowOversize: image.source !== "uploaded" })) {
     return null;
   }
 

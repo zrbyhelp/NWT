@@ -57,6 +57,7 @@
     "next": "latest",
     "next-intl": "latest",
     "openai": "latest",
+    "graphology": "^0.26.0",
     "proxy-agent": "^8.0.1",
     "react": "latest",
     "react-dom": "latest",

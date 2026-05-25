@@ -15,19 +15,27 @@ export const materialImageContentTypeExtensions = {
   "image/webp": "webp"
 } as const;
 
-export function isValidMaterialImageFile(file: File) {
+type MaterialImageValidationOptions = {
+  allowOversize?: boolean;
+};
+
+export function isValidMaterialImageFile(file: File, options: MaterialImageValidationOptions = {}) {
   const contentType = file.type.toLowerCase();
 
-  return contentType in materialImageContentTypeExtensions && file.size > 0 && file.size <= maxMaterialImageBytes;
+  return (
+    contentType in materialImageContentTypeExtensions &&
+    file.size > 0 &&
+    (options.allowOversize || file.size <= maxMaterialImageBytes)
+  );
 }
 
-export function isValidMaterialImageBytes(bytes: Uint8Array, contentType: string) {
+export function isValidMaterialImageBytes(bytes: Uint8Array, contentType: string, options: MaterialImageValidationOptions = {}) {
   const normalizedContentType = normalizeMaterialImageContentType(contentType);
 
   return (
     Boolean(normalizedContentType) &&
     bytes.byteLength > 0 &&
-    bytes.byteLength <= maxMaterialImageBytes
+    (options.allowOversize || bytes.byteLength <= maxMaterialImageBytes)
   );
 }
 
@@ -67,24 +75,24 @@ export function getMaterialImageExtension(contentType: string) {
     : null;
 }
 
-export async function uploadMaskBoardImage(userId: string, file: File) {
+export async function uploadMaskBoardImage(userId: string, file: File, options: MaterialImageValidationOptions = {}) {
   const contentType = file.type.toLowerCase();
 
-  if (!isValidMaterialImageFile(file)) {
+  if (!isValidMaterialImageFile(file, options)) {
     throw new Error("INVALID_MATERIAL_IMAGE_FILE");
   }
 
-  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "mask-boards");
+  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "mask-boards", options);
 }
 
-export async function uploadCreatureBoardImage(userId: string, file: File) {
+export async function uploadCreatureBoardImage(userId: string, file: File, options: MaterialImageValidationOptions = {}) {
   const contentType = file.type.toLowerCase();
 
-  if (!isValidMaterialImageFile(file)) {
+  if (!isValidMaterialImageFile(file, options)) {
     throw new Error("INVALID_MATERIAL_IMAGE_FILE");
   }
 
-  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "creature-boards");
+  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "creature-boards", options);
 }
 
 export async function uploadScenePanoramaFaceImage(userId: string, file: File, options: { allowOversize?: boolean } = {}) {
@@ -125,14 +133,14 @@ export async function uploadScenePanoramaMotherImage(userId: string, file: File,
   });
 }
 
-export async function uploadItemBoardImage(userId: string, file: File) {
+export async function uploadItemBoardImage(userId: string, file: File, options: MaterialImageValidationOptions = {}) {
   const contentType = file.type.toLowerCase();
 
-  if (!isValidMaterialImageFile(file)) {
+  if (!isValidMaterialImageFile(file, options)) {
     throw new Error("INVALID_MATERIAL_IMAGE_FILE");
   }
 
-  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "item-boards");
+  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "item-boards", options);
 }
 
 export async function uploadItemViewImage(userId: string, file: File) {
@@ -145,14 +153,14 @@ export async function uploadItemViewImage(userId: string, file: File) {
   return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "item-views");
 }
 
-export async function uploadItemModelInputImage(userId: string, file: File) {
+export async function uploadItemModelInputImage(userId: string, file: File, options: MaterialImageValidationOptions = {}) {
   const contentType = file.type.toLowerCase();
 
-  if (!isValidMaterialImageFile(file)) {
+  if (!isValidMaterialImageFile(file, options)) {
     throw new Error("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE");
   }
 
-  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "item-model-inputs");
+  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "item-model-inputs", options);
 }
 
 export async function uploadItemModelBytes(userId: string, bytes: Uint8Array, contentType: string, fileName = "item-model.glb") {
@@ -183,11 +191,11 @@ export async function uploadMaterialImageBytes(
   bytes: Uint8Array,
   contentType: string,
   folder = "imports",
-  options: { allowOversizeScenePanorama?: boolean } = {}
+  options: MaterialImageValidationOptions & { allowOversizeScenePanorama?: boolean } = {}
 ) {
   const normalizedContentType = normalizeMaterialImageContentType(contentType);
   const extension = normalizedContentType ? materialImageContentTypeExtensions[normalizedContentType] : null;
-  const validBytes = options.allowOversizeScenePanorama
+  const validBytes = options.allowOversizeScenePanorama || options.allowOversize
     ? isValidScenePanoramaImageBytes(bytes, contentType)
     : isValidMaterialImageBytes(bytes, contentType);
 

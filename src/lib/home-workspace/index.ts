@@ -50,6 +50,8 @@ import {
   uploadScenePanoramaFaceImage,
   uploadScenePanoramaMotherImage
 } from "@/lib/storage/material";
+import { syncMapMaterialProjection } from "@/lib/graph/map-material";
+import { buildMapMaterialMetadata, isMapNodeType, isMapRelationType } from "./map";
 
 export type {
   WorkspaceScript,
@@ -74,6 +76,14 @@ export type {
   CreatureMaterialCreateInput,
   SceneMaterialCreateInput,
   ItemMaterialCreateInput,
+  MapMaterialCreateInput,
+  MapAiAssistResult,
+  MapDraftPatch,
+  MapCreateDraft,
+  WorkspaceMapMaterialNodeType,
+  WorkspaceMapMaterialRelationType,
+  WorkspaceMapMaterialNode,
+  WorkspaceMapMaterialEdge,
   ItemDraftPatch,
   ItemAiAssistResult,
   SceneMaterialBlockInput,
@@ -104,6 +114,7 @@ export type {
   WorkspaceCreatureMaterialMetadata,
   WorkspaceItemMaterialMetadata,
   WorkspaceSceneMaterialMetadata,
+  WorkspaceMapMaterialMetadata,
   WorkspaceMaterialMetadata,
   MaskMaterialBoardImageMode,
   ItemMaterialImageMode,
@@ -135,6 +146,14 @@ import type {
   CreatureMaterialCreateInput,
   SceneMaterialCreateInput,
   ItemMaterialCreateInput,
+  MapMaterialCreateInput,
+  MapAiAssistResult,
+  MapDraftPatch,
+  MapCreateDraft,
+  WorkspaceMapMaterialNodeType,
+  WorkspaceMapMaterialRelationType,
+  WorkspaceMapMaterialNode,
+  WorkspaceMapMaterialEdge,
   ItemDraftPatch,
   ItemAiAssistResult,
   SceneMaterialBlockInput,
@@ -165,6 +184,7 @@ import type {
   WorkspaceCreatureMaterialMetadata,
   WorkspaceItemMaterialMetadata,
   WorkspaceSceneMaterialMetadata,
+  WorkspaceMapMaterialMetadata,
   WorkspaceMaterialMetadata,
   MaskMaterialBoardImageMode,
   ItemMaterialImageMode,
@@ -485,7 +505,11 @@ export async function createMaskMaterial(input: MaskMaterialCreateInput, boardIm
 
   await ensureHomeWorkspaceDefaults(viewer.id);
 
-  const previewUrl = boardImageFile && boardImageFile.size > 0 ? await uploadMaskBoardImage(viewer.id, boardImageFile) : null;
+  const previewUrl = boardImageFile && boardImageFile.size > 0
+    ? input.boardImageSource === "generated"
+      ? await uploadMaskBoardImage(viewer.id, boardImageFile, { allowOversize: true })
+      : await uploadMaskBoardImage(viewer.id, boardImageFile)
+    : null;
   const material = await prisma.storyMaterial.create({
     data: {
       slug: createUserMaterialSlug("mask", name),
@@ -497,7 +521,7 @@ export async function createMaskMaterial(input: MaskMaterialCreateInput, boardIm
       descriptionEn: intro || name,
       previewUrl,
       metadata: buildMaskMaterialMetadata(input, previewUrl, input.boardImageSource),
-      communityVisible: false,
+      communityVisible: true,
       libraryEntries: {
         create: {
           userId: viewer.id,
@@ -553,7 +577,9 @@ export async function updateMaskMaterial(
       throw new Error("INVALID_MATERIAL_IMAGE_FILE");
     }
 
-    previewUrl = await uploadMaskBoardImage(viewer.id, boardImageFile);
+    previewUrl = input.boardImageSource === "generated"
+      ? await uploadMaskBoardImage(viewer.id, boardImageFile, { allowOversize: true })
+      : await uploadMaskBoardImage(viewer.id, boardImageFile);
     boardImageSource = input.boardImageSource ?? "uploaded";
   } else if (boardImageMode === "clear") {
     previewUrl = null;
@@ -566,21 +592,22 @@ export async function updateMaskMaterial(
     where: {
       id: entry.material.id
     },
-    data: {
-      category: "MASK",
-      style: toStoryMaterialStyle(input.style),
-      titleZh: name,
-      titleEn: name,
-      descriptionZh: intro || name,
-      descriptionEn: intro || name,
-      previewUrl,
-      metadata: buildMaskMaterialMetadata(
-        input,
+      data: {
+        category: "MASK",
+        style: toStoryMaterialStyle(input.style),
+        titleZh: name,
+        titleEn: name,
+        descriptionZh: intro || name,
+        descriptionEn: intro || name,
         previewUrl,
-        boardImageSource ?? input.boardImageSource ?? null
-      )
-    }
-  });
+        metadata: buildMaskMaterialMetadata(
+          input,
+          previewUrl,
+          boardImageSource ?? input.boardImageSource ?? null
+        ),
+        communityVisible: true
+      }
+    });
 
   revalidatePath(`/${locale}`);
 
@@ -601,7 +628,11 @@ export async function createCreatureMaterial(input: CreatureMaterialCreateInput,
 
   await ensureHomeWorkspaceDefaults(viewer.id);
 
-  const previewUrl = boardImageFile && boardImageFile.size > 0 ? await uploadCreatureBoardImage(viewer.id, boardImageFile) : null;
+  const previewUrl = boardImageFile && boardImageFile.size > 0
+    ? input.boardImageSource === "generated"
+      ? await uploadCreatureBoardImage(viewer.id, boardImageFile, { allowOversize: true })
+      : await uploadCreatureBoardImage(viewer.id, boardImageFile)
+    : null;
   const material = await prisma.storyMaterial.create({
     data: {
       slug: createUserMaterialSlug("creature", name),
@@ -613,7 +644,7 @@ export async function createCreatureMaterial(input: CreatureMaterialCreateInput,
       descriptionEn: description || name,
       previewUrl,
       metadata: buildCreatureMaterialMetadata(input, previewUrl, input.boardImageSource),
-      communityVisible: false,
+      communityVisible: true,
       libraryEntries: {
         create: {
           userId: viewer.id,
@@ -669,7 +700,9 @@ export async function updateCreatureMaterial(
       throw new Error("INVALID_MATERIAL_IMAGE_FILE");
     }
 
-    previewUrl = await uploadCreatureBoardImage(viewer.id, boardImageFile);
+    previewUrl = input.boardImageSource === "generated"
+      ? await uploadCreatureBoardImage(viewer.id, boardImageFile, { allowOversize: true })
+      : await uploadCreatureBoardImage(viewer.id, boardImageFile);
     boardImageSource = input.boardImageSource ?? "uploaded";
   } else if (boardImageMode === "clear") {
     previewUrl = null;
@@ -682,21 +715,22 @@ export async function updateCreatureMaterial(
     where: {
       id: entry.material.id
     },
-    data: {
-      category: "CREATURE",
-      style: toStoryMaterialStyle(input.style),
-      titleZh: name,
-      titleEn: name,
-      descriptionZh: description || name,
-      descriptionEn: description || name,
-      previewUrl,
-      metadata: buildCreatureMaterialMetadata(
-        input,
+      data: {
+        category: "CREATURE",
+        style: toStoryMaterialStyle(input.style),
+        titleZh: name,
+        titleEn: name,
+        descriptionZh: description || name,
+        descriptionEn: description || name,
         previewUrl,
-        boardImageSource ?? input.boardImageSource ?? null
-      )
-    }
-  });
+        metadata: buildCreatureMaterialMetadata(
+          input,
+          previewUrl,
+          boardImageSource ?? input.boardImageSource ?? null
+        ),
+        communityVisible: true
+      }
+    });
 
   revalidatePath(`/${locale}`);
 
@@ -727,14 +761,20 @@ export async function createItemMaterial(
     await ensureHomeWorkspaceDefaults(viewer.id);
 
     persistenceStage = "upload";
-    const boardUrl = boardImageFile && boardImageFile.size > 0 ? await uploadItemBoardImage(viewer.id, boardImageFile) : null;
+    const boardUrl = boardImageFile && boardImageFile.size > 0
+      ? input.boardImageSource === "generated"
+        ? await uploadItemBoardImage(viewer.id, boardImageFile, { allowOversize: true })
+        : await uploadItemBoardImage(viewer.id, boardImageFile)
+      : null;
 
     if (boardUrl) {
       uploadedUrls.push(boardUrl);
     }
 
     const modelInputImageUrl = modelInputImageFile && modelInputImageFile.size > 0
-      ? await uploadItemModelInputImage(viewer.id, modelInputImageFile)
+      ? (input.modelInputImage?.source ?? "generated") === "generated"
+        ? await uploadItemModelInputImage(viewer.id, modelInputImageFile, { allowOversize: true })
+        : await uploadItemModelInputImage(viewer.id, modelInputImageFile)
       : input.modelInputImage?.url || null;
 
     if (modelInputImageFile && modelInputImageFile.size > 0 && modelInputImageUrl) {
@@ -754,7 +794,7 @@ export async function createItemMaterial(
         descriptionEn: description || name,
         previewUrl,
         metadata: buildItemMaterialMetadata(input, boardUrl, input.boardImageSource, modelInputImageUrl, getExistingItemViewImageUrlsFromInput(input)),
-        communityVisible: false,
+        communityVisible: true,
         libraryEntries: {
           create: {
             userId: viewer.id,
@@ -825,7 +865,9 @@ export async function updateItemMaterial(
       }
 
       persistenceStage = "upload";
-      boardUrl = await uploadItemBoardImage(viewer.id, boardImageFile);
+      boardUrl = input.boardImageSource === "generated"
+        ? await uploadItemBoardImage(viewer.id, boardImageFile, { allowOversize: true })
+        : await uploadItemBoardImage(viewer.id, boardImageFile);
       uploadedUrls.push(boardUrl);
       boardImageSource = input.boardImageSource ?? "uploaded";
     } else if (boardImageMode === "clear") {
@@ -839,7 +881,9 @@ export async function updateItemMaterial(
       }
 
       persistenceStage = "upload";
-      modelInputImageUrl = await uploadItemModelInputImage(viewer.id, modelInputImageFile);
+      modelInputImageUrl = (input.modelInputImage?.source ?? "generated") === "generated"
+        ? await uploadItemModelInputImage(viewer.id, modelInputImageFile, { allowOversize: true })
+        : await uploadItemModelInputImage(viewer.id, modelInputImageFile);
       uploadedUrls.push(modelInputImageUrl);
     } else if (modelInputImageMode === "clear") {
       modelInputImageUrl = null;
@@ -859,7 +903,8 @@ export async function updateItemMaterial(
         descriptionZh: description || name,
         descriptionEn: description || name,
         previewUrl,
-        metadata: buildItemMaterialMetadata(input, boardUrl, boardImageSource, modelInputImageUrl, viewImageUrls)
+        metadata: buildItemMaterialMetadata(input, boardUrl, boardImageSource, modelInputImageUrl, viewImageUrls),
+        communityVisible: true
       }
     });
 
@@ -959,7 +1004,7 @@ export async function createSceneMaterial(input: SceneMaterialCreateInput, uploa
         descriptionEn: description,
         previewUrl: getScenePreviewUrl(input.blocks),
         metadata: buildSceneMaterialMetadata(input),
-        communityVisible: false,
+        communityVisible: true,
         libraryEntries: {
           create: {
             userId: viewer.id,
@@ -1102,7 +1147,8 @@ export async function updateSceneMaterial(
         descriptionZh: description,
         descriptionEn: description,
         previewUrl: getScenePreviewUrl(input.blocks),
-        metadata: buildSceneMaterialMetadata(input)
+        metadata: buildSceneMaterialMetadata(input),
+        communityVisible: true
       }
     });
 
@@ -1116,6 +1162,161 @@ export async function updateSceneMaterial(
     await cleanupUploadedScenePanoramaFaces(uploadedFaceUrls);
     throw normalizeSceneMaterialPersistenceError(error);
   }
+}
+
+export async function createMapMaterial(input: MapMaterialCreateInput, locale: Locale) {
+  const viewer = await requireAuth();
+  let persistenceStage: MapMaterialPersistenceStage = "prepare";
+
+  try {
+    const metadata = buildMapMaterialMetadata(input);
+    const name = metadata.name;
+    const description = metadata.description;
+
+    await ensureHomeWorkspaceDefaults(viewer.id);
+
+    persistenceStage = "record";
+    const material = await prisma.$transaction(async (tx) => {
+      const createdMaterial = await tx.storyMaterial.create({
+        data: {
+          slug: createUserMaterialSlug("map", name),
+          category: "MAP",
+          style: toStoryMaterialStyle(metadata.style),
+          titleZh: name,
+          titleEn: name,
+          descriptionZh: description,
+          descriptionEn: description,
+          previewUrl: null,
+          metadata,
+          communityVisible: true,
+          libraryEntries: {
+            create: {
+              userId: viewer.id,
+              source: "SELF_CREATED"
+            }
+          }
+        }
+      });
+
+      persistenceStage = "graph";
+      await syncMapMaterialProjection(createdMaterial.id, metadata);
+      persistenceStage = "record";
+
+      return createdMaterial;
+    });
+
+    revalidatePath(`/${locale}`);
+
+    return mapMaterial(material, locale, {
+      inLibrary: true,
+      librarySource: "SELF_CREATED"
+    });
+  } catch (error) {
+    throw normalizeMapMaterialPersistenceError(error, persistenceStage);
+  }
+}
+
+export async function updateMapMaterial(materialId: string, input: MapMaterialCreateInput, locale: Locale) {
+  const viewer = await requireAuth();
+  let persistenceStage: MapMaterialPersistenceStage = "prepare";
+
+  try {
+    const metadata = buildMapMaterialMetadata(input);
+    const name = metadata.name;
+    const description = metadata.description;
+
+    persistenceStage = "record";
+    const material = await prisma.$transaction(async (tx) => {
+      const entry = await tx.storyMaterialLibraryEntry.findFirst({
+        where: {
+          userId: viewer.id,
+          materialId,
+          source: "SELF_CREATED"
+        },
+        include: {
+          material: true
+        }
+      });
+
+      if (!entry || normalizeMaterialCategory(entry.material.category) !== "map") {
+        throw new Error("MATERIAL_NOT_EDITABLE");
+      }
+
+      const updatedMaterial = await tx.storyMaterial.update({
+        where: {
+          id: entry.material.id
+        },
+        data: {
+          category: "MAP",
+          style: toStoryMaterialStyle(metadata.style),
+          titleZh: name,
+          titleEn: name,
+          descriptionZh: description,
+          descriptionEn: description,
+          previewUrl: null,
+          metadata,
+          communityVisible: true
+        }
+      });
+
+      persistenceStage = "graph";
+      await syncMapMaterialProjection(updatedMaterial.id, metadata);
+      persistenceStage = "record";
+
+      return updatedMaterial;
+    });
+
+    revalidatePath(`/${locale}`);
+
+    return mapMaterial(material, locale, {
+      inLibrary: true,
+      librarySource: "SELF_CREATED"
+    });
+  } catch (error) {
+    throw normalizeMapMaterialPersistenceError(error, persistenceStage);
+  }
+}
+
+type MapMaterialPersistenceStage = "prepare" | "record" | "graph";
+
+function normalizeMapMaterialPersistenceError(error: unknown, stage: MapMaterialPersistenceStage) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = getErrorCode(error);
+
+  if (
+    message.includes("MAP_NAME_REQUIRED") ||
+    message.includes("MAP_DESCRIPTION_REQUIRED") ||
+    message.includes("MAP_NODE_REQUIRED") ||
+    message.includes("MAP_NODE_NAME_REQUIRED") ||
+    message.includes("MAP_NODE_TYPE_INVALID") ||
+    message.includes("MAP_NODE_DUPLICATE") ||
+    message.includes("MAP_EDGE_INVALID") ||
+    message.includes("MAP_EDGE_RELATION_INVALID") ||
+    message.includes("MAP_EDGE_DUPLICATE") ||
+    message.includes("MATERIAL_NOT_EDITABLE")
+  ) {
+    return error instanceof Error ? error : new Error(message);
+  }
+
+  if (
+    code === "P2000" ||
+    message.includes("Data too long") ||
+    message.includes("max_allowed_packet") ||
+    message.includes("Packet for query is too large") ||
+    message.includes("request entity too large")
+  ) {
+    return new Error("MAP_MATERIAL_METADATA_TOO_LARGE");
+  }
+
+  if (stage === "graph") {
+    return new Error("MAP_GRAPH_SYNC_FAILED");
+  }
+
+  if (code?.startsWith("P")) {
+    return new Error("MAP_MATERIAL_DATABASE_FAILED");
+  }
+
+  return new Error("MAP_MATERIAL_PERSISTENCE_FAILED");
 }
 
 export async function assistSceneDraft(
@@ -1166,6 +1367,84 @@ export async function assistSceneDraft(
   return {
     message,
     patch: sanitizeSceneDraftPatch(record.patch)
+  };
+}
+
+export async function assistMapDraft(input: MapMaterialCreateInput, instruction: string, locale: Locale): Promise<MapAiAssistResult> {
+  const viewer = await requireAuth();
+  const normalizedInstruction = instruction.trim();
+
+  if (!normalizedInstruction) {
+    throw new Error("MAP_ASSIST_EMPTY_INSTRUCTION");
+  }
+
+  const reply = await generateDefaultLlmReply(
+    buildMapAssistMessages(input, normalizedInstruction, locale),
+    viewer.id,
+    false,
+    locale,
+    {
+      feature: "map.assist",
+      input: {
+        currentDraft: input,
+        instruction: normalizedInstruction
+      }
+    }
+  );
+  const parsed = parseJsonObject(reply.content);
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : reply.content.trim();
+
+  return {
+    message,
+    patch: sanitizeMapDraftPatch(record.patch)
+  };
+}
+
+export async function deriveMapGraphRound(
+  input: MapMaterialCreateInput,
+  seedNodeId: string,
+  roundIndex: number,
+  maxRounds: number,
+  locale: Locale
+): Promise<MapAiAssistResult> {
+  const viewer = await requireAuth();
+  const normalizedSeedNodeId = normalizeMapAssistId(seedNodeId);
+  const seedNode = input.nodes.find((node) => normalizeMapAssistId(node.id) === normalizedSeedNodeId);
+  const normalizedRoundIndex = normalizeMapDeriveRound(roundIndex, 1);
+  const normalizedMaxRounds = normalizeMapDeriveRound(maxRounds, 3);
+
+  if (input.nodes.length === 0 || !seedNode) {
+    throw new Error("MAP_DERIVE_EMPTY_GRAPH");
+  }
+
+  const reply = await generateDefaultLlmReply(
+    buildMapDeriveRoundMessages(input, seedNode.id, normalizedRoundIndex, normalizedMaxRounds, locale),
+    viewer.id,
+    false,
+    locale,
+    {
+      feature: "map.derive",
+      input: {
+        currentDraft: input,
+        maxRounds: normalizedMaxRounds,
+        roundIndex: normalizedRoundIndex,
+        seedNode
+      }
+    }
+  );
+  const parsed = parseJsonObject(reply.content);
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const message = typeof record.message === "string" && record.message.trim() ? record.message.trim() : reply.content.trim();
+  const patch = sanitizeMapDeriveRoundPatch(record.patch ?? record, input);
+
+  if (!patch.addNodes?.length || !patch.addEdges?.length) {
+    throw new Error("MAP_DERIVE_EMPTY_RESULT");
+  }
+
+  return {
+    message,
+    patch
   };
 }
 
@@ -1340,7 +1619,7 @@ export async function deleteSelfCreatedMaterial(materialId: string, locale: Loca
   return { id: entry.material.id };
 }
 
-export async function setMaterialCommunitySharing(materialId: string, shared: boolean, locale: Locale) {
+export async function setMaterialCommunitySharing(materialId: string, _shared: boolean, locale: Locale) {
   const viewer = await requireAuth();
   const entry = await prisma.storyMaterialLibraryEntry.findFirst({
     where: {
@@ -1362,7 +1641,7 @@ export async function setMaterialCommunitySharing(materialId: string, shared: bo
       id: entry.material.id
     },
     data: {
-      communityVisible: shared
+      communityVisible: true
     }
   });
 
@@ -1551,7 +1830,7 @@ export async function generateItemModelInputImage(
 ): Promise<ItemModelInputImageGenerationResult> {
   const viewer = await requireAuth();
 
-  if (!isValidMaterialImageFile(boardImageFile)) {
+  if (!isValidMaterialImageFile(boardImageFile, { allowOversize: input.boardImageSource === "generated" })) {
     throw new Error("INVALID_MATERIAL_IMAGE_FILE");
   }
 
@@ -1754,7 +2033,10 @@ function mapMaterial(
     description: isEnglish ? material.descriptionEn : material.descriptionZh,
     previewUrl: material.previewUrl ?? null,
     metadata: (material.metadata as WorkspaceMaterialMetadata | null | undefined) ?? null,
-    communityVisible: material.communityVisible ?? true,
+    communityVisible:
+      typeof material.communityVisible === "boolean"
+        ? material.communityVisible
+        : true,
     inLibrary: library?.inLibrary ?? false,
     ...(librarySource ? { librarySource } : {})
   };
@@ -2372,6 +2654,86 @@ function buildSceneAssistMessages(
   ];
 }
 
+export function buildMapAssistMessages(input: MapMaterialCreateInput, instruction: string, locale: Locale): RuntimeChatMessage[] {
+  const isEnglish = locale === "en-US";
+  const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are an assistant for editing a map material in New World Novel.",
+        "A map material organizes geography, settlements, landmarks, routes, and directional relationships in a story world.",
+        "You may update map name, description, style, add nodes, update nodes, remove nodes, add edges, update edges, or remove edges.",
+        "Node types must be one of country, region, city, village, landmark, path.",
+        "Relation types must be one of contains, belongs_to, adjacent, connects, through, north_of, south_of, east_of, west_of.",
+        "Prefer not to change coordinates unless you need a layout hint. Coordinates are generated automatically in the app and can be adjusted by dragging later.",
+        "If you add nodes and edges in the same patch, give the new nodes stable ids so the new edges can reference them.",
+        "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
+        "Patch may include name, description, style, addNodes, updateNodes, removeNodeIds, addEdges, updateEdges, removeEdgeIds.",
+        "addNodes entries may include id, type, name, description, x, y.",
+        "updateNodes entries may include id, type, name, description, x, y.",
+        "addEdges entries may include id, relation, source, target, description.",
+        "updateEdges entries may include id, relation, source, target, description.",
+        "Edge endpoints must reference existing node ids or node ids introduced in the same patch.",
+        languageRule
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        currentDraft: input,
+        instruction
+      })
+    }
+  ];
+}
+
+export function buildMapDeriveRoundMessages(
+  input: MapMaterialCreateInput,
+  seedNodeId: string,
+  roundIndex: number,
+  maxRounds: number,
+  locale: Locale
+): RuntimeChatMessage[] {
+  const isEnglish = locale === "en-US";
+  const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
+  const normalizedSeedNodeId = normalizeMapAssistId(seedNodeId);
+  const seedNode = input.nodes.find((node) => normalizeMapAssistId(node.id) === normalizedSeedNodeId) ?? null;
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are an assistant for growing a map material graph in New World Novel.",
+        "This task is one derivation round. Focus growth around the seed node, but keep the result coherent with the whole current map graph.",
+        "Only add new nodes and new edges. Do not update, delete, rename, or move existing nodes, edges, map name, map description, or style.",
+        "Node types must be one of country, region, city, village, landmark, path.",
+        "Relation types must be one of contains, belongs_to, adjacent, connects, through, north_of, south_of, east_of, west_of.",
+        "You may freely decide how many new nodes and edges to add in this round.",
+        "Every new node must have a legal type, a non-empty name, and a description.",
+        "At least one new edge must connect a newly added node back to an existing node, preferably the seed node.",
+        "Do not reuse existing node ids or edge ids. If you are unsure, create stable ids prefixed with derive-node or derive-edge.",
+        "Coordinates are optional and should usually be omitted because the app will generate layout positions.",
+        "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{\"addNodes\":[...],\"addEdges\":[...]}}.",
+        "Patch must include only addNodes and addEdges. addNodes entries may include id, type, name, description. addEdges entries may include id, relation, source, target, description.",
+        "Edge endpoints must reference existing node ids or node ids introduced in the same patch.",
+        languageRule
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        currentDraft: input,
+        maxRounds,
+        roundIndex,
+        seedNode,
+        seedNodeId: normalizedSeedNodeId || seedNodeId
+      })
+    }
+  ];
+}
+
 function buildItemAssistMessages(
   input: ItemMaterialCreateInput,
   instruction: string,
@@ -2884,6 +3246,263 @@ function sanitizeSceneDraftPatch(value: unknown): SceneDraftPatch {
   }
 
   return patch;
+}
+
+export function sanitizeMapDraftPatch(value: unknown): MapDraftPatch {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const patch: MapDraftPatch = {};
+
+  if (typeof record.name === "string") {
+    patch.name = record.name.slice(0, 120);
+  }
+
+  if (typeof record.description === "string") {
+    patch.description = record.description.slice(0, 2000);
+  }
+
+  if (typeof record.style === "string" && isWorkspaceMaterialStyle(record.style)) {
+    patch.style = record.style;
+  }
+
+  if (Array.isArray(record.addNodes)) {
+    patch.addNodes = record.addNodes
+      .filter((node): node is Record<string, unknown> => Boolean(node) && typeof node === "object")
+      .map((node) => {
+        const name = typeof node.name === "string" ? node.name.trim().slice(0, 120) : "";
+        const entry: NonNullable<MapDraftPatch["addNodes"]>[number] = {
+          description: typeof node.description === "string" ? node.description.slice(0, 2000) : "",
+          name,
+          ...(typeof node.id === "string" && normalizeMapAssistId(node.id) ? { id: normalizeMapAssistId(node.id) } : {}),
+          type: typeof node.type === "string" && isMapNodeType(node.type) ? node.type : "landmark",
+          ...(typeof node.x === "number" && Number.isFinite(node.x) ? { x: node.x } : {}),
+          ...(typeof node.y === "number" && Number.isFinite(node.y) ? { y: node.y } : {})
+        };
+
+        return entry;
+      })
+      .filter((node) => node.name.trim())
+      .slice(0, 12);
+  }
+
+  if (Array.isArray(record.updateNodes)) {
+    patch.updateNodes = record.updateNodes
+      .filter((node): node is Record<string, unknown> => Boolean(node) && typeof node === "object")
+      .map((node) => {
+        const entry: NonNullable<MapDraftPatch["updateNodes"]>[number] = {
+          id: normalizeMapAssistId(node.id),
+          ...(typeof node.name === "string" && node.name.trim() ? { name: node.name.trim().slice(0, 120) } : {}),
+          ...(typeof node.description === "string" ? { description: node.description.slice(0, 2000) } : {}),
+          type: typeof node.type === "string" && isMapNodeType(node.type) ? node.type : "landmark",
+          ...(typeof node.x === "number" && Number.isFinite(node.x) ? { x: node.x } : {}),
+          ...(typeof node.y === "number" && Number.isFinite(node.y) ? { y: node.y } : {})
+        };
+
+        return entry;
+      })
+      .filter((node) => node.id)
+      .slice(0, 20);
+  }
+
+  if (Array.isArray(record.removeNodeIds)) {
+    patch.removeNodeIds = record.removeNodeIds
+      .filter((id): id is string => typeof id === "string")
+      .map((id) => normalizeMapAssistId(id))
+      .filter(Boolean)
+      .slice(0, 20);
+  }
+
+  if (Array.isArray(record.addEdges)) {
+    patch.addEdges = record.addEdges
+      .filter((edge): edge is Record<string, unknown> => Boolean(edge) && typeof edge === "object")
+      .map((edge) => {
+        const source = typeof edge.source === "string" ? normalizeMapAssistId(edge.source) : "";
+        const target = typeof edge.target === "string" ? normalizeMapAssistId(edge.target) : "";
+
+        return {
+          ...(typeof edge.id === "string" && normalizeMapAssistId(edge.id) ? { id: normalizeMapAssistId(edge.id) } : {}),
+          description: typeof edge.description === "string" ? edge.description.slice(0, 2000) : "",
+          relation: typeof edge.relation === "string" && isMapRelationType(edge.relation) ? edge.relation : "connects",
+          source,
+          target
+        };
+      })
+      .filter((edge) => edge.source && edge.target && edge.source !== edge.target)
+      .slice(0, 20);
+  }
+
+  if (Array.isArray(record.updateEdges)) {
+    patch.updateEdges = record.updateEdges
+      .filter((edge): edge is Record<string, unknown> => Boolean(edge) && typeof edge === "object")
+      .map((edge) => {
+        const entry: NonNullable<MapDraftPatch["updateEdges"]>[number] = {
+          id: normalizeMapAssistId(edge.id),
+          ...(typeof edge.relation === "string" && isMapRelationType(edge.relation) ? { relation: edge.relation } : {}),
+          ...(typeof edge.source === "string" && normalizeMapAssistId(edge.source) ? { source: normalizeMapAssistId(edge.source) } : {}),
+          ...(typeof edge.target === "string" && normalizeMapAssistId(edge.target) ? { target: normalizeMapAssistId(edge.target) } : {}),
+          ...(typeof edge.description === "string" ? { description: edge.description.slice(0, 2000) } : {})
+        };
+
+        return entry;
+      })
+      .filter((edge) => edge.id)
+      .slice(0, 20);
+  }
+
+  if (Array.isArray(record.removeEdgeIds)) {
+    patch.removeEdgeIds = record.removeEdgeIds
+      .filter((id): id is string => typeof id === "string")
+      .map((id) => normalizeMapAssistId(id))
+      .filter(Boolean)
+      .slice(0, 20);
+  }
+
+  return patch;
+}
+
+export function sanitizeMapDeriveRoundPatch(value: unknown, currentDraft: MapMaterialCreateInput): MapDraftPatch {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const existingNodeIds = new Set(currentDraft.nodes.map((node) => normalizeMapAssistId(node.id)).filter(Boolean));
+  const existingEdgeIds = new Set(currentDraft.edges.map((edge) => normalizeMapAssistId(edge.id)).filter(Boolean));
+  const usedNodeIds = new Set<string>();
+  const usedEdgeIds = new Set<string>();
+  const nodeIdRemap = new Map<string, string>();
+  const addNodes: NonNullable<MapDraftPatch["addNodes"]> = [];
+
+  if (Array.isArray(record.addNodes)) {
+    for (const node of record.addNodes) {
+      if (!node || typeof node !== "object") {
+        continue;
+      }
+
+      const nodeRecord = node as Record<string, unknown>;
+      const name = typeof nodeRecord.name === "string" ? nodeRecord.name.trim().slice(0, 120) : "";
+      const type = typeof nodeRecord.type === "string" && isMapNodeType(nodeRecord.type) ? nodeRecord.type : null;
+
+      if (!name || !type) {
+        continue;
+      }
+
+      const requestedId = normalizeMapAssistId(nodeRecord.id) || createMapDeriveId("map-node");
+      const id = getAvailableMapDeriveId(requestedId, existingNodeIds, usedNodeIds, "map-node");
+
+      if (requestedId && !nodeIdRemap.has(requestedId)) {
+        nodeIdRemap.set(requestedId, id);
+      }
+
+      addNodes.push({
+        id,
+        description: typeof nodeRecord.description === "string" ? nodeRecord.description.slice(0, 2000) : "",
+        name,
+        type
+      });
+
+      if (addNodes.length >= 12) {
+        break;
+      }
+    }
+  }
+
+  if (addNodes.length === 0 || !Array.isArray(record.addEdges)) {
+    return {};
+  }
+
+  const newNodeIds = new Set(addNodes.map((node) => node.id).filter((id): id is string => Boolean(id)));
+  const validNodeIds = new Set([...existingNodeIds, ...newNodeIds]);
+  const addEdges: NonNullable<MapDraftPatch["addEdges"]> = [];
+
+  for (const edge of record.addEdges) {
+    if (!edge || typeof edge !== "object") {
+      continue;
+    }
+
+    const edgeRecord = edge as Record<string, unknown>;
+    const relation = typeof edgeRecord.relation === "string" && isMapRelationType(edgeRecord.relation)
+      ? edgeRecord.relation
+      : null;
+    const sourceId = normalizeMapAssistId(edgeRecord.source);
+    const targetId = normalizeMapAssistId(edgeRecord.target);
+    const source = nodeIdRemap.get(sourceId) ?? sourceId;
+    const target = nodeIdRemap.get(targetId) ?? targetId;
+
+    if (!relation || !source || !target || source === target || !validNodeIds.has(source) || !validNodeIds.has(target)) {
+      continue;
+    }
+
+    const requestedId = normalizeMapAssistId(edgeRecord.id) || createMapDeriveId("map-edge");
+    const id = getAvailableMapDeriveId(requestedId, existingEdgeIds, usedEdgeIds, "map-edge");
+
+    addEdges.push({
+      id,
+      description: typeof edgeRecord.description === "string" ? edgeRecord.description.slice(0, 2000) : "",
+      relation,
+      source,
+      target
+    });
+
+    if (addEdges.length >= 20) {
+      break;
+    }
+  }
+
+  const hasOldNewConnection = addEdges.some((edge) =>
+    (existingNodeIds.has(edge.source) && newNodeIds.has(edge.target)) ||
+    (newNodeIds.has(edge.source) && existingNodeIds.has(edge.target))
+  );
+
+  if (addEdges.length === 0 || !hasOldNewConnection) {
+    return {};
+  }
+
+  return {
+    addNodes,
+    addEdges
+  };
+}
+
+function normalizeMapAssistId(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function createMapDeriveId(prefix: "map-node" | "map-edge") {
+  return `${prefix}-${randomUUID().slice(0, 8)}`;
+}
+
+function getAvailableMapDeriveId(requestedId: string, existingIds: Set<string>, usedIds: Set<string>, prefix: "map-node" | "map-edge") {
+  let id = normalizeMapAssistId(requestedId) || createMapDeriveId(prefix);
+
+  while (existingIds.has(id) || usedIds.has(id)) {
+    id = createMapDeriveId(prefix);
+  }
+
+  usedIds.add(id);
+
+  return id;
+}
+
+function normalizeMapDeriveRound(value: unknown, fallback: number) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(20, Math.max(1, Math.round(parsed)));
 }
 
 const maskBodyFieldIds: WorkspaceMaskBodyFieldId[] = [

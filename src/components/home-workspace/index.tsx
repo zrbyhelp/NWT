@@ -45,24 +45,27 @@ import {
   assistHomeMaskDraft,
   assistHomeItemDraft,
   assistHomeItemDraftWithImages,
+  assistHomeMapDraft,
   assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
   createHomeConversation,
   createHomeCreatureMaterial,
   createHomeItemMaterial,
+  createHomeMapMaterial,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
   deleteHomeMaterial,
   deleteHomeConversation,
+  deriveHomeMapGraphRound,
   generateHomeCreatureBoard,
   generateHomeItemBoard,
   generateHomeItemBoardWithImages,
   generateHomeItemModelInputImage,
   generateHomeMaskBoard,
   joinHomeMaterial,
-  setHomeMaterialCommunitySharing,
   updateHomeCreatureMaterial,
   updateHomeItemMaterial,
+  updateHomeMapMaterial,
   updateHomeMaskMaterial,
   updateHomeSceneMaterial,
   uploadHomeScenePanoramaFace,
@@ -73,6 +76,7 @@ import { HeaderActions } from "@/components/header-actions";
 import { UserAvatar } from "@/components/user-avatar";
 import { ItemCreateDialog } from "./item-dialog";
 import { CreatureCreateDialog } from "./creature-dialog";
+import { MapBasicInfoDialog, MapEdgeDialog, MapGraphDialog, MapNodeDialog } from "./map-dialog";
 import { MaskCreateDialog } from "./mask-dialog";
 import { MaterialDetailModal, MaterialExploreCard, ScriptExploreCard } from "./material-detail";
 import { SceneCreateDialog } from "./scene-dialog";
@@ -90,6 +94,14 @@ import { isAuthRequiredError, type AuthViewer } from "@/lib/auth-types";
 import type {
   WorkspaceConversation,
   WorkspaceData,
+  MapCreateDraft,
+  MapDraftPatch,
+  MapMaterialCreateInput,
+  WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialMetadata,
+  WorkspaceMapMaterialNode,
+  WorkspaceMapMaterialNodeType,
+  WorkspaceMapMaterialRelationType,
   WorkspaceMaterial,
   WorkspaceMaterialCategory,
   WorkspaceMaterialMetadata,
@@ -152,6 +164,7 @@ import {
   type CreatureTaxonomyFieldId,
   type CreatureVocalizationFieldId,
   type MaskAiMessage,
+  type MapAiMessage,
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource,
   type MaskBodyFieldId,
@@ -190,11 +203,15 @@ import {
   createDefaultCreatureDraft,
   createDefaultItemDraft,
   createDefaultMaskDraft,
+  createDefaultMapDraft,
   createDefaultSceneBlock,
   createDefaultSceneDraft,
   createInitialScenePanoramaGenerationDraft,
   createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
+  createMapDraftFromMaterial,
+  createMapEdge,
+  createMapNode,
   createMaskDraftFromMaterial,
   createPreviewUrl,
   createSceneDraftFromMaterial,
@@ -206,6 +223,7 @@ import {
   getItemModelInputFileForModel,
   getItemBoardFileForGeneration,
   getMaskBoardImageMode,
+  isValidGeneratedMaterialImage,
   isValidGeneratedScenePanoramaImage,
   isValidMaskBoardImage,
   isValidScenePanoramaFace,
@@ -224,10 +242,15 @@ import {
   revokeSceneFacePreview,
   revokeScenePanoramaMotherPreview,
   revokeSceneReferenceImagePreview,
+  buildMapMaterialFormData,
   serializeCreatureDraft,
   serializeItemDraft,
   serializeMaskDraft,
+  serializeMapDraft,
   serializeSceneTextDraft,
+  applyPatchToMapDraft,
+  validateMapDraftForGraphSave,
+  validateMapDraftForSave,
   uploadSceneDraftPanoramaFaces,
   validateSceneBlockGeneration,
   validateSceneDraftForSave
@@ -249,6 +272,9 @@ import {
   resolveMaskAiError,
   resolveMaskBoardError,
   resolveMaskSaveError,
+  resolveMapAiError,
+  resolveMapDeriveError,
+  resolveMapSaveError,
   resolveMaterialExportError,
   resolveMaterialImportError,
   resolveSceneAiError,
@@ -326,6 +352,26 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [scenePanoramaGenerationByBlock, setScenePanoramaGenerationByBlock] = useState<Record<string, ScenePanoramaGenerationDraft>>({});
   const [scenePanoramaMaxRedrawAttempts, setScenePanoramaMaxRedrawAttempts] = useState(defaultScenePanoramaMaxRedrawAttempts);
   const [sceneSavePending, setSceneSavePending] = useState(false);
+  const [mapCreateOpen, setMapCreateOpen] = useState(false);
+  const [mapGraphOpen, setMapGraphOpen] = useState(false);
+  const [mapEditingMaterialId, setMapEditingMaterialId] = useState("");
+  const [mapCreateDraft, setMapCreateDraft] = useState<MapCreateDraft>(() => createDefaultMapDraft());
+  const [mapAiInput, setMapAiInput] = useState("");
+  const [mapAiMessages, setMapAiMessages] = useState<MapAiMessage[]>([]);
+  const [mapAiPending, setMapAiPending] = useState(false);
+  const [mapDerivePending, setMapDerivePending] = useState(false);
+  const [mapDeriveMaxRounds, setMapDeriveMaxRounds] = useState(3);
+  const [mapDeriveRound, setMapDeriveRound] = useState(0);
+  const [mapDeriveStatus, setMapDeriveStatus] = useState("");
+  const [mapSelectedNodeId, setMapSelectedNodeId] = useState("");
+  const [mapSelectedEdgeId, setMapSelectedEdgeId] = useState("");
+  const [mapNodeDialogOpen, setMapNodeDialogOpen] = useState(false);
+  const [mapEdgeDialogOpen, setMapEdgeDialogOpen] = useState(false);
+  const [mapEditingNodeId, setMapEditingNodeId] = useState("");
+  const [mapEditingEdgeId, setMapEditingEdgeId] = useState("");
+  const [mapEdgeConnectSourceId, setMapEdgeConnectSourceId] = useState("");
+  const [mapEdgeConnectTargetId, setMapEdgeConnectTargetId] = useState("");
+  const [mapSavePending, setMapSavePending] = useState(false);
   const [materialTransferPending, setMaterialTransferPending] = useState(false);
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -338,6 +384,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const materialScrollRef = useRef<HTMLDivElement>(null);
   const materialSectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const optimisticIdRef = useRef(0);
+  const mapCreateDraftRef = useRef(mapCreateDraft);
+  const mapDeriveRunIdRef = useRef("");
   const pendingAuthActionRef = useRef<((viewer: AuthViewer) => void) | null>(null);
   const persistenceAvailable = data.persistenceAvailable;
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -414,11 +462,13 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const isCreatureActionPending = creatureAiPending || creatureBoardPending || creatureSavePending;
   const isItemActionPending = itemAiPending || itemBoardPending || itemModelInputPending || itemModelPending || itemSavePending;
   const isSceneActionPending = sceneAiPending || Boolean(scenePanoramaPendingBlockId) || sceneSavePending;
+  const isMapActionPending = mapAiPending || mapDerivePending || mapSavePending;
   const isMaterialTransferDisabled = materialTransferPending;
   const isEditingMask = Boolean(maskEditingMaterialId);
   const isEditingCreature = Boolean(creatureEditingMaterialId);
   const isEditingItem = Boolean(itemEditingMaterialId);
   const isEditingScene = Boolean(sceneEditingMaterialId);
+  const isEditingMap = Boolean(mapEditingMaterialId);
 
   function requestAuth(afterLogin?: (viewer: AuthViewer) => void) {
     pendingAuthActionRef.current = afterLogin ?? null;
@@ -456,6 +506,15 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       resetItemCreateDraft();
       setSceneCreateOpen(false);
       resetSceneCreateDraft();
+      setMapCreateOpen(false);
+      setMapGraphOpen(false);
+      setMapNodeDialogOpen(false);
+      setMapEdgeDialogOpen(false);
+      setMapEditingNodeId("");
+      setMapEditingEdgeId("");
+      resetMapCreateDraft();
+      resetMapAiState();
+      resetMapDeriveState();
     }
   }
 
@@ -578,6 +637,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [sceneCreateOpen]);
+
+  useEffect(() => {
+    mapCreateDraftRef.current = mapCreateDraft;
+  }, [mapCreateDraft]);
 
   useEffect(() => {
     function openAuthDialog() {
@@ -874,44 +937,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     });
   }
 
-  function handleToggleMaterialCommunitySharing(material: WorkspaceMaterial, shared: boolean, authenticatedViewer = viewer) {
-    if (material.librarySource !== "SELF_CREATED") {
-      return;
-    }
-
-    if (!authenticatedViewer) {
-      requestAuth((nextViewer) => handleToggleMaterialCommunitySharing(material, shared, nextViewer));
-      return;
-    }
-
-    if (!persistenceAvailable) {
-      toast.error(materialT("errors.persistence"));
-      return;
-    }
-
-    startTransition(async () => {
-      try {
-        const updatedMaterial = await setHomeMaterialCommunitySharing(material.id, shared, locale);
-
-        setMyMaterials((current) => upsertMaterialList(current, updatedMaterial));
-        setCommunityMaterials((current) =>
-          updatedMaterial.communityVisible
-            ? upsertMaterialList(current, updatedMaterial)
-            : current.filter((item) => item.id !== updatedMaterial.id)
-        );
-        toast.success(materialT(updatedMaterial.communityVisible ? "shareEnabledToast" : "shareDisabledToast"));
-        router.refresh();
-      } catch (error) {
-        if (isAuthRequiredError(error)) {
-          requestAuth((nextViewer) => handleToggleMaterialCommunitySharing(material, shared, nextViewer));
-          return;
-        }
-
-        toast.error(materialT("errors.share"));
-      }
-    });
-  }
-
   function handleSendMessage(authenticatedViewer = viewer) {
     if (!activeConversation || !draft.trim()) {
       return;
@@ -1088,6 +1113,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       setCreatureCreateOpen(false);
       setItemCreateOpen(false);
       setSceneCreateOpen(true);
+      return;
+    }
+
+    if (category === "map") {
+      openMapCreateDialog();
       return;
     }
 
@@ -1396,7 +1426,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       const result = await generateHomeMaskBoard(serializeMaskDraft(maskCreateDraft), locale);
       const file = await dataUrlToFile(result.dataUrl, result.fileName, result.contentType);
 
-      if (!isValidMaskBoardImage(file)) {
+      if (!isValidGeneratedMaterialImage(file)) {
         toast.error(materialT("maskForm.invalidBoardImage"));
         return;
       }
@@ -1445,7 +1475,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       formData.append("draft", JSON.stringify(serializeMaskDraft(maskCreateDraft)));
 
       if (maskCreateDraft.boardImageFile) {
-        if (!isValidMaskBoardImage(maskCreateDraft.boardImageFile)) {
+        if (!isValidMaskBoardImage(maskCreateDraft.boardImageFile, { allowOversize: maskCreateDraft.boardImageSource === "generated" })) {
           toast.error(materialT("maskForm.invalidBoardImage"));
           return;
         }
@@ -1463,7 +1493,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
       setMyMaterials((current) => upsertMaterialList(current, material));
       setCommunityMaterials((current) =>
-        isEditing && current.some((item) => item.id === material.id) ? upsertMaterialList(current, material) : current
+        material.communityVisible
+          ? upsertMaterialList(current, material)
+          : current.filter((item) => item.id !== material.id)
       );
       setMaterialStyle(material.style);
       toast.success(materialT(isEditing ? "maskForm.updateSuccess" : "maskForm.saveSuccess"));
@@ -1726,7 +1758,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       const result = await generateHomeCreatureBoard(serializeCreatureDraft(creatureCreateDraft), locale);
       const file = await dataUrlToFile(result.dataUrl, result.fileName, result.contentType);
 
-      if (!isValidMaskBoardImage(file)) {
+      if (!isValidGeneratedMaterialImage(file)) {
         toast.error(materialT("creatureForm.invalidBoardImage"));
         return;
       }
@@ -1775,7 +1807,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       formData.append("draft", JSON.stringify(serializeCreatureDraft(creatureCreateDraft)));
 
       if (creatureCreateDraft.boardImageFile) {
-        if (!isValidMaskBoardImage(creatureCreateDraft.boardImageFile)) {
+        if (!isValidMaskBoardImage(creatureCreateDraft.boardImageFile, { allowOversize: creatureCreateDraft.boardImageSource === "generated" })) {
           toast.error(materialT("creatureForm.invalidBoardImage"));
           return;
         }
@@ -1793,7 +1825,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
       setMyMaterials((current) => upsertMaterialList(current, material));
       setCommunityMaterials((current) =>
-        isEditing && current.some((item) => item.id === material.id) ? upsertMaterialList(current, material) : current
+        material.communityVisible
+          ? upsertMaterialList(current, material)
+          : current.filter((item) => item.id !== material.id)
       );
       setMaterialStyle(material.style);
       toast.success(materialT(isEditing ? "creatureForm.updateSuccess" : "creatureForm.saveSuccess"));
@@ -2136,7 +2170,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         : await generateHomeItemBoard(serializeItemDraft(itemCreateDraft), locale);
       const file = await dataUrlToFile(result.dataUrl, result.fileName, result.contentType);
 
-      if (!isValidMaskBoardImage(file)) {
+      if (!isValidGeneratedMaterialImage(file)) {
         toast.error(materialT("itemForm.invalidBoardImage"));
         return;
       }
@@ -2200,7 +2234,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
       const file = await dataUrlToFile(image.dataUrl, image.fileName, image.contentType);
 
-      if (!isValidMaskBoardImage(file)) {
+      if (!isValidGeneratedMaterialImage(file)) {
         throw new Error("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE");
       }
 
@@ -2262,6 +2296,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       const formData = new FormData();
 
       formData.append("modelInputImage", modelInputImage);
+      formData.append("modelInputImageSource", itemCreateDraft.modelInputImage?.source === "uploaded" ? "uploaded" : "generated");
       formData.append("scaleHint", itemCreateDraft.scaleHint);
       formData.append("extraParams", itemCreateDraft.modelExtraParams);
 
@@ -2359,7 +2394,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
       setMyMaterials((current) => upsertMaterialList(current, material));
       setCommunityMaterials((current) =>
-        isEditing && current.some((item) => item.id === material.id) ? upsertMaterialList(current, material) : current
+        material.communityVisible
+          ? upsertMaterialList(current, material)
+          : current.filter((item) => item.id !== material.id)
       );
       setMaterialStyle(material.style);
       toast.success(materialT(isEditing ? "itemForm.updateSuccess" : "itemForm.saveSuccess"));
@@ -2423,6 +2460,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     if (material.category === "scene") {
       openSceneEditDialog(material);
+      return;
+    }
+
+    if (material.category === "map") {
+      openMapBasicEditDialog(material);
     }
   }
 
@@ -3204,7 +3246,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
       setMyMaterials((current) => upsertMaterialList(current, material));
       setCommunityMaterials((current) =>
-        isEditing && current.some((item) => item.id === material.id) ? upsertMaterialList(current, material) : current
+        material.communityVisible
+          ? upsertMaterialList(current, material)
+          : current.filter((item) => item.id !== material.id)
       );
       setMaterialStyle(material.style);
       toast.success(materialT(isEditing ? "sceneForm.updateSuccess" : "sceneForm.saveSuccess"));
@@ -3227,6 +3271,682 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     } finally {
       setSceneSavePending(false);
     }
+  }
+
+  function closeMapNodeDialog() {
+    setMapNodeDialogOpen(false);
+    setMapEditingNodeId("");
+  }
+
+  function clearMapEdgeConnectState() {
+    setMapEdgeConnectSourceId("");
+    setMapEdgeConnectTargetId("");
+  }
+
+  function closeMapEdgeDialog() {
+    setMapEdgeDialogOpen(false);
+    setMapEditingEdgeId("");
+    clearMapEdgeConnectState();
+  }
+
+  function resetMapCreateDraft() {
+    const nextDraft = createDefaultMapDraft();
+
+    mapCreateDraftRef.current = nextDraft;
+    setMapCreateDraft(nextDraft);
+    setMapSelectedNodeId("");
+    setMapSelectedEdgeId("");
+    setMapEditingMaterialId("");
+  }
+
+  function resetMapAiState() {
+    setMapAiInput("");
+    setMapAiMessages([]);
+    setMapAiPending(false);
+  }
+
+  function resetMapDeriveState() {
+    mapDeriveRunIdRef.current = "";
+    setMapDerivePending(false);
+    setMapDeriveMaxRounds(3);
+    setMapDeriveRound(0);
+    setMapDeriveStatus("");
+  }
+
+  function closeMapCreateDialog() {
+    setMapCreateOpen(false);
+    closeMapNodeDialog();
+    closeMapEdgeDialog();
+    resetMapCreateDraft();
+    resetMapAiState();
+    resetMapDeriveState();
+  }
+
+  function closeMapGraphDialog() {
+    setMapGraphOpen(false);
+    closeMapNodeDialog();
+    closeMapEdgeDialog();
+    resetMapCreateDraft();
+    resetMapAiState();
+    resetMapDeriveState();
+  }
+
+  function openMapCreateDialog() {
+    setMaterialCreateMenuOpen(false);
+    setMaskCreateOpen(false);
+    setCreatureCreateOpen(false);
+    setItemCreateOpen(false);
+    setSceneCreateOpen(false);
+    setMapGraphOpen(false);
+    closeMapNodeDialog();
+    closeMapEdgeDialog();
+    resetMapCreateDraft();
+    resetMapAiState();
+    resetMapDeriveState();
+    setMapCreateOpen(true);
+  }
+
+  function openMapBasicEditDialog(material: WorkspaceMaterial) {
+    if (material.category !== "map" || material.librarySource !== "SELF_CREATED") {
+      return;
+    }
+
+    const nextDraft = createMapDraftFromMaterial(material);
+
+    setMaterialCreateMenuOpen(false);
+    mapCreateDraftRef.current = nextDraft;
+    setMapCreateDraft(nextDraft);
+    setMapSelectedNodeId("");
+    setMapSelectedEdgeId("");
+    setMapEditingMaterialId(material.id);
+    closeMapNodeDialog();
+    closeMapEdgeDialog();
+    resetMapAiState();
+    resetMapDeriveState();
+    setMapGraphOpen(false);
+    setMaskCreateOpen(false);
+    setCreatureCreateOpen(false);
+    setItemCreateOpen(false);
+    setSceneCreateOpen(false);
+    setMapCreateOpen(true);
+  }
+
+  function openMapBasicInfoFromGraphDialog() {
+    closeMapNodeDialog();
+    closeMapEdgeDialog();
+    setMapGraphOpen(false);
+    setMapCreateOpen(true);
+  }
+
+  function openMapGraphEditDialog(material: WorkspaceMaterial) {
+    if (material.category !== "map" || material.librarySource !== "SELF_CREATED") {
+      return;
+    }
+
+    const nextDraft = createMapDraftFromMaterial(material);
+
+    setMaterialCreateMenuOpen(false);
+    mapCreateDraftRef.current = nextDraft;
+    setMapCreateDraft(nextDraft);
+    setMapSelectedNodeId(nextDraft.nodes[0]?.id ?? "");
+    setMapSelectedEdgeId(nextDraft.edges[0]?.id ?? "");
+    setMapEditingMaterialId(material.id);
+    closeMapNodeDialog();
+    closeMapEdgeDialog();
+    resetMapAiState();
+    resetMapDeriveState();
+    setMapCreateOpen(false);
+    setMaskCreateOpen(false);
+    setCreatureCreateOpen(false);
+    setItemCreateOpen(false);
+    setSceneCreateOpen(false);
+    setMapGraphOpen(true);
+  }
+
+  function openMapNodeCreateDialog() {
+    if (mapDerivePending) {
+      return;
+    }
+
+    closeMapEdgeDialog();
+    setMapEditingNodeId("");
+    setMapNodeDialogOpen(true);
+  }
+
+  function openMapNodeEditDialog(nodeId: string) {
+    if (mapDerivePending) {
+      return;
+    }
+
+    setMapSelectedNodeId(nodeId);
+    setMapSelectedEdgeId("");
+    setMapEditingNodeId(nodeId);
+    closeMapEdgeDialog();
+    setMapNodeDialogOpen(true);
+  }
+
+  function startMapNodeConnect(nodeId: string) {
+    if (mapDerivePending || mapCreateDraft.nodes.length < 2 || !nodeId) {
+      return;
+    }
+
+    if (mapEdgeConnectSourceId === nodeId && !mapEdgeDialogOpen) {
+      clearMapEdgeConnectState();
+      return;
+    }
+
+    closeMapNodeDialog();
+    setMapEditingEdgeId("");
+    setMapSelectedNodeId(nodeId);
+    setMapSelectedEdgeId("");
+    setMapEdgeConnectSourceId(nodeId);
+    setMapEdgeConnectTargetId("");
+    setMapEdgeDialogOpen(false);
+  }
+
+  function openMapEdgeEditDialog(edgeId: string) {
+    if (mapDerivePending) {
+      return;
+    }
+
+    clearMapEdgeConnectState();
+    setMapSelectedEdgeId(edgeId);
+    setMapSelectedNodeId("");
+    setMapEditingEdgeId(edgeId);
+    closeMapNodeDialog();
+    setMapEdgeDialogOpen(true);
+  }
+
+  function selectMapNode(nodeId: string) {
+    if (mapDerivePending) {
+      return;
+    }
+
+    if (!nodeId) {
+      setMapSelectedNodeId("");
+      if (mapEdgeConnectSourceId) {
+        clearMapEdgeConnectState();
+      }
+      return;
+    }
+
+    if (mapEdgeConnectSourceId && nodeId !== mapEdgeConnectSourceId) {
+      setMapSelectedNodeId(nodeId);
+      setMapSelectedEdgeId("");
+      setMapEditingEdgeId("");
+      setMapEdgeConnectTargetId(nodeId);
+      setMapEdgeDialogOpen(true);
+      return;
+    }
+
+    setMapSelectedNodeId(nodeId);
+    setMapSelectedEdgeId("");
+  }
+
+  function selectMapEdge(edgeId: string) {
+    if (mapDerivePending) {
+      return;
+    }
+
+    setMapSelectedEdgeId(edgeId);
+
+    if (edgeId) {
+      clearMapEdgeConnectState();
+    }
+  }
+
+  function updateMapName(name: string) {
+    setMapCreateDraft((current) => ({ ...current, name }));
+  }
+
+  function updateMapDescription(description: string) {
+    setMapCreateDraft((current) => ({ ...current, description }));
+  }
+
+  function updateMapStyle(style: WorkspaceMaterialStyle) {
+    setMapCreateDraft((current) => ({ ...current, style }));
+  }
+
+  function updateMapCommunityVisible(checked: boolean) {
+    setMapCreateDraft((current) => ({ ...current, communityVisible: checked }));
+  }
+
+  async function sendMapAiMessage(authenticatedViewer = viewer) {
+    const instruction = mapAiInput.trim();
+
+    if (!instruction || mapAiPending || mapDerivePending) {
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void sendMapAiMessage(nextViewer);
+      });
+      return;
+    }
+
+    const snapshot = serializeMapDraft(mapCreateDraft);
+    setMapAiInput("");
+    setMapAiPending(true);
+    setMapAiMessages((current) => [
+      ...current,
+      { id: createClientId("map-ai-user"), role: "user", content: instruction }
+    ]);
+
+    try {
+      const result = await assistHomeMapDraft(snapshot, instruction, locale);
+
+      setMapCreateDraft((current) => applyPatchToMapDraft(current, result.patch));
+      setMapAiMessages((current) => [
+        ...current,
+        { id: createClientId("map-ai-assistant"), role: "assistant", content: result.message }
+      ]);
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void sendMapAiMessage(nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveMapAiError(error, materialT));
+      setMapAiInput(instruction);
+    } finally {
+      setMapAiPending(false);
+    }
+  }
+
+  function normalizeMapDeriveMaxRounds(value: number) {
+    if (!Number.isFinite(value)) {
+      return 3;
+    }
+
+    return Math.min(20, Math.max(1, Math.round(value)));
+  }
+
+  function stopMapDerive() {
+    if (!mapDeriveRunIdRef.current) {
+      return;
+    }
+
+    mapDeriveRunIdRef.current = "";
+    setMapDerivePending(false);
+    setMapDeriveRound(0);
+    setMapDeriveStatus(materialT("mapForm.deriveStopped"));
+    setMapAiMessages((current) => [
+      ...current,
+      {
+        id: createClientId("map-ai-assistant"),
+        role: "assistant",
+        content: materialT("mapForm.deriveStopped")
+      }
+    ]);
+    toast.info(materialT("mapForm.deriveStopped"));
+  }
+
+  async function startMapDerive(authenticatedViewer = viewer) {
+    if (mapDerivePending || mapDeriveRunIdRef.current) {
+      return;
+    }
+
+    const maxRounds = normalizeMapDeriveMaxRounds(mapDeriveMaxRounds);
+    const initialDraft = mapCreateDraftRef.current;
+
+    setMapDeriveMaxRounds(maxRounds);
+
+    if (initialDraft.nodes.length === 0) {
+      toast.error(materialT("mapForm.deriveNodeRequired"));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void startMapDerive(nextViewer);
+      });
+      return;
+    }
+
+    const runId = createClientId("map-derive-run");
+
+    mapDeriveRunIdRef.current = runId;
+    setMapDerivePending(true);
+    setMapDeriveRound(0);
+    setMapDeriveStatus(materialT("mapForm.deriveStarting", { rounds: maxRounds }));
+    setMapAiMessages((current) => [
+      ...current,
+      {
+        id: createClientId("map-ai-user"),
+        role: "user",
+        content: materialT("mapForm.deriveStartMessage", { rounds: maxRounds })
+      }
+    ]);
+
+    for (let roundIndex = 1; roundIndex <= maxRounds; roundIndex += 1) {
+      if (mapDeriveRunIdRef.current !== runId) {
+        return;
+      }
+
+      const snapshot = serializeMapDraft(mapCreateDraftRef.current);
+      const seedNode = snapshot.nodes[Math.floor(Math.random() * snapshot.nodes.length)] ?? snapshot.nodes[0] ?? null;
+
+      if (!seedNode) {
+        mapDeriveRunIdRef.current = "";
+        setMapDerivePending(false);
+        setMapDeriveRound(0);
+        setMapDeriveStatus(materialT("mapForm.deriveNodeRequired"));
+        toast.error(materialT("mapForm.deriveNodeRequired"));
+        return;
+      }
+
+      const seedName = seedNode.name || materialT("mapForm.nodeUntitled");
+
+      setMapDeriveRound(roundIndex);
+      setMapDeriveStatus(materialT("mapForm.deriveProgress", {
+        maxRounds,
+        round: roundIndex,
+        seed: seedName
+      }));
+
+      try {
+        const result = await deriveHomeMapGraphRound(snapshot, seedNode.id, roundIndex, maxRounds, locale);
+
+        if (mapDeriveRunIdRef.current !== runId) {
+          return;
+        }
+
+        const nextDraft = applyPatchToMapDraft(mapCreateDraftRef.current, result.patch);
+        const firstNewNodeId = result.patch.addNodes?.[0]?.id ?? "";
+
+        mapCreateDraftRef.current = nextDraft;
+        setMapCreateDraft(nextDraft);
+        setMapSelectedNodeId(firstNewNodeId || seedNode.id);
+        setMapSelectedEdgeId("");
+        setMapAiMessages((current) => [
+          ...current,
+          {
+            id: createClientId("map-ai-assistant"),
+            role: "assistant",
+            content: materialT("mapForm.deriveRoundMessage", {
+              maxRounds,
+              message: result.message || materialT("mapForm.deriveRoundFallback"),
+              round: roundIndex,
+              seed: seedName
+            })
+          }
+        ]);
+      } catch (error) {
+        if (mapDeriveRunIdRef.current !== runId) {
+          return;
+        }
+
+        if (isAuthRequiredError(error)) {
+          mapDeriveRunIdRef.current = "";
+          setMapDerivePending(false);
+          setMapDeriveRound(0);
+          requestAuth((nextViewer) => {
+            setViewer(nextViewer);
+            void startMapDerive(nextViewer);
+          });
+          return;
+        }
+
+        mapDeriveRunIdRef.current = "";
+        setMapDerivePending(false);
+        setMapDeriveRound(0);
+        setMapDeriveStatus(resolveMapDeriveError(error, materialT));
+        toast.error(resolveMapDeriveError(error, materialT));
+        return;
+      }
+    }
+
+    if (mapDeriveRunIdRef.current === runId) {
+      mapDeriveRunIdRef.current = "";
+      setMapDerivePending(false);
+      setMapDeriveRound(0);
+      setMapDeriveStatus(materialT("mapForm.deriveComplete", { rounds: maxRounds }));
+      toast.success(materialT("mapForm.deriveComplete", { rounds: maxRounds }));
+    }
+  }
+
+  function updateMapNode(
+    nodeId: string,
+    patch: Partial<Pick<WorkspaceMapMaterialNode, "description" | "name" | "type" | "x" | "y">>
+  ) {
+    setMapCreateDraft((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              ...(typeof patch.type === "string" ? { type: patch.type as WorkspaceMapMaterialNodeType } : {}),
+              ...(typeof patch.name === "string" ? { name: patch.name } : {}),
+              ...(typeof patch.description === "string" ? { description: patch.description } : {}),
+              ...(typeof patch.x === "number" && Number.isFinite(patch.x) ? { x: patch.x } : {}),
+              ...(typeof patch.y === "number" && Number.isFinite(patch.y) ? { y: patch.y } : {})
+            }
+          : node
+      )
+    }));
+  }
+
+  function updateMapEdge(
+    edgeId: string,
+    patch: Partial<Pick<WorkspaceMapMaterialEdge, "description" | "relation" | "source" | "target">>
+  ) {
+    setMapCreateDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) =>
+        edge.id === edgeId
+          ? {
+              ...edge,
+              ...(typeof patch.relation === "string" ? { relation: patch.relation as WorkspaceMapMaterialRelationType } : {}),
+              ...(typeof patch.source === "string" ? { source: patch.source } : {}),
+              ...(typeof patch.target === "string" ? { target: patch.target } : {}),
+              ...(typeof patch.description === "string" ? { description: patch.description } : {})
+            }
+          : edge
+      )
+    }));
+  }
+
+  function saveMapNode(value: {
+    type: WorkspaceMapMaterialNodeType;
+    name: string;
+    description: string;
+  }) {
+    if (mapEditingNodeId) {
+      updateMapNode(mapEditingNodeId, value);
+      setMapSelectedNodeId(mapEditingNodeId);
+      setMapSelectedEdgeId("");
+      closeMapNodeDialog();
+      return;
+    }
+
+    const node = createMapNode(value.type, mapCreateDraft.nodes.length, {
+      name: value.name,
+      description: value.description
+    });
+
+    setMapCreateDraft((current) => ({
+      ...current,
+      nodes: [...current.nodes, node]
+    }));
+    setMapSelectedNodeId(node.id);
+    setMapSelectedEdgeId("");
+    closeMapNodeDialog();
+  }
+
+  function saveMapEdge(value: {
+    relation: WorkspaceMapMaterialRelationType;
+    source: string;
+    target: string;
+    description: string;
+  }) {
+    if (mapEditingEdgeId) {
+      updateMapEdge(mapEditingEdgeId, value);
+      setMapSelectedEdgeId(mapEditingEdgeId);
+      setMapSelectedNodeId("");
+      closeMapEdgeDialog();
+      return;
+    }
+
+    if (!value.source || !value.target || value.source === value.target) {
+      return;
+    }
+
+    const edge = createMapEdge(value.source, value.target, value.relation, {
+      description: value.description
+    });
+
+    setMapCreateDraft((current) => ({
+      ...current,
+      edges: [...current.edges, edge]
+    }));
+    setMapSelectedEdgeId(edge.id);
+    setMapSelectedNodeId("");
+    closeMapEdgeDialog();
+  }
+
+  function removeMapNode(nodeId: string) {
+    let nextSelectedNodeId = mapSelectedNodeId;
+    let nextSelectedEdgeId = mapSelectedEdgeId;
+
+    setMapCreateDraft((current) => {
+      const nextNodes = current.nodes.filter((node) => node.id !== nodeId);
+      const nextEdges = current.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
+
+      if (nextSelectedNodeId === nodeId || !nextNodes.some((node) => node.id === nextSelectedNodeId)) {
+        nextSelectedNodeId = nextNodes[0]?.id ?? "";
+      }
+
+      if (nextSelectedEdgeId && !nextEdges.some((edge) => edge.id === nextSelectedEdgeId)) {
+        nextSelectedEdgeId = nextEdges[0]?.id ?? "";
+      }
+
+      return {
+        ...current,
+        nodes: nextNodes,
+        edges: nextEdges
+      };
+    });
+
+    setMapSelectedNodeId(nextSelectedNodeId);
+    setMapSelectedEdgeId(nextSelectedEdgeId);
+
+    if (mapEditingNodeId === nodeId) {
+      closeMapNodeDialog();
+    }
+  }
+
+  function removeMapEdge(edgeId: string) {
+    let nextSelectedEdgeId = mapSelectedEdgeId;
+
+    setMapCreateDraft((current) => {
+      const nextEdges = current.edges.filter((edge) => edge.id !== edgeId);
+
+      if (nextSelectedEdgeId === edgeId || !nextEdges.some((edge) => edge.id === nextSelectedEdgeId)) {
+        nextSelectedEdgeId = nextEdges[0]?.id ?? "";
+      }
+
+      return {
+        ...current,
+        edges: nextEdges
+      };
+    });
+
+    setMapSelectedEdgeId(nextSelectedEdgeId);
+
+    if (mapEditingEdgeId === edgeId) {
+      closeMapEdgeDialog();
+    }
+  }
+
+  function moveMapNode(nodeId: string, x: number, y: number) {
+    setMapCreateDraft((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => (node.id === nodeId ? { ...node, x, y } : node))
+    }));
+  }
+
+  async function submitMapDraft(mode: "basic" | "graph", authenticatedViewer = viewer) {
+    const validationError =
+      mode === "basic" ? validateMapDraftForSave(mapCreateDraft) : validateMapDraftForGraphSave(mapCreateDraft);
+
+    if (validationError) {
+      toast.error(materialT(validationError));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void submitMapDraft(mode, nextViewer);
+      });
+      return;
+    }
+
+    if (!persistenceAvailable) {
+      toast.error(materialT("mapForm.persistenceUnavailable"));
+      return;
+    }
+
+    setMapSavePending(true);
+
+    try {
+      const isEditing = Boolean(mapEditingMaterialId);
+      const formData = buildMapMaterialFormData(mapCreateDraft);
+      const material = isEditing
+        ? await updateHomeMapMaterial(mapEditingMaterialId, formData, locale)
+        : await createHomeMapMaterial(formData, locale);
+
+      setMyMaterials((current) => upsertMaterialList(current, material));
+      setCommunityMaterials((current) =>
+        material.communityVisible
+          ? upsertMaterialList(current, material)
+          : current.filter((item) => item.id !== material.id)
+      );
+      setMaterialStyle(material.style);
+      toast.success(materialT(isEditing ? "mapForm.updateSuccess" : "mapForm.saveSuccess"));
+      router.refresh();
+
+      if (mode === "basic" && !isEditing) {
+        const shouldOpenGraph = window.confirm(materialT("mapForm.openGraphAfterSave"));
+
+        if (shouldOpenGraph) {
+          openMapGraphEditDialog(material);
+          return;
+        }
+      }
+
+      if (mode === "graph") {
+        closeMapGraphDialog();
+      } else {
+        closeMapCreateDialog();
+      }
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void submitMapDraft(mode, nextViewer);
+        });
+        return;
+      }
+
+      toast.error(resolveMapSaveError(error, materialT, Boolean(mapEditingMaterialId)));
+    } finally {
+      setMapSavePending(false);
+    }
+  }
+
+  function submitMapBasicDraft(authenticatedViewer = viewer) {
+    return submitMapDraft("basic", authenticatedViewer);
+  }
+
+  function submitMapGraphDraft(authenticatedViewer = viewer) {
+    return submitMapDraft("graph", authenticatedViewer);
   }
 
   function showPreviousScriptPage() {
@@ -3440,6 +4160,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
               !isCommunityMaterialView &&
               detailMaterial.librarySource === "SELF_CREATED" &&
               (detailMaterial.category === "mask" ||
+                detailMaterial.category === "map" ||
                 detailMaterial.category === "creature" ||
                 detailMaterial.category === "item" ||
                 detailMaterial.category === "scene")
@@ -3448,6 +4169,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             canShare={!isCommunityMaterialView && detailMaterial.librarySource === "SELF_CREATED"}
             closeLabel={materialT("close")}
             deleteLabel={materialT("delete")}
+            editGraphLabel={materialT("mapForm.editGraph")}
             editLabel={materialT("edit")}
             exportLabel={materialT("export")}
             isCommunityView={isCommunityMaterialView}
@@ -3472,10 +4194,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             t={materialT}
             onClose={() => setDetailMaterialId("")}
             onDelete={handleDeleteMaterial}
+            onEditGraph={openMapGraphEditDialog}
             onEdit={openMaterialEditDialog}
             onExport={(material) => void exportMaterialArchive(material.id)}
             onJoin={handleJoinMaterial}
-            onToggleShare={handleToggleMaterialCommunitySharing}
           />
         ) : null}
         {maskCreateOpen ? (
@@ -3498,6 +4220,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onChangeVoiceField={updateMaskVoiceField}
             onClearBoardImage={clearMaskBoardImage}
             onChangeBoardDrawingStyle={updateMaskBoardDrawingStyle}
+            onChangeCommunityVisible={(checked) => setMaskCreateDraft((current) => ({ ...current, communityVisible: checked }))}
             onGenerateBoard={() => void generateMaskBoard()}
             onSelectBoardImage={selectMaskBoardImage}
             onSendAiMessage={() => void sendMaskAiMessage()}
@@ -3521,6 +4244,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onChangeBehaviorField={updateCreatureBehaviorField}
             onChangeBehaviorLogic={updateCreatureBehaviorLogic}
             onChangeBoardDrawingStyle={updateCreatureBoardDrawingStyle}
+            onChangeCommunityVisible={(checked) => setCreatureCreateDraft((current) => ({ ...current, communityVisible: checked }))}
             onChangeColorField={updateCreatureColorField}
             onChangeDescription={updateCreatureDescription}
             onChangeEcologyField={updateCreatureEcologyField}
@@ -3560,6 +4284,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onAddBoardReferenceImages={addItemBoardReferenceImages}
             onChangeAiInput={setItemAiInput}
             onChangeBoardDrawingStyle={updateItemBoardDrawingStyle}
+            onChangeCommunityVisible={(checked) => setItemCreateDraft((current) => ({ ...current, communityVisible: checked }))}
             onChangeField={updateItemField}
             onChangeModelExtraParams={(value) => setItemCreateDraft((current) => ({ ...current, modelExtraParams: value }))}
             onChangeStyle={updateItemStyle}
@@ -3575,6 +4300,97 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onSelectModelInputImage={selectItemModelInputImage}
             onSendAiMessage={() => void sendItemAiMessage()}
             onSubmit={submitItemCreateDraft}
+            t={materialT}
+          />
+        ) : null}
+        {mapCreateOpen ? (
+          <MapBasicInfoDialog
+            aiInput={mapAiInput}
+            aiMessages={mapAiMessages}
+            aiPending={mapAiPending}
+            description={materialT(isEditingMap ? "mapForm.editDescription" : "mapForm.description")}
+            draft={mapCreateDraft}
+            isPending={isPending || isMapActionPending}
+            saveLabel={materialT(isEditingMap ? "mapForm.saveBasicInfo" : "saveMap")}
+            title={materialT(isEditingMap ? "mapForm.editTitle" : "mapForm.title")}
+            onCancel={closeMapCreateDialog}
+            onChangeAiInput={setMapAiInput}
+            onChangeCommunityVisible={updateMapCommunityVisible}
+            onChangeDescription={updateMapDescription}
+            onChangeName={updateMapName}
+            onChangeStyle={updateMapStyle}
+            onSendAiMessage={() => void sendMapAiMessage()}
+            onSubmit={submitMapBasicDraft}
+            t={materialT}
+          />
+        ) : null}
+        {mapGraphOpen ? (
+          <MapGraphDialog
+            aiInput={mapAiInput}
+            aiMessages={mapAiMessages}
+            aiPending={mapAiPending || mapDerivePending}
+            description={materialT("mapForm.graphDescription")}
+            connectSourceNodeId={mapEdgeConnectSourceId}
+            draft={mapCreateDraft}
+            deriveMaxRounds={mapDeriveMaxRounds}
+            derivePending={mapDerivePending}
+            deriveRound={mapDeriveRound}
+            deriveStatus={mapDeriveStatus}
+            isPending={isPending || isMapActionPending}
+            saveLabel={materialT("mapForm.saveGraph")}
+            selectedEdgeId={mapSelectedEdgeId}
+            selectedNodeId={mapSelectedNodeId}
+            title={materialT("mapForm.graphTitle")}
+            onAddNode={openMapNodeCreateDialog}
+            onCancel={closeMapGraphDialog}
+            onChangeAiInput={setMapAiInput}
+            onChangeDeriveMaxRounds={(value) => setMapDeriveMaxRounds(value)}
+            onConnectNode={startMapNodeConnect}
+            onEditEdge={openMapEdgeEditDialog}
+            onEditBasicInfo={openMapBasicInfoFromGraphDialog}
+            onEditNode={openMapNodeEditDialog}
+            onMoveNode={moveMapNode}
+            onRemoveEdge={removeMapEdge}
+            onRemoveNode={removeMapNode}
+            onSelectEdge={selectMapEdge}
+            onSelectNode={selectMapNode}
+            onSendAiMessage={() => void sendMapAiMessage()}
+            onStartDerive={() => void startMapDerive()}
+            onStopDerive={stopMapDerive}
+            onSubmit={submitMapGraphDraft}
+            t={materialT}
+          />
+        ) : null}
+        {mapNodeDialogOpen ? (
+          <MapNodeDialog
+            key={mapEditingNodeId || "map-node-create"}
+            draft={mapCreateDraft}
+            editingNodeId={mapEditingNodeId}
+            description={materialT(mapEditingNodeId ? "mapForm.editNodeDescription" : "mapForm.addNodeDescription")}
+            isPending={isPending || isMapActionPending}
+            saveLabel={materialT(mapEditingNodeId ? "mapForm.saveNode" : "mapForm.createNode")}
+            title={materialT(mapEditingNodeId ? "mapForm.editNodeTitle" : "mapForm.addNodeTitle")}
+            onCancel={closeMapNodeDialog}
+            onRemove={removeMapNode}
+            onSave={saveMapNode}
+            t={materialT}
+          />
+        ) : null}
+        {mapEdgeDialogOpen ? (
+          <MapEdgeDialog
+            key={mapEditingEdgeId || "map-edge-create"}
+            draft={mapCreateDraft}
+            editingEdgeId={mapEditingEdgeId}
+            description={materialT(mapEditingEdgeId ? "mapForm.editEdgeDescription" : "mapForm.addEdgeDescription")}
+            initialSourceNodeId={mapEdgeConnectSourceId}
+            initialTargetNodeId={mapEdgeConnectTargetId}
+            isPending={isPending || isMapActionPending}
+            saveLabel={materialT(mapEditingEdgeId ? "mapForm.saveEdge" : "mapForm.createEdge")}
+            selectedNodeId={mapSelectedNodeId}
+            title={materialT(mapEditingEdgeId ? "mapForm.editEdgeTitle" : "mapForm.addEdgeTitle")}
+            onCancel={closeMapEdgeDialog}
+            onRemove={removeMapEdge}
+            onSave={saveMapEdge}
             t={materialT}
           />
         ) : null}
@@ -3601,6 +4417,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onChangeAiInput={setSceneAiInput}
             onChangeBlock={updateSceneBlock}
             onChangeDescription={updateSceneDescription}
+            onChangeCommunityVisible={(checked) => setSceneCreateDraft((current) => ({ ...current, communityVisible: checked }))}
             onChangeName={updateSceneName}
             onChangePanoramaMaxRedrawAttempts={updateScenePanoramaMaxRedrawAttempts}
             onChangePanoramaDrawingStyle={updateScenePanoramaDrawingStyle}

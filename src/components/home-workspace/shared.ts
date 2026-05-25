@@ -22,11 +22,19 @@ import type {
   CreatureDraftPatch,
   CreatureMaterialCreateInput,
   WorkspaceCreatureMaterialMetadata,
+  MapCreateDraft,
+  MapDraftPatch,
+  MapMaterialCreateInput,
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceConversation,
   WorkspaceData,
   WorkspaceItemMaterialMetadata,
+  WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialMetadata,
+  WorkspaceMapMaterialNode,
+  WorkspaceMapMaterialNodeType,
+  WorkspaceMapMaterialRelationType,
   WorkspaceMaterial,
   WorkspaceMaterialCategory,
   WorkspaceMaterialMetadata,
@@ -41,11 +49,19 @@ export type {
   CreatureDraftPatch,
   CreatureMaterialCreateInput,
   WorkspaceCreatureMaterialMetadata,
+  MapCreateDraft,
+  MapDraftPatch,
+  MapMaterialCreateInput,
   SceneDraftPatch,
   SceneMaterialCreateInput,
   WorkspaceConversation,
   WorkspaceData,
   WorkspaceItemMaterialMetadata,
+  WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialMetadata,
+  WorkspaceMapMaterialNode,
+  WorkspaceMapMaterialNodeType,
+  WorkspaceMapMaterialRelationType,
   WorkspaceMaterial,
   WorkspaceMaterialCategory,
   WorkspaceMaterialMetadata,
@@ -405,6 +421,7 @@ export type MaskCreateDraft = {
   name: string;
   intro: string;
   features: string;
+  communityVisible: boolean;
   style: WorkspaceMaterialStyle;
   body: Record<MaskBodyFieldId, string>;
   colors: Record<MaskColorFieldId, string>;
@@ -422,6 +439,11 @@ export type MaskAiMessage = {
   role: "user" | "assistant";
   content: string;
 };
+export type MapAiMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
 export type MaskDraftPatch = {
   name?: string;
   intro?: string;
@@ -435,6 +457,7 @@ export type MaskDraftPatch = {
 export type CreatureCreateDraft = {
   name: string;
   description: string;
+  communityVisible: boolean;
   style: WorkspaceMaterialStyle;
   taxonomy: Record<CreatureTaxonomyFieldId, string>;
   morphology: Record<CreatureMorphologyFieldId, string>;
@@ -472,6 +495,7 @@ export type ItemCreateDraft = {
   name: string;
   itemCategory: string;
   description: string;
+  communityVisible: boolean;
   traits: string[];
   uses: string[];
   functions: string[];
@@ -541,6 +565,7 @@ export type SceneBlockDraft = {
 export type SceneCreateDraft = {
   name: string;
   description: string;
+  communityVisible: boolean;
   style: WorkspaceMaterialStyle;
   panoramaDrawingStyle: ScenePanoramaDrawingStyle;
   blocks: SceneBlockDraft[];

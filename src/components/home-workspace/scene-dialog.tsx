@@ -85,6 +85,7 @@ import {
 import { getCompleteScenePanoramaFaceUrls, getScenePanoramaGenerationFaceUrls, isCompleteScenePanoramaFaceUrls } from "./drafts";
 import { ReferenceImageStrip } from "./reference-image-strip";
 import { SceneEquirectangularPanoramaPreviewDialog, SceneEquirectangularPanoramaViewer, ScenePanoramaPreviewDialog, ScenePanoramaViewer } from "./viewers";
+import { MaterialVisibilityField } from "./form-fields";
 
 export { SceneCreateDialog };
 
@@ -110,6 +111,7 @@ function SceneCreateDialog({
   onChangeAiInput,
   onChangeBlock,
   onChangeDescription,
+  onChangeCommunityVisible,
   onChangeName,
   onChangePanoramaMaxRedrawAttempts,
   onChangePanoramaDrawingStyle,
@@ -146,6 +148,7 @@ function SceneCreateDialog({
   onChangeAiInput: (value: string) => void;
   onChangeBlock: (blockId: string, patch: Partial<Pick<SceneBlockDraft, "name" | "description" | "scalePreset">>) => void;
   onChangeDescription: (value: string) => void;
+  onChangeCommunityVisible: (checked: boolean) => void;
   onChangeName: (value: string) => void;
   onChangePanoramaMaxRedrawAttempts: (value: number) => void;
   onChangePanoramaDrawingStyle: (style: ScenePanoramaDrawingStyle) => void;
@@ -242,6 +245,16 @@ function SceneCreateDialog({
                   />
                 </label>
               </section>
+
+              <MaterialVisibilityField
+                checked={draft.communityVisible}
+                description={t("shareHint")}
+                disabled={isPending}
+                disabledLabel={t("shareDisabled")}
+                enabledLabel={t("shareEnabled")}
+                label={t("shareToCommunity")}
+                onChange={onChangeCommunityVisible}
+              />
 
               <section className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">

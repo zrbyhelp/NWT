@@ -51,12 +51,13 @@ export async function POST(request: NextRequest) {
 
 async function prepareInstantMeshImage(formData: FormData): Promise<InstantMeshInputImage> {
   const file = formData.get("modelInputImage");
+  const source = formData.get("modelInputImageSource");
 
   if (!(file instanceof File) || file.size <= 0) {
     throw new Error("ITEM_MODEL_INPUT_IMAGE_REQUIRED");
   }
 
-  if (!isValidMaterialImageFile(file)) {
+  if (!isValidMaterialImageFile(file, { allowOversize: source === "generated" })) {
     throw new Error("INVALID_ITEM_MODEL_INPUT_IMAGE_FILE");
   }
 

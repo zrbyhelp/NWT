@@ -182,6 +182,16 @@ export function getSceneMetadataRecord(metadata: unknown) {
   return record.kind === "scene" ? record : null;
 }
 
+export function getMapMetadataRecord(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+
+  const record = metadata as Record<string, unknown>;
+
+  return record.kind === "map" ? record : null;
+}
+
 export function getItemMetadataRecord(metadata: unknown) {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return null;

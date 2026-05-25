@@ -270,7 +270,7 @@ export async function importMaterialsZip(bytes: ArrayBuffer | Uint8Array, locale
           descriptionEn,
           previewUrl: prepared.previewUrl,
           metadata: prepared.metadata === null ? undefined : prepared.metadata as Prisma.InputJsonValue,
-          communityVisible: false,
+          communityVisible: true,
           libraryEntries: {
             create: {
               userId: viewer.id,
@@ -355,7 +355,10 @@ function mapMaterial(
     description: isEnglish ? material.descriptionEn : material.descriptionZh,
     previewUrl: material.previewUrl ?? null,
     metadata: (material.metadata as WorkspaceMaterialMetadata | null | undefined) ?? null,
-    communityVisible: material.communityVisible ?? true,
+    communityVisible:
+      typeof material.communityVisible === "boolean"
+        ? material.communityVisible
+        : true,
     inLibrary: library.inLibrary ?? false,
     ...(librarySource ? { librarySource } : {})
   };

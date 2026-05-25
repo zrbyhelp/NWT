@@ -6,23 +6,26 @@ import {
   assistHomeCreatureDraft,
   assistHomeItemDraft,
   assistHomeItemDraftWithImages,
+  assistHomeMapDraft,
   assistHomeMaskDraft,
   assistHomeSceneDraftWithImages,
   cleanupHomeUploadedMaterialImages,
   createHomeCreatureMaterial,
   createHomeItemMaterial,
+  createHomeMapMaterial,
   createHomeMaskMaterial,
   createHomeSceneMaterial,
   deleteHomeMaterial,
+  deriveHomeMapGraphRound,
   generateHomeCreatureBoard,
   generateHomeItemBoard,
   generateHomeItemBoardWithImages,
   generateHomeItemModelInputImage,
   generateHomeMaskBoard,
   joinHomeMaterial,
-  setHomeMaterialCommunitySharing,
   updateHomeCreatureMaterial,
   updateHomeItemMaterial,
+  updateHomeMapMaterial,
   updateHomeMaskMaterial,
   uploadHomeScenePanoramaFace,
   uploadHomeScenePanoramaMother
@@ -31,6 +34,8 @@ import {
   HomeWorkspace,
   clampScenePanoramaView
 } from "@/components/home-workspace";
+import { MapGraphEditor } from "@/components/home-workspace/map-graph-editor";
+import { buildItemMaterialFormData, createDefaultItemDraft } from "@/components/home-workspace/drafts";
 import type { WorkspaceConversation, WorkspaceData, WorkspaceMaterial, WorkspaceScript } from "@/lib/home-workspace";
 
 vi.mock("next-intl", () => ({
@@ -62,6 +67,7 @@ vi.mock("@/app/[locale]/actions", () => ({
   assistHomeCreatureDraft: vi.fn(),
   assistHomeItemDraft: vi.fn(),
   assistHomeItemDraftWithImages: vi.fn(),
+  assistHomeMapDraft: vi.fn(),
   assistHomeMaskDraft: vi.fn(),
   assistHomeSceneDraft: vi.fn(),
   assistHomeSceneDraftWithImages: vi.fn(),
@@ -69,10 +75,12 @@ vi.mock("@/app/[locale]/actions", () => ({
   createHomeCreatureMaterial: vi.fn(),
   createHomeConversation: vi.fn(),
   createHomeItemMaterial: vi.fn(),
+  createHomeMapMaterial: vi.fn(),
   createHomeMaskMaterial: vi.fn(),
   createHomeSceneMaterial: vi.fn(),
   deleteHomeConversation: vi.fn(),
   deleteHomeMaterial: vi.fn(),
+  deriveHomeMapGraphRound: vi.fn(),
   generateHomeCreatureBoard: vi.fn(),
   generateHomeItemBoard: vi.fn(),
   generateHomeItemBoardWithImages: vi.fn(),
@@ -83,9 +91,9 @@ vi.mock("@/app/[locale]/actions", () => ({
   loginHomeAccount: vi.fn(),
   logoutHomeAccount: vi.fn(),
   registerHomeAccount: vi.fn(),
-  setHomeMaterialCommunitySharing: vi.fn(),
   updateHomeCreatureMaterial: vi.fn(),
   updateHomeItemMaterial: vi.fn(),
+  updateHomeMapMaterial: vi.fn(),
   updateHomeMaskMaterial: vi.fn(),
   updateHomeSceneMaterial: vi.fn(),
   uploadHomeScenePanoramaFace: vi.fn(),
@@ -141,6 +149,57 @@ describe("HomeWorkspace script manager", () => {
     });
   });
 
+  it("hides map edge creation when the graph has no nodes", () => {
+    render(
+      <MapGraphEditor
+        draft={{
+          name: "空白地图",
+          description: "尚未添加任何节点",
+          communityVisible: true,
+          style: "realistic",
+          nodes: [],
+          edges: []
+        }}
+        onAddNode={vi.fn()}
+        onSelectNode={vi.fn()}
+        onSelectEdge={vi.fn()}
+        relationLabel={(relation) => readMaterialMessage(`mapForm.relationTypes.${relation}`)}
+        selectedNodeId=""
+        selectedEdgeId=""
+        t={(key, values) => {
+          return readMaterialMessage(key, values);
+        }}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "新增节点" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新增关系" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "最多衍生轮次" })).not.toBeInTheDocument();
+  });
+
+  it("allows oversized generated item images when building the save payload", () => {
+    const draft = createDefaultItemDraft();
+    const boardImageFile = new File(["board"], "item-board.png", { type: "image/png" });
+    const modelInputImageFile = new File(["model-input"], "item-model-input.png", { type: "image/png" });
+
+    Object.defineProperty(boardImageFile, "size", { value: 10 * 1024 * 1024 + 1 });
+    Object.defineProperty(modelInputImageFile, "size", { value: 10 * 1024 * 1024 + 1 });
+
+    draft.boardImageSource = "generated";
+    draft.boardImageFile = boardImageFile;
+    draft.modelInputImage = {
+      file: modelInputImageFile,
+      previewUrl: "data:image/png;base64,bW9kZWw=",
+      source: "generated",
+      storedUrl: null
+    };
+
+    const formData = buildItemMaterialFormData(draft, false);
+
+    expect(formData.get("boardImage")).toBe(boardImageFile);
+    expect(formData.get("modelInputImage")).toBe(modelInputImageFile);
+  });
+
   it("opens my scripts by default and can switch to community scripts", () => {
     render(<HomeWorkspace data={workspaceData} />);
 
@@ -194,11 +253,87 @@ describe("HomeWorkspace script manager", () => {
       dataUrl: "data:image/png;base64,Y3JlYXR1cmU=",
       fileName: "creature-board.png"
     });
+    vi.mocked(assistHomeMapDraft)
+      .mockResolvedValueOnce({
+        message: "已整理地图基础信息。",
+        patch: {
+          description: "AI 整理后的地图说明",
+          style: "sciFi"
+        }
+      })
+      .mockResolvedValueOnce({
+        message: "已加入观测塔节点。",
+        patch: {
+          addNodes: [
+            {
+              id: "map-node-observatory",
+              description: "监测风道与升降塔的高塔。",
+              name: "观测塔",
+              type: "landmark"
+            }
+          ]
+        }
+      });
+    vi.mocked(deriveHomeMapGraphRound).mockResolvedValue({
+      message: "已从悬空城衍生东港。",
+      patch: {
+        addNodes: [
+          {
+            id: "map-node-east-harbor",
+            description: "环层街区东侧的空港节点。",
+            name: "东港",
+            type: "landmark"
+          }
+        ],
+        addEdges: [
+          {
+            id: "map-edge-east-harbor",
+            description: "升降塔与东港连接。",
+            relation: "connects",
+            source: "node-country",
+            target: "map-node-east-harbor"
+          }
+        ]
+      }
+    });
     vi.mocked(createHomeMaskMaterial).mockResolvedValue(createdSilverMaskMaterial);
     vi.mocked(createHomeCreatureMaterial).mockResolvedValue(createdMistguardCreatureMaterial);
+    vi.mocked(createHomeMapMaterial).mockResolvedValue(createdMapMaterial);
     vi.mocked(updateHomeCreatureMaterial).mockResolvedValue({
       ...createdMistguardCreatureMaterial,
       title: "雾卫兽·改"
+    });
+    vi.mocked(updateHomeMapMaterial).mockImplementation(async (_materialId, formData) => {
+      const draft = JSON.parse(String(formData.get("draft"))) as {
+        communityVisible: boolean;
+        description: string;
+        edges: unknown[];
+        name: string;
+        nodes: unknown[];
+        style: WorkspaceMaterial["style"];
+      };
+
+      expect(draft).toMatchObject({
+        description: "更新后的地图说明",
+        communityVisible: true,
+        name: "悬空城地图·改"
+      });
+
+      return {
+        ...createdMapMaterial,
+        description: draft.description,
+        style: draft.style,
+        title: draft.name,
+        communityVisible: draft.communityVisible,
+        metadata: {
+          ...(createdMapMaterial.metadata as Record<string, unknown>),
+          description: draft.description,
+          name: draft.name,
+          style: draft.style,
+          nodes: draft.nodes,
+          edges: draft.edges
+        }
+      };
     });
     vi.mocked(updateHomeMaskMaterial).mockImplementation(async (_materialId, formData) => {
       expect(formData.get("boardImageMode")).toBe("keep");
@@ -207,11 +342,8 @@ describe("HomeWorkspace script manager", () => {
       });
       return updatedSilverMaskMaterial;
     });
-    vi.mocked(setHomeMaterialCommunitySharing).mockImplementation(async (_materialId, shared) => ({
-      ...updatedSilverMaskMaterial,
-      communityVisible: shared
-    }));
     vi.mocked(deleteHomeMaterial).mockResolvedValue({ id: "silver-mask" });
+    vi.spyOn(window, "confirm").mockImplementation((message) => String(message).includes("永久删除"));
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -397,6 +529,13 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByLabelText("瞳色颜色选择器"), { target: { value: "#3f7a4b" } });
     expect(screen.getByText("#3F7A4B")).toBeInTheDocument();
 
+    const createShareSwitch = screen.getByRole("switch", { name: "分享到社区" });
+
+    expect(createShareSwitch).toBeChecked();
+    expect(createShareSwitch).toBeDisabled();
+    fireEvent.click(createShareSwitch);
+    expect(createShareSwitch).toBeChecked();
+
     fireEvent.click(saveMaskButton);
 
     await waitFor(() => {
@@ -404,6 +543,7 @@ describe("HomeWorkspace script manager", () => {
       expect(toast.success).toHaveBeenCalledWith("假面已创建并加入我的素材。");
     });
     expect(JSON.parse(String(vi.mocked(createHomeMaskMaterial).mock.calls[0][0].get("draft")))).toMatchObject({
+      communityVisible: true,
       features: "标志动作：抬手整理银发\n说话习惯：句子短，停顿长"
     });
     expect(screen.queryByRole("heading", { name: "新建假面" })).not.toBeInTheDocument();
@@ -448,6 +588,14 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.getByLabelText("绘制风格")).toHaveValue("guofeng");
     expect(screen.getByText("AI 生成")).toBeInTheDocument();
 
+    const editDialog = screen.getByRole("heading", { name: "编辑假面" }).closest("section") as HTMLElement;
+    const editShareSwitch = within(editDialog).getByRole("switch", { name: "分享到社区" });
+
+    expect(editShareSwitch).toBeChecked();
+    expect(editShareSwitch).toBeDisabled();
+    fireEvent.click(editShareSwitch);
+    expect(editShareSwitch).toBeChecked();
+
     fireEvent.change(screen.getByPlaceholderText("输入假面名称"), { target: { value: "银发旅人·改" } });
     fireEvent.change(screen.getByLabelText("假面介绍"), { target: { value: "更冷淡，语气更克制。" } });
     fireEvent.change(screen.getByLabelText("特征"), { target: { value: "改后特征：回答前会先短暂停顿。" } });
@@ -457,21 +605,21 @@ describe("HomeWorkspace script manager", () => {
       expect(updateHomeMaskMaterial).toHaveBeenCalledWith("silver-mask", expect.any(FormData), "zh-CN");
       expect(toast.success).toHaveBeenCalledWith("假面修改已保存。");
     });
+    expect(JSON.parse(String(vi.mocked(updateHomeMaskMaterial).mock.calls[0][1].get("draft")))).toMatchObject({
+      communityVisible: true,
+      features: "改后特征：回答前会先短暂停顿。"
+    });
     expect(screen.queryByRole("heading", { name: "编辑假面" })).not.toBeInTheDocument();
     expect(screen.getAllByText("银发旅人·改").length).toBeGreaterThan(0);
     expect(screen.getAllByText("银发旅人·改更冷淡，语气更克制。").length).toBeGreaterThan(0);
 
     const shareSwitch = screen.getByRole("switch", { name: "分享到社区" });
 
-    expect(shareSwitch).not.toBeChecked();
+    expect(shareSwitch).toBeChecked();
+    expect(shareSwitch).toBeDisabled();
     fireEvent.click(shareSwitch);
-
-    await waitFor(() => {
-      expect(setHomeMaterialCommunitySharing).toHaveBeenCalledWith("silver-mask", true, "zh-CN");
-      expect(toast.success).toHaveBeenCalledWith("素材已分享到社区。");
-    });
-    expect(screen.getByRole("switch", { name: "分享到社区" })).toBeChecked();
-    expect(screen.getByText("已分享")).toBeInTheDocument();
+    expect(shareSwitch).toBeChecked();
+    expect(screen.getByText("已开启")).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "删除" })).not.toBeDisabled();
     });
@@ -484,11 +632,162 @@ describe("HomeWorkspace script manager", () => {
       expect(toast.success).toHaveBeenCalledWith("素材已删除。");
     });
     expect(screen.queryByText("银发旅人·改")).not.toBeInTheDocument();
+    vi.stubGlobal("confirm", vi.fn((message: string) => String(message).includes("永久删除")));
 
     fireEvent.click(screen.getByRole("button", { name: "操作" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "地图" }));
 
-    expect(toast.info).toHaveBeenCalledWith("素材创建功能将在后续版本开放。");
+    expect(screen.getByRole("heading", { name: "新建地图" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI 辅助" })).toBeInTheDocument();
+    expect(screen.queryByText("地图节点")).not.toBeInTheDocument();
+    expect(screen.queryByText("关系")).not.toBeInTheDocument();
+
+    fireEvent.change(
+      screen.getByPlaceholderText("例如：把它扩展成沿海王国、港口群和内陆荒原，并补全道路关系"),
+      { target: { value: "补充地图基础信息" } }
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发送地图 AI 辅助消息" }));
+
+    await waitFor(() => {
+      expect(assistHomeMapDraft).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("已整理地图基础信息。")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("地图说明")).toHaveValue("AI 整理后的地图说明");
+
+    fireEvent.change(screen.getByPlaceholderText("输入地图名称"), { target: { value: "悬空城地图" } });
+    fireEvent.change(screen.getByLabelText("地图说明"), {
+      target: { value: "记录环层街区、升降塔和风道关系的地图素材。" }
+    });
+    fireEvent.change(screen.getByLabelText("内容风格"), { target: { value: "sciFi" } });
+    const mapShareSwitch = screen.getByRole("switch", { name: "分享到社区" });
+    expect(mapShareSwitch).toBeChecked();
+    expect(mapShareSwitch).toBeDisabled();
+    fireEvent.click(mapShareSwitch);
+    expect(mapShareSwitch).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "保存地图" }));
+
+    await waitFor(() => {
+      expect(createHomeMapMaterial).toHaveBeenCalledWith(expect.any(FormData), "zh-CN");
+      expect(toast.success).toHaveBeenCalledWith("地图已创建并加入我的素材。");
+      expect(window.confirm).toHaveBeenCalledWith("地图已保存。是否立即进入图谱编辑？");
+    });
+    const createdMapDraft = JSON.parse(String(vi.mocked(createHomeMapMaterial).mock.calls[0][0].get("draft")));
+
+    expect(createdMapDraft).toMatchObject({
+      communityVisible: true,
+      description: "记录环层街区、升降塔和风道关系的地图素材。",
+      name: "悬空城地图",
+      style: "sciFi"
+    });
+    expect(createdMapDraft.nodes).toHaveLength(0);
+    expect(createdMapDraft.edges).toHaveLength(0);
+    expect(screen.queryByRole("heading", { name: "新建地图" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("悬空城地图").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /悬空城地图/ }));
+    expect(screen.getAllByText("上层街区").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("悬空城 → 上层街区").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "编辑基础信息" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑图谱" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑图谱" }));
+    expect(screen.getByRole("heading", { name: "地图图谱编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI 辅助" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑基础信息" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新增关系" })).not.toBeInTheDocument();
+
+    fireEvent.change(
+      screen.getByPlaceholderText("例如：把它扩展成沿海王国、港口群和内陆荒原，并补全道路关系"),
+      { target: { value: "补充图谱节点" } }
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发送地图 AI 辅助消息" }));
+
+    await waitFor(() => {
+      expect(assistHomeMapDraft).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("已加入观测塔节点。")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("观测塔")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑基础信息" }));
+    expect(screen.getByRole("heading", { name: "编辑地图基础信息" })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("输入地图名称"), { target: { value: "悬空城地图·改" } });
+    fireEvent.change(screen.getByLabelText("地图说明"), { target: { value: "更新后的地图说明" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存基础信息" }));
+
+    await waitFor(() => {
+      expect(updateHomeMapMaterial).toHaveBeenCalledWith("map-city", expect.any(FormData), "zh-CN");
+      expect(toast.success).toHaveBeenCalledWith("地图修改已保存。");
+    });
+    expect(screen.queryByRole("heading", { name: "编辑地图基础信息" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑图谱" }));
+    expect(screen.getByRole("heading", { name: "地图图谱编辑" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText("观测塔").length).toBeGreaterThan(0);
+    });
+    expect(screen.getAllByRole("button", { name: "新增节点" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "连线" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新增关系" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "最多衍生轮次" })).toHaveValue(3);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "最多衍生轮次" }), { target: { value: "1" } });
+    expect(screen.getByRole("spinbutton", { name: "最多衍生轮次" })).toHaveValue(1);
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "开始衍生" })).not.toBeDisabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始衍生" }));
+
+    await waitFor(() => {
+      expect(deriveHomeMapGraphRound).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("开始逐轮衍生，共 1 轮。")).toBeInTheDocument();
+      expect(screen.getByText((content) => content.includes("已从悬空城衍生东港。"))).toBeInTheDocument();
+      expect(screen.getAllByText("东港").length).toBeGreaterThan(0);
+    });
+    expect(deriveHomeMapGraphRound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: "node-country",
+            name: "悬空城"
+          })
+        ])
+      }),
+      "node-country",
+      1,
+      1,
+      "zh-CN"
+    );
+    expect(updateHomeMapMaterial).toHaveBeenCalledTimes(1);
+    randomSpy.mockRestore();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "新增节点" })[0]);
+    const nodeDialog = screen.getByRole("heading", { name: "新增节点" }).closest("section") as HTMLElement;
+    expect(within(nodeDialog).queryByText("横坐标")).not.toBeInTheDocument();
+    expect(within(nodeDialog).queryByText("纵坐标")).not.toBeInTheDocument();
+    fireEvent.change(within(nodeDialog).getByPlaceholderText("输入节点名称"), { target: { value: "外环港" } });
+    fireEvent.click(within(nodeDialog).getByRole("button", { name: "新增节点" }));
+    expect(screen.queryByRole("heading", { name: "新增节点" })).not.toBeInTheDocument();
+
+    const graphDialog = screen.getByRole("heading", { name: "地图图谱编辑" }).closest("section") as HTMLElement;
+
+    fireEvent.click(within(graphDialog).getAllByRole("button", { name: /悬空城国家/ })[0]);
+    fireEvent.click(within(graphDialog).getByRole("button", { name: "连线" }));
+    expect(screen.getByText("已从「悬空城」发起连线，请选择目标节点。")).toBeInTheDocument();
+    fireEvent.click(within(graphDialog).getByRole("button", { name: /观测塔/ }));
+    const edgeDialog = screen.getByRole("heading", { name: "新增关系" }).closest("section") as HTMLElement;
+    expect(within(edgeDialog).getByRole("combobox", { name: "起点" })).toHaveValue("node-country");
+    expect(within(edgeDialog).getByRole("combobox", { name: "终点" })).toHaveValue("map-node-observatory");
+    fireEvent.click(within(edgeDialog).getByRole("button", { name: "新增关系" }));
+    await waitFor(() => {
+      expect(screen.getAllByText("悬空城 → 观测塔").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole("heading", { name: "新增关系" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "取消" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "关闭素材详情" }));
 
     fireEvent.click(screen.getByRole("button", { name: "操作" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "生物" }));
@@ -1177,7 +1476,7 @@ const createdScannerItemMaterial: WorkspaceMaterial = {
   title: "灵犀扫描器",
   description: "半透明的便携扫描装置，边缘有细密发光刻线。",
   previewUrl: "https://cdn.example.com/items/scanner-board.png",
-  communityVisible: false,
+  communityVisible: true,
   metadata: {
     kind: "item",
     version: 2,
@@ -1232,7 +1531,7 @@ const createdMistguardCreatureMaterial: WorkspaceMaterial = {
   title: "雾卫兽",
   description: "雾卫兽是废墟边界的群居守卫生物，会通过低频鸣叫同步警戒。",
   previewUrl: "https://cdn.example.com/creature-board.png",
-  communityVisible: false,
+  communityVisible: true,
   metadata: {
     kind: "creature",
     version: 1,
@@ -1318,7 +1617,7 @@ const createdSilverMaskMaterial: WorkspaceMaterial = {
   title: "银发旅人",
   description: "银发旅人看起来疏离冷静，说话简短，动作习惯轻慢。",
   previewUrl: "https://cdn.example.com/mask-board.png",
-  communityVisible: false,
+  communityVisible: true,
   metadata: {
     kind: "mask",
     version: 1,
@@ -1417,7 +1716,7 @@ const createdSceneMaterial: WorkspaceMaterial = {
   title: "废弃研究所",
   description: "一座被雨水和藤蔓侵蚀的旧研究所。",
   previewUrl: "https://cdn.example.com/scene/first-uploaded-image.png",
-  communityVisible: false,
+  communityVisible: true,
   metadata: {
     kind: "scene",
     version: 1,
@@ -1445,6 +1744,53 @@ const createdSceneMaterial: WorkspaceMaterial = {
             url: "https://cdn.example.com/scene/main-mother.png"
           }
         }
+      }
+    ]
+  },
+  inLibrary: true,
+  librarySource: "SELF_CREATED"
+};
+
+const createdMapMaterial: WorkspaceMaterial = {
+  id: "map-city",
+  slug: "floating-city-map",
+  category: "map",
+  style: "sciFi",
+  title: "悬空城地图",
+  description: "记录环层街区、升降塔和风道关系的地图素材。",
+  previewUrl: null,
+  communityVisible: true,
+  metadata: {
+    kind: "map",
+    version: 1,
+    name: "悬空城地图",
+    description: "记录环层街区、升降塔和风道关系的地图素材。",
+    style: "sciFi",
+    nodes: [
+      {
+        id: "node-country",
+        type: "country",
+        name: "悬空城",
+        description: "环层都市的核心。",
+        x: -0.2,
+        y: -0.1
+      },
+      {
+        id: "node-city",
+        type: "city",
+        name: "上层街区",
+        description: "高空商业与居住区。",
+        x: 0.8,
+        y: 0.15
+      }
+    ],
+    edges: [
+      {
+        id: "edge-connects",
+        relation: "connects",
+        source: "node-country",
+        target: "node-city",
+        description: "升降塔连接上下层"
       }
     ]
   },
@@ -1630,4 +1976,17 @@ function readMessage(path: string) {
 
     return (current as Record<string, unknown>)[segment];
   }, zhMessages);
+}
+
+function readMaterialMessage(path: string, values?: Record<string, string | number>) {
+  const value = readMessage(`home.materials.${path}`);
+
+  if (typeof value !== "string") {
+    return path;
+  }
+
+  return Object.entries(values ?? {}).reduce(
+    (text, [name, replacement]) => text.replace(`{${name}}`, String(replacement)),
+    value
+  );
 }

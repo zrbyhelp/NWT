@@ -116,6 +116,7 @@ export function SettingsDialog({
     { id: "instantMesh", icon: Box },
     { id: "about", icon: Info }
   ];
+  const activeSettingsTab: AnySettingsTab = activeTab === "admin" && !isAdmin ? "general" : activeTab;
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -135,19 +136,12 @@ export function SettingsDialog({
   }, []);
 
   useEffect(() => {
-    if (activeTab === "admin" && !isAdmin) {
-      setActiveTab("general");
-    }
-  }, [activeTab, isAdmin]);
-
-  useEffect(() => {
-    if (!open || activeTab !== "admin" || !isAdmin || adminSettingsLoaded) {
+    if (!open || activeSettingsTab !== "admin" || !isAdmin || adminSettingsLoaded) {
       return;
     }
 
     let cancelled = false;
 
-    setAdminSettingsLoading(true);
     getHomeAdminSystemSettings()
       .then((result) => {
         if (cancelled) {
@@ -171,7 +165,7 @@ export function SettingsDialog({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, adminSettingsLoaded, isAdmin, open, t]);
+  }, [activeSettingsTab, adminSettingsLoaded, isAdmin, open, t]);
 
   useEffect(() => {
     document.documentElement.dataset.palette = palette;
@@ -227,7 +221,13 @@ export function SettingsDialog({
     lastSavedDisplayNameRef.current = viewer?.displayName ?? viewer?.account ?? "";
     setPasswordForm({ currentPassword: "", newPassword: "" });
     setAdminSettingsLoaded(false);
+    setAdminSettingsLoading(activeSettingsTab === "admin" && isAdmin);
     setOpen(true);
+  }
+
+  function selectSettingsTab(nextTab: AnySettingsTab) {
+    setActiveTab(nextTab);
+    setAdminSettingsLoading(nextTab === "admin" && isAdmin && !adminSettingsLoaded);
   }
 
   function handleAvatarUpload(file: File | undefined) {
@@ -365,10 +365,10 @@ export function SettingsDialog({
                   <button
                     type="button"
                     key={id}
-                    onClick={() => setActiveTab(id)}
+                    onClick={() => selectSettingsTab(id)}
                     className={cn(
                       "inline-flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-sm transition hover:bg-muted",
-                      activeTab === id && "bg-muted font-medium"
+                      activeSettingsTab === id && "bg-muted font-medium"
                     )}
                   >
                     <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -378,7 +378,7 @@ export function SettingsDialog({
               </nav>
 
               <div className="scrollbar-autohide min-h-0 overflow-y-auto p-4">
-                {activeTab === "general" ? (
+                {activeSettingsTab === "general" ? (
                   <div className="space-y-3">
                     <SettingInlineRow
                       action={
@@ -466,7 +466,7 @@ export function SettingsDialog({
                   </div>
                 ) : null}
 
-                {activeTab === "admin" && isAdmin ? (
+                {activeSettingsTab === "admin" && isAdmin ? (
                   <AdminProxySettingsPanel
                     form={adminProxyForm}
                     loading={adminSettingsLoading}
@@ -477,7 +477,7 @@ export function SettingsDialog({
                   />
                 ) : null}
 
-                {activeTab === "account" ? (
+                {activeSettingsTab === "account" ? (
                   <div className="space-y-5">
                     {viewer ? (
                       <>
@@ -563,7 +563,7 @@ export function SettingsDialog({
                   </div>
                 ) : null}
 
-                {activeTab === "appearance" ? (
+                {activeSettingsTab === "appearance" ? (
                   <div className="space-y-5">
                     <SettingSection icon={Monitor} title={t("mode")} description={t("current", { mode: t(`modeValue.${resolvedTheme}`) })}>
                       <div className="grid grid-cols-3 gap-2">
@@ -631,11 +631,11 @@ export function SettingsDialog({
                   </div>
                 ) : null}
 
-                {activeTab === "providers" || activeTab === "llm" || activeTab === "vectors" || activeTab === "images" || activeTab === "instantMesh" ? (
-                  <AiConfigManager mode={activeTab} />
+                {activeSettingsTab === "providers" || activeSettingsTab === "llm" || activeSettingsTab === "vectors" || activeSettingsTab === "images" || activeSettingsTab === "instantMesh" ? (
+                  <AiConfigManager mode={activeSettingsTab} />
                 ) : null}
 
-                {activeTab === "about" ? (
+                {activeSettingsTab === "about" ? (
                   <div className="space-y-5">
                     <SettingSection icon={Info} title={t("aboutTitle")} description={t("aboutDescription")}>
                       <div className="grid gap-x-6 lg:grid-cols-2">

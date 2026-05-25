@@ -101,6 +101,9 @@ export {
   resolveMaskAiError,
   resolveMaskBoardError,
   resolveMaskSaveError,
+  resolveMapAiError,
+  resolveMapDeriveError,
+  resolveMapSaveError,
   resolveMaterialExportError,
   resolveMaterialImportError,
   resolveSceneAiError,
@@ -340,6 +343,46 @@ function resolveSceneAiError(error: unknown, t: (key: string) => string) {
   return t("sceneForm.aiFailed");
 }
 
+function resolveMapAiError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("MAP_ASSIST_EMPTY_INSTRUCTION")) {
+    return t("mapForm.aiEmptyInstruction");
+  }
+
+  if (message.includes("missing-default-llm")) {
+    return t("mapForm.aiMissingDefaultLlm");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("mapForm.missingProviderSecret");
+  }
+
+  return t("mapForm.aiFailed");
+}
+
+function resolveMapDeriveError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("MAP_DERIVE_EMPTY_GRAPH")) {
+    return t("mapForm.deriveNodeRequired");
+  }
+
+  if (message.includes("MAP_DERIVE_EMPTY_RESULT")) {
+    return t("mapForm.deriveNoResult");
+  }
+
+  if (message.includes("missing-default-llm")) {
+    return t("mapForm.aiMissingDefaultLlm");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("mapForm.missingProviderSecret");
+  }
+
+  return t("mapForm.deriveFailed");
+}
+
 function resolveScenePanoramaError(error: unknown, t: (key: string) => string) {
   const message = error instanceof Error ? error.message : "";
 
@@ -447,6 +490,64 @@ function resolveSceneSaveError(error: unknown, t: (key: string) => string, isEdi
   }
 
   return t(isEditing ? "sceneForm.updateFailed" : "sceneForm.saveFailed");
+}
+
+function resolveMapSaveError(error: unknown, t: (key: string) => string, isEditing = false) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("MAP_NAME_REQUIRED")) {
+    return t("mapForm.errors.nameRequired");
+  }
+
+  if (message.includes("MAP_DESCRIPTION_REQUIRED")) {
+    return t("mapForm.errors.descriptionRequired");
+  }
+
+  if (message.includes("MAP_NODE_REQUIRED")) {
+    return t("mapForm.errors.nodeRequired");
+  }
+
+  if (message.includes("MAP_NODE_NAME_REQUIRED")) {
+    return t("mapForm.errors.nodeNameRequired");
+  }
+
+  if (message.includes("MAP_NODE_TYPE_INVALID")) {
+    return t("mapForm.errors.nodeTypeInvalid");
+  }
+
+  if (message.includes("MAP_NODE_DUPLICATE")) {
+    return t("mapForm.errors.nodeDuplicate");
+  }
+
+  if (message.includes("MAP_EDGE_RELATION_INVALID")) {
+    return t("mapForm.errors.edgeRelationInvalid");
+  }
+
+  if (message.includes("MAP_EDGE_DUPLICATE")) {
+    return t("mapForm.errors.edgeDuplicate");
+  }
+
+  if (message.includes("MAP_EDGE_INVALID")) {
+    return t("mapForm.errors.edgeInvalid");
+  }
+
+  if (message.includes("MAP_GRAPH_SYNC_FAILED")) {
+    return t("mapForm.graphSyncFailed");
+  }
+
+  if (message.includes("MAP_MATERIAL_METADATA_TOO_LARGE")) {
+    return t("mapForm.metadataTooLarge");
+  }
+
+  if (message.includes("MATERIAL_NOT_EDITABLE")) {
+    return t("mapForm.notEditable");
+  }
+
+  if (message.includes("MAP_MATERIAL_DATABASE_FAILED") || message.includes("MAP_MATERIAL_PERSISTENCE_FAILED")) {
+    return t(isEditing ? "mapForm.updateFailed" : "mapForm.saveFailed");
+  }
+
+  return t(isEditing ? "mapForm.updateFailed" : "mapForm.saveFailed");
 }
 
 function resolveMaterialImportError(error: unknown, t: (key: string) => string) {

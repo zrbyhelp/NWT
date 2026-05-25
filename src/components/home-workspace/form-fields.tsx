@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Globe2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   ItemDraftPatch,
@@ -84,7 +84,7 @@ import {
 } from "./shared";
 import { getRangeLevelIndex } from "./labels";
 
-export { BodyTextField, ColorField, MaskRangeField, Metric };
+export { BodyTextField, ColorField, MaskRangeField, MaterialVisibilityField, Metric };
 
 function BodyTextField<T extends string>({
   fieldId,
@@ -342,6 +342,70 @@ function ColorField<T extends string>({
             aria-label={t(`${namespace}.colorPickerLabel`, { field: label })}
           />
         </label>
+      </div>
+    </div>
+  );
+}
+
+function MaterialVisibilityField({
+  checked,
+  description,
+  disabled,
+  disabledLabel,
+  enabledLabel,
+  label,
+  onChange
+}: {
+  checked: boolean;
+  description?: string;
+  disabled?: boolean;
+  disabledLabel: string;
+  enabledLabel: string;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const lockedChecked = true;
+  const displayedChecked = lockedChecked || checked;
+  const canToggle = !lockedChecked && !disabled;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-muted/18 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 text-sm font-medium text-foreground/72">
+            <Globe2 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <span className="truncate">{label}</span>
+          </h3>
+          {description ? <p className="mt-1 text-xs leading-5 text-foreground/48">{description}</p> : null}
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-2">
+          <span className="text-xs text-foreground/52">{displayedChecked ? enabledLabel : disabledLabel}</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={displayedChecked}
+            aria-label={label}
+            disabled
+            onClick={() => {
+              if (canToggle) {
+                onChange(!checked);
+              }
+            }}
+            className={cn(
+              "relative h-6 w-11 rounded-full border transition focus:outline-none focus:ring-2 focus:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-55",
+              displayedChecked ? "border-primary/70 bg-primary" : "border-foreground/28 bg-foreground/36"
+            )}
+          >
+            <span className="absolute inset-0 rounded-full" aria-hidden="true">
+              <span
+                className={cn(
+                  "absolute top-0.5 h-5 w-5 rounded-full border border-foreground/18 bg-white shadow-sm transition dark:bg-background",
+                  displayedChecked ? "left-[1.375rem]" : "left-0.5"
+                )}
+              />
+            </span>
+          </button>
+        </span>
       </div>
     </div>
   );

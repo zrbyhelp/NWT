@@ -33,8 +33,11 @@ import {
   assistCreatureDraft,
   assistItemDraft,
   assistMaskDraft,
+  assistMapDraft,
+  deriveMapGraphRound,
   assistSceneDraft,
   createCreatureMaterial,
+  createMapMaterial,
   createConversation,
   createItemMaterial,
   createMaskMaterial,
@@ -55,10 +58,12 @@ import {
   updateCreatureMaterial,
   updateItemMaterial,
   updateMaskMaterial,
+  updateMapMaterial,
   updateSceneMaterial,
   uploadScenePanoramaFace,
   uploadScenePanoramaMother,
   type ItemMaterialCreateInput,
+  type MapMaterialCreateInput,
   type ItemMaterialImageMode,
   type CreatureMaterialCreateInput,
   type MaskMaterialBoardImageMode,
@@ -161,6 +166,20 @@ export async function generateHomeItemModelInputImage(formData: FormData, locale
 
 export async function assistHomeSceneDraft(input: SceneMaterialCreateInput, instruction: string, locale: Locale) {
   return assistSceneDraft(input, instruction, locale);
+}
+
+export async function assistHomeMapDraft(input: MapMaterialCreateInput, instruction: string, locale: Locale) {
+  return assistMapDraft(input, instruction, locale);
+}
+
+export async function deriveHomeMapGraphRound(
+  input: MapMaterialCreateInput,
+  seedNodeId: string,
+  roundIndex: number,
+  maxRounds: number,
+  locale: Locale
+) {
+  return deriveMapGraphRound(input, seedNodeId, roundIndex, maxRounds, locale);
 }
 
 export async function assistHomeSceneDraftWithImages(formData: FormData, locale: Locale) {
@@ -300,6 +319,18 @@ export async function createHomeSceneMaterial(formData: FormData, locale: Locale
   return createSceneMaterial(draft, uploadedFaceUrls, locale);
 }
 
+export async function createHomeMapMaterial(formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("MAP_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as MapMaterialCreateInput;
+
+  return createMapMaterial(draft, locale);
+}
+
 export async function updateHomeMaskMaterial(materialId: string, formData: FormData, locale: Locale) {
   const draftValue = formData.get("draft");
   const boardImageValue = formData.get("boardImage");
@@ -367,6 +398,18 @@ export async function updateHomeSceneMaterial(materialId: string, formData: Form
   const uploadedFaceUrls = typeof uploadedFaceUrlsValue === "string" ? JSON.parse(uploadedFaceUrlsValue) as string[] : [];
 
   return updateSceneMaterial(materialId, draft, uploadedFaceUrls, locale);
+}
+
+export async function updateHomeMapMaterial(materialId: string, formData: FormData, locale: Locale) {
+  const draftValue = formData.get("draft");
+
+  if (typeof draftValue !== "string") {
+    throw new Error("MAP_DRAFT_REQUIRED");
+  }
+
+  const draft = JSON.parse(draftValue) as MapMaterialCreateInput;
+
+  return updateMapMaterial(materialId, draft, locale);
 }
 
 export async function cleanupHomeUploadedMaterialImages(urls: string[]) {
