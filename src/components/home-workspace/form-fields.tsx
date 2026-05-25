@@ -354,6 +354,7 @@ function MaterialVisibilityField({
   disabledLabel,
   enabledLabel,
   label,
+  locked = true,
   onChange
 }: {
   checked: boolean;
@@ -362,11 +363,11 @@ function MaterialVisibilityField({
   disabledLabel: string;
   enabledLabel: string;
   label: string;
+  locked?: boolean;
   onChange: (checked: boolean) => void;
 }) {
-  const lockedChecked = true;
-  const displayedChecked = lockedChecked || checked;
-  const canToggle = !lockedChecked && !disabled;
+  const displayedChecked = locked || checked;
+  const canToggle = !locked && !disabled;
 
   return (
     <div className="space-y-3 rounded-xl border border-border bg-muted/18 p-3">
@@ -385,7 +386,7 @@ function MaterialVisibilityField({
             role="switch"
             aria-checked={displayedChecked}
             aria-label={label}
-            disabled
+            disabled={!canToggle}
             onClick={() => {
               if (canToggle) {
                 onChange(!checked);

@@ -136,10 +136,7 @@ function ItemModelViewer({
           return;
         }
 
-        const canvas = document.createElement("canvas");
-        const hasWebgl = Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
-
-        if (!hasWebgl || !containerRef.current) {
+        if (!hasCanvasWebglSupport(document.createElement("canvas")) || !containerRef.current) {
           setFailed(true);
           return;
         }
@@ -468,10 +465,7 @@ function ScenePanoramaViewer({
       setWebglFailed(false);
 
       try {
-        const canvas = document.createElement("canvas");
-        const hasWebgl = Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
-
-        if (!hasWebgl || !containerRef.current) {
+        if (!hasCanvasWebglSupport(document.createElement("canvas")) || !containerRef.current) {
           setWebglReady(false);
           setWebglFailed(true);
           return;
@@ -794,10 +788,7 @@ function SceneEquirectangularPanoramaViewer({
       setWebglFailed(false);
 
       try {
-        const canvas = document.createElement("canvas");
-        const hasWebgl = Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
-
-        if (!hasWebgl || !containerRef.current) {
+        if (!hasCanvasWebglSupport(document.createElement("canvas")) || !containerRef.current) {
           setWebglReady(false);
           setWebglFailed(true);
           return;
@@ -1155,4 +1146,18 @@ function SceneEquirectangularPanoramaPreviewDialog({
       </section>
     </div>
   );
+}
+
+function hasCanvasWebglSupport(canvas: HTMLCanvasElement) {
+  if (typeof WebGLRenderingContext === "undefined" && typeof WebGL2RenderingContext === "undefined") {
+    return false;
+  }
+
+  return (["webgl", "experimental-webgl"] as const).some((contextName) => {
+    try {
+      return Boolean(canvas.getContext(contextName));
+    } catch {
+      return false;
+    }
+  });
 }

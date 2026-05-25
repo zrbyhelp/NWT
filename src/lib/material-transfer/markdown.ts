@@ -81,6 +81,7 @@ export function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale
   if (mapMetadata) {
     lines.push(`## ${isEnglish ? "Map Data" : "地图数据"}`, "");
     pushOptionalMarkdownBlock(lines, isEnglish ? "Map Description" : "地图说明", mapMetadata.description);
+    const mapNodeNameById = buildMapNodeNameById(mapMetadata.nodes);
 
     if (Array.isArray(mapMetadata.nodes) && mapMetadata.nodes.length > 0) {
       lines.push(`### ${isEnglish ? "Nodes" : "节点"}`, "");
@@ -117,8 +118,8 @@ export function formatMaterialMarkdown(item: MaterialArchiveItem, locale: Locale
         const title = typeof edgeRecord.relation === "string" && edgeRecord.relation
           ? edgeRecord.relation
           : `${isEnglish ? "Edge" : "关系"} ${index + 1}`;
-        const source = typeof edgeRecord.source === "string" ? edgeRecord.source : "-";
-        const target = typeof edgeRecord.target === "string" ? edgeRecord.target : "-";
+        const source = formatMapEndpoint(edgeRecord.source, mapNodeNameById);
+        const target = formatMapEndpoint(edgeRecord.target, mapNodeNameById);
 
         lines.push(`- ${title}: ${source} -> ${target}`);
 
@@ -226,4 +227,39 @@ function pushRecordMarkdown(lines: string[], title: string, value: unknown) {
 
 function formatMarkdownListValue(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).join(", ") : "";
+}
+
+function buildMapNodeNameById(nodes: unknown) {
+  const nodeNameById = new Map<string, string>();
+
+  if (!Array.isArray(nodes)) {
+    return nodeNameById;
+  }
+
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") {
+      continue;
+    }
+
+    const record = node as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+
+    if (id && name) {
+      nodeNameById.set(id, name);
+    }
+  }
+
+  return nodeNameById;
+}
+
+function formatMapEndpoint(value: unknown, nodeNameById: Map<string, string>) {
+  if (typeof value !== "string" || !value.trim()) {
+    return "-";
+  }
+
+  const id = value.trim();
+  const name = nodeNameById.get(id);
+
+  return name ? `${name} (${id})` : id;
 }

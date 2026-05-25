@@ -92,7 +92,7 @@ export function MapGraphEditor({
   }, [onMoveNode, onSelectEdge, onSelectNode, readOnly]);
 
   useEffect(() => {
-    syncGraphToDraft(graph, draft, selectedNodeId, selectedEdgeId, relationLabel);
+    syncGraphToDraft(graph, draft, selectedNodeId, selectedEdgeId, relationLabel, getGraphThemeColors(containerRef.current));
 
     if (rendererRef.current) {
       rendererRef.current.refresh?.();
@@ -178,10 +178,7 @@ export function MapGraphEditor({
           return;
         }
 
-        const canvas = document.createElement("canvas");
-        const hasWebgl = Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
-
-        if (!hasWebgl) {
+        if (!hasCanvasWebglSupport(document.createElement("canvas"), ["webgl2", "webgl", "experimental-webgl"])) {
           markFallback("webgl");
           return;
         }
@@ -629,7 +626,11 @@ function syncGraphToDraft(
   draft: MapCreateDraft,
   selectedNodeId: string,
   selectedEdgeId: string,
-  relationLabel: (relation: WorkspaceMapMaterialRelationType) => string
+  relationLabel: (relation: WorkspaceMapMaterialRelationType) => string,
+  colors: {
+    edge: string;
+    selectedEdge: string;
+  }
 ) {
   const nextNodeIds = new Set(draft.nodes.map((node) => node.id));
   const nextEdgeIds = new Set(draft.edges.map((edge) => edge.id));
@@ -673,7 +674,7 @@ function syncGraphToDraft(
 
     const selected = edge.id === selectedEdgeId;
     const attributes = {
-      color: selected ? "#111827" : "#9ca3af",
+      color: selected ? colors.selectedEdge : colors.edge,
       description: edge.description,
       highlighted: selected,
       label: relationLabel(edge.relation),
@@ -704,7 +705,7 @@ function getNodeColor(type: WorkspaceMapMaterialNodeType, selected: boolean) {
     city: selected ? "#BE123C" : "#F43F5E",
     village: selected ? "#B45309" : "#F59E0B",
     landmark: selected ? "#6D28D9" : "#8B5CF6",
-    path: selected ? "#0F172A" : "#475569"
+    path: selected ? "#64748B" : "#94A3B8"
   };
 
   return palette[type];
@@ -731,6 +732,34 @@ function getCanvasThemeColor(container: HTMLElement, variable: string, fallback:
   }
 
   return `hsl(${value}${typeof alpha === "number" ? ` / ${alpha}` : ""})`;
+}
+
+function getGraphThemeColors(container: HTMLElement | null) {
+  if (!container) {
+    return {
+      edge: "#94A3B8",
+      selectedEdge: "#2563EB"
+    };
+  }
+
+  return {
+    edge: getCanvasThemeColor(container, "--foreground", "#94A3B8", 0.42),
+    selectedEdge: getCanvasThemeColor(container, "--primary", "#2563EB")
+  };
+}
+
+function hasCanvasWebglSupport(canvas: HTMLCanvasElement, contextNames: Array<"webgl2" | "webgl" | "experimental-webgl">) {
+  if (typeof WebGLRenderingContext === "undefined" && typeof WebGL2RenderingContext === "undefined") {
+    return false;
+  }
+
+  return contextNames.some((contextName) => {
+    try {
+      return Boolean(canvas.getContext(contextName));
+    } catch {
+      return false;
+    }
+  });
 }
 
 function formatEdgeEndpointLabel(nodeId: string, nodeNameById: Map<string, string>, t: (key: string, values?: Record<string, string | number>) => string) {

@@ -2191,6 +2191,8 @@ describe("map materials", () => {
     expect(markdown).toContain("节点");
     expect(markdown).toContain("关系");
     expect(markdown).toContain("悬空城");
+    expect(markdown).toContain("悬空城 (");
+    expect(markdown).toContain("北境行省 (");
     expect(markdown).toContain("主城连通行省");
     expect(payload).toMatchObject({
       materialId: "map-city",
