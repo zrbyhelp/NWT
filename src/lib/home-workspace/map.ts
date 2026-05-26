@@ -98,6 +98,72 @@ export function createDefaultMapEdges(nodes = createDefaultMapNodes()) {
   ];
 }
 
+export function layoutMapGraphNodes(
+  nodes: WorkspaceMapMaterialNode[],
+  edges: WorkspaceMapMaterialEdge[]
+): Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">> {
+  if (nodes.length === 0) {
+    return [];
+  }
+
+  if (nodes.length === 1) {
+    return [{ id: nodes[0].id, x: 0, y: 0 }];
+  }
+
+  const degreeByNodeId = new Map(nodes.map((node) => [node.id, 0]));
+
+  for (const edge of edges) {
+    if (degreeByNodeId.has(edge.source)) {
+      degreeByNodeId.set(edge.source, (degreeByNodeId.get(edge.source) ?? 0) + 1);
+    }
+
+    if (degreeByNodeId.has(edge.target)) {
+      degreeByNodeId.set(edge.target, (degreeByNodeId.get(edge.target) ?? 0) + 1);
+    }
+  }
+
+  const nodesByType = mapNodeTypes.reduce<Record<WorkspaceMapMaterialNodeType, WorkspaceMapMaterialNode[]>>((result, type) => {
+    result[type] = [];
+    return result;
+  }, {} as Record<WorkspaceMapMaterialNodeType, WorkspaceMapMaterialNode[]>);
+
+  for (const node of nodes) {
+    const type = isMapNodeType(node.type) ? node.type : "landmark";
+
+    nodesByType[type].push(node);
+  }
+
+  const activeTypes = mapNodeTypes.filter((type) => nodesByType[type].length > 0);
+  const rowSpacing = 1.45;
+  const columnSpacing = 1.65;
+  const firstRowY = -((activeTypes.length - 1) * rowSpacing) / 2;
+  const updates: Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">> = [];
+
+  activeTypes.forEach((type, rowIndex) => {
+    const rowNodes = [...nodesByType[type]].sort((a, b) => {
+      const degreeDelta = (degreeByNodeId.get(b.id) ?? 0) - (degreeByNodeId.get(a.id) ?? 0);
+
+      if (degreeDelta !== 0) {
+        return degreeDelta;
+      }
+
+      return `${a.name || ""}:${a.id}`.localeCompare(`${b.name || ""}:${b.id}`, "zh-CN");
+    });
+    const firstColumnX = -((rowNodes.length - 1) * columnSpacing) / 2;
+    const y = roundMapLayoutCoordinate(firstRowY + rowIndex * rowSpacing);
+
+    rowNodes.forEach((node, columnIndex) => {
+      updates.push({
+        id: node.id,
+        x: roundMapLayoutCoordinate(firstColumnX + columnIndex * columnSpacing),
+        y
+      });
+    });
+  });
+
+  return updates;
+}
+
 export function createMapDraftFromMaterial(material: WorkspaceMaterial): MapCreateDraft {
   const metadata = getMapMaterialMetadata(material.metadata);
 
@@ -492,6 +558,10 @@ function getDefaultMapNodePosition(index: number) {
     x: -0.4 + index * 0.3,
     y: index % 2 === 0 ? 0.2 : -0.2
   };
+}
+
+function roundMapLayoutCoordinate(value: number) {
+  return Number(value.toFixed(3));
 }
 
 function getDefaultMapNodeName(type: WorkspaceMapMaterialNodeType, index: number) {

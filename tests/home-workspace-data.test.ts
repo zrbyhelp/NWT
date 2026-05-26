@@ -39,6 +39,7 @@ import {
   buildMapMaterialMetadata,
   createDefaultMapDraft,
   applyPatchToMapDraft,
+  layoutMapGraphNodes,
   validateMapDraftForGraphSave,
   validateMapDraftForSave
 } from "@/lib/home-workspace/map";
@@ -2202,6 +2203,62 @@ describe("map materials", () => {
     });
     expect(payload.nodes).toHaveLength(3);
     expect(payload.edges).toHaveLength(1);
+  });
+
+  it("lays out map graph nodes with stable finite coordinates", () => {
+    const nodes: MapMaterialCreateInput["nodes"] = [
+      {
+        id: "node-city-b",
+        type: "city",
+        name: "乙城",
+        description: "",
+        x: 10,
+        y: 10
+      },
+      {
+        id: "node-country",
+        type: "country",
+        name: "王国",
+        description: "",
+        x: 10,
+        y: 10
+      },
+      {
+        id: "node-city-a",
+        type: "city",
+        name: "甲城",
+        description: "",
+        x: 10,
+        y: 10
+      }
+    ];
+    const edges: MapMaterialCreateInput["edges"] = [
+      {
+        id: "edge-a",
+        relation: "contains",
+        source: "node-country",
+        target: "node-city-a",
+        description: ""
+      },
+      {
+        id: "edge-b",
+        relation: "connects",
+        source: "node-city-a",
+        target: "node-city-b",
+        description: ""
+      }
+    ];
+    const first = layoutMapGraphNodes(nodes, edges);
+    const second = layoutMapGraphNodes([...nodes].reverse(), [...edges].reverse());
+
+    expect(layoutMapGraphNodes([], [])).toEqual([]);
+    expect(layoutMapGraphNodes([nodes[0]], [])).toEqual([{ id: "node-city-b", x: 0, y: 0 }]);
+    expect(first).toEqual(second);
+    expect(first.map((node) => node.id).sort()).toEqual(["node-city-a", "node-city-b", "node-country"]);
+    for (const node of first) {
+      expect(Number.isFinite(node.x)).toBe(true);
+      expect(Number.isFinite(node.y)).toBe(true);
+    }
   });
 
   it("builds and sanitizes map AI patches", async () => {

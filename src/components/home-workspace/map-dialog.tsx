@@ -165,6 +165,7 @@ export function MapGraphDialog({
   onEditEdge,
   onEditBasicInfo,
   onEditNode,
+  onLayoutNodes,
   onMoveNode,
   onRemoveEdge,
   onRemoveNode,
@@ -199,6 +200,7 @@ export function MapGraphDialog({
   onEditEdge: (edgeId: string) => void;
   onEditBasicInfo: () => void;
   onEditNode: (nodeId: string) => void;
+  onLayoutNodes: (updates: Array<Pick<MapCreateDraft["nodes"][number], "id" | "x" | "y">>) => void;
   onMoveNode?: (nodeId: string, x: number, y: number) => void;
   onRemoveEdge: (edgeId: string) => void;
   onRemoveNode: (nodeId: string) => void;
@@ -237,6 +239,7 @@ export function MapGraphDialog({
             onConnectNode={onConnectNode}
             onEditEdge={onEditEdge}
             onEditNode={onEditNode}
+            onLayoutNodes={onLayoutNodes}
             onMoveNode={onMoveNode}
             onRemoveEdge={onRemoveEdge}
             onRemoveNode={onRemoveNode}

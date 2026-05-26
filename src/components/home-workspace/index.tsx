@@ -3871,6 +3871,19 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }));
   }
 
+  function layoutMapNodes(updates: Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">>) {
+    const updateByNodeId = new Map(updates.map((update) => [update.id, update]));
+
+    setMapCreateDraft((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => {
+        const update = updateByNodeId.get(node.id);
+
+        return update ? { ...node, x: update.x, y: update.y } : node;
+      })
+    }));
+  }
+
   async function submitMapDraft(mode: "basic" | "graph", authenticatedViewer = viewer) {
     const validationError =
       mode === "basic" ? validateMapDraftForSave(mapCreateDraft) : validateMapDraftForGraphSave(mapCreateDraft);
@@ -4349,6 +4362,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onEditEdge={openMapEdgeEditDialog}
             onEditBasicInfo={openMapBasicInfoFromGraphDialog}
             onEditNode={openMapNodeEditDialog}
+            onLayoutNodes={layoutMapNodes}
             onMoveNode={moveMapNode}
             onRemoveEdge={removeMapEdge}
             onRemoveNode={removeMapNode}

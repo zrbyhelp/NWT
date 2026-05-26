@@ -2,14 +2,30 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Graph, { MultiDirectedGraph } from "graphology";
-import { Link2, Loader2, Move, Network, Pencil, Plus, Sparkles, SquareDashedMousePointer, StopCircle, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Filter,
+  Hand,
+  Link2,
+  Loader2,
+  Move,
+  Network,
+  Pencil,
+  Plus,
+  Sparkles,
+  SquareDashedMousePointer,
+  StopCircle,
+  Trash2,
+  Wand2
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   MapCreateDraft,
   WorkspaceMapMaterialNodeType,
   WorkspaceMapMaterialRelationType
 } from "@/lib/home-workspace";
-import { mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
+import { layoutMapGraphNodes, mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
 
 export function MapGraphEditor({
   deriveMaxRounds = 3,
@@ -25,6 +41,7 @@ export function MapGraphEditor({
   onConnectNode,
   onEditEdge,
   onEditNode,
+  onLayoutNodes,
   onRemoveEdge,
   onRemoveNode,
   selectedEdgeId,
@@ -52,6 +69,7 @@ export function MapGraphEditor({
   onConnectNode?: (nodeId: string) => void;
   onEditEdge?: (edgeId: string) => void;
   onEditNode?: (nodeId: string) => void;
+  onLayoutNodes?: (updates: Array<{ id: string; x: number; y: number }>) => void;
   onRemoveEdge?: (edgeId: string) => void;
   onRemoveNode?: (nodeId: string) => void;
   selectedEdgeId: string;
@@ -72,32 +90,94 @@ export function MapGraphEditor({
     nodeId: "",
     position: null
   });
+  const [graph] = useState(() => new MultiDirectedGraph());
+  const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading");
+  const [failureReason, setFailureReason] = useState<"webgl" | "init" | null>(null);
+  const [canvasDragMode, setCanvasDragMode] = useState(false);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [visibleNodeTypes, setVisibleNodeTypes] = useState<WorkspaceMapMaterialNodeType[]>(() => [...mapNodeTypes]);
+  const [visibleRelationTypes, setVisibleRelationTypes] = useState<WorkspaceMapMaterialRelationType[]>(() => [...mapRelationTypes]);
   const callbacksRef = useRef({
     onMoveNode,
     onSelectEdge,
     onSelectNode,
+    canvasDragMode,
     readOnly
   });
-  const [graph] = useState(() => new MultiDirectedGraph());
-  const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading");
-  const [failureReason, setFailureReason] = useState<"webgl" | "init" | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const formatFrameRef = useRef(0);
 
   useEffect(() => {
     callbacksRef.current = {
       onMoveNode,
       onSelectEdge,
       onSelectNode,
+      canvasDragMode,
       readOnly
     };
-  }, [onMoveNode, onSelectEdge, onSelectNode, readOnly]);
+  }, [canvasDragMode, onMoveNode, onSelectEdge, onSelectNode, readOnly]);
 
   useEffect(() => {
-    syncGraphToDraft(graph, draft, selectedNodeId, selectedEdgeId, relationLabel, getGraphThemeColors(containerRef.current));
+    if (!filterPanelOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node | null;
+
+      if (!target) {
+        return;
+      }
+
+      if (toolbarRef.current?.contains(target) || filterPanelRef.current?.contains(target)) {
+        return;
+      }
+
+      setFilterPanelOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setFilterPanelOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [filterPanelOpen]);
+
+  useEffect(() => {
+    const graphDraft = filterMapDraft(draft, visibleNodeTypes, visibleRelationTypes);
+
+    syncGraphToDraft(
+      graph,
+      graphDraft,
+      selectedNodeId,
+      selectedEdgeId,
+      relationLabel,
+      getGraphThemeColors(containerRef.current),
+      {
+        relatedNodeIds: buildRelatedNodeIdSet(graphDraft, selectedNodeId, selectedEdgeId),
+        relatedEdgeIds: buildRelatedEdgeIdSet(graphDraft, selectedNodeId, selectedEdgeId)
+      }
+    );
 
     if (rendererRef.current) {
       rendererRef.current.refresh?.();
     }
-  }, [draft, graph, relationLabel, selectedEdgeId, selectedNodeId]);
+  }, [draft, graph, relationLabel, selectedEdgeId, selectedNodeId, visibleNodeTypes, visibleRelationTypes]);
+
+  useEffect(() => {
+    if (selectedNodeId && !draft.nodes.some((node) => node.id === selectedNodeId && visibleNodeTypes.includes(node.type))) {
+      onSelectNode("");
+    }
+  }, [draft.nodes, onSelectNode, selectedNodeId, visibleNodeTypes]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -184,13 +264,13 @@ export function MapGraphEditor({
         }
 
         const { default: Sigma } = await import("sigma");
-        const renderer = new Sigma(graph, container, {
+        const renderer = new Sigma(graph, container as HTMLElement, {
           renderEdgeLabels: true,
           renderLabels: true,
           labelColor: { color: getCanvasThemeColor(container, "--foreground", "#111827") },
-          labelRenderedSizeThreshold: 6,
+          labelRenderedSizeThreshold: 4,
           labelWeight: "600",
-          edgeLabelColor: { color: getCanvasThemeColor(container, "--foreground", "#475569", 0.72) },
+          edgeLabelColor: { color: getCanvasThemeColor(container, "--foreground", "#111827", 0.88) },
           edgeLabelWeight: "500",
           zIndex: true
         });
@@ -212,7 +292,7 @@ export function MapGraphEditor({
           callbacksRef.current.onSelectEdge("");
         };
         const handleDownNode = ({ node }: { node: string }) => {
-          if (callbacksRef.current.readOnly) {
+          if (callbacksRef.current.readOnly || callbacksRef.current.canvasDragMode) {
             return;
           }
 
@@ -333,18 +413,87 @@ export function MapGraphEditor({
     };
   }, [graph]);
 
-  const nodeCount = draft.nodes.length;
-  const edgeCount = draft.edges.length;
+  const visibleNodeTypeSet = useMemo(() => new Set(visibleNodeTypes), [visibleNodeTypes]);
+  const visibleRelationTypeSet = useMemo(() => new Set(visibleRelationTypes), [visibleRelationTypes]);
+  const visibleDraft = useMemo(
+    () => filterMapDraft(draft, visibleNodeTypeSet, visibleRelationTypeSet),
+    [draft, visibleNodeTypeSet, visibleRelationTypeSet]
+  );
+
+  useEffect(() => {
+    if (selectedEdgeId && !visibleDraft.edges.some((edge) => edge.id === selectedEdgeId)) {
+      onSelectEdge("");
+    }
+  }, [onSelectEdge, selectedEdgeId, visibleDraft.edges]);
+  const nodeCount = visibleDraft.nodes.length;
+  const edgeCount = visibleDraft.edges.length;
   const selectedNode = draft.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const selectedEdge = draft.edges.find((edge) => edge.id === selectedEdgeId) ?? null;
   const nodeNameById = useMemo(
     () => new Map(draft.nodes.map((node) => [node.id, node.name || t("mapForm.nodeUntitled")])),
     [draft.nodes, t]
   );
+  const selectedNodeRelationEdges = useMemo(
+    () =>
+      visibleDraft.edges.filter(
+        (edge) => edge.source === selectedNodeId || edge.target === selectedNodeId
+      ),
+    [selectedNodeId, visibleDraft.edges]
+  );
+  const isFilterActive = visibleNodeTypes.length !== mapNodeTypes.length || visibleRelationTypes.length !== mapRelationTypes.length;
   const showAddNodeControl = !readOnly && Boolean(onAddNode);
   const showEditControls = showAddNodeControl;
-  const showDeriveControls = nodeCount >= 1 && Boolean(onStartDerive || onStopDerive || onChangeDeriveMaxRounds);
-  const showTopControls = showEditControls || showDeriveControls;
+  const showDeriveControls = draft.nodes.length >= 1 && Boolean(onStartDerive || onStopDerive || onChangeDeriveMaxRounds);
+  const showLeftToolbar = showEditControls || showDeriveControls;
+  const showToolbar = !readOnly && (showEditControls || showDeriveControls || Boolean(onLayoutNodes) || draft.nodes.length > 0 || draft.edges.length > 0);
+
+  useEffect(() => {
+    return () => {
+      if (formatFrameRef.current) {
+        cancelAnimationFrame(formatFrameRef.current);
+      }
+    };
+  }, []);
+
+  function handleFormatGraph() {
+    if (!onLayoutNodes || readOnly || derivePending || draft.nodes.length === 0) {
+      return;
+    }
+
+    const updates = layoutMapGraphNodes(draft.nodes, draft.edges);
+
+    if (updates.length === 0) {
+      return;
+    }
+
+    onLayoutNodes(updates);
+
+    if (formatFrameRef.current) {
+      cancelAnimationFrame(formatFrameRef.current);
+    }
+
+    formatFrameRef.current = window.requestAnimationFrame(() => {
+      rendererRef.current?.getCamera?.().animatedReset({ duration: 300 });
+      rendererRef.current?.refresh?.();
+    });
+  }
+
+  function toggleVisibleNodeType(type: WorkspaceMapMaterialNodeType) {
+    setVisibleNodeTypes((current) =>
+      current.includes(type) ? current.filter((value) => value !== type) : [...current, type]
+    );
+  }
+
+  function toggleVisibleRelationType(type: WorkspaceMapMaterialRelationType) {
+    setVisibleRelationTypes((current) =>
+      current.includes(type) ? current.filter((value) => value !== type) : [...current, type]
+    );
+  }
+
+  function resetGraphFilters() {
+    setVisibleNodeTypes([...mapNodeTypes]);
+    setVisibleRelationTypes([...mapRelationTypes]);
+  }
 
   return (
     <section className={cn("flex min-h-0 flex-1 flex-col", embedded ? "bg-background" : "border-l border-border bg-muted/14")}>
@@ -372,81 +521,234 @@ export function MapGraphEditor({
           )}
         >
           <div ref={containerRef} className="absolute inset-0" />
-          {showTopControls ? (
-            <div className="absolute left-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-2xl border border-border bg-background/95 p-1.5 shadow-lg shadow-foreground/8 backdrop-blur">
-              {showEditControls ? (
-                <>
-                  {showAddNodeControl ? (
+          {showToolbar ? (
+            <div className="absolute inset-x-4 top-4 z-20 flex flex-wrap items-start justify-between gap-2">
+              {showLeftToolbar ? (
+              <div className="flex max-w-[calc(100%-15rem)] flex-wrap items-center gap-2 rounded-2xl border border-border bg-background/95 p-1.5 shadow-lg shadow-foreground/8 backdrop-blur">
+                {showEditControls ? (
+                  <>
+                    {showAddNodeControl ? (
+                      <button
+                        type="button"
+                        onClick={onAddNode}
+                        className="inline-flex h-9 items-center gap-2 rounded-full bg-foreground px-3 text-sm font-medium text-background transition hover:bg-foreground/88"
+                      >
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                        {t("mapForm.addNode")}
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+                {showDeriveControls ? (
+                  <>
+                    <label className="flex h-9 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs font-medium text-foreground/62">
+                      <span className="whitespace-nowrap">{t("mapForm.deriveMaxRounds")}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        step={1}
+                        value={deriveMaxRounds}
+                        onChange={(event) => onChangeDeriveMaxRounds?.(clampMapDeriveMaxRounds(Number.parseInt(event.target.value, 10)))}
+                        disabled={readOnly || derivePending}
+                        aria-label={t("mapForm.deriveMaxRounds")}
+                        className="h-6 w-12 rounded-md border border-border bg-background px-2 text-center text-sm font-semibold text-foreground outline-none transition focus:border-primary disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+                      />
+                    </label>
                     <button
                       type="button"
-                      onClick={onAddNode}
-                      className="inline-flex h-9 items-center gap-2 rounded-full bg-foreground px-3 text-sm font-medium text-background transition hover:bg-foreground/88"
+                      onClick={derivePending ? onStopDerive : onStartDerive}
+                      disabled={derivePending ? !onStopDerive : readOnly || !onStartDerive}
+                      className={cn(
+                        "inline-flex h-9 items-center gap-2 rounded-full px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44",
+                        derivePending
+                          ? "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                          : "bg-primary text-white hover:bg-primary/90"
+                      )}
                     >
-                      <Plus className="h-4 w-4" aria-hidden="true" />
-                      {t("mapForm.addNode")}
+                      {derivePending ? (
+                        <>
+                          <StopCircle className="h-4 w-4" aria-hidden="true" />
+                          {t("mapForm.stopDerive")}
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" aria-hidden="true" />
+                          {t("mapForm.startDerive")}
+                        </>
+                      )}
                     </button>
-                  ) : null}
-                </>
-              ) : null}
-              {showDeriveControls ? (
-                <>
-                  <label className="flex h-9 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs font-medium text-foreground/62">
-                    <span className="whitespace-nowrap">{t("mapForm.deriveMaxRounds")}</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={20}
-                      step={1}
-                      value={deriveMaxRounds}
-                      onChange={(event) => onChangeDeriveMaxRounds?.(Number.parseInt(event.target.value, 10) || 1)}
-                      disabled={readOnly || derivePending}
-                      aria-label={t("mapForm.deriveMaxRounds")}
-                      className="h-6 w-12 rounded-md border border-border bg-background px-2 text-center text-sm font-semibold text-foreground outline-none transition focus:border-primary disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
-                    />
-                  </label>
+                    {deriveStatus ? (
+                      <span className="inline-flex h-9 max-w-[18rem] items-center gap-2 rounded-full bg-muted px-3 text-xs text-foreground/58" aria-live="polite">
+                        {derivePending ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
+                        <span className="truncate">
+                          {deriveStatus || (deriveRound > 0 ? t("mapForm.deriveRunning") : "")}
+                        </span>
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+              ) : (
+                <span aria-hidden="true" />
+              )}
+
+              <div ref={toolbarRef} className="relative flex shrink-0 items-start gap-2">
+                {onLayoutNodes ? (
                   <button
                     type="button"
-                    onClick={derivePending ? onStopDerive : onStartDerive}
-                    disabled={derivePending ? !onStopDerive : readOnly || !onStartDerive}
+                    onClick={handleFormatGraph}
+                    disabled={readOnly || derivePending || draft.nodes.length === 0}
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-border bg-background/95 px-3 text-sm font-medium text-foreground shadow-lg shadow-foreground/8 backdrop-blur transition hover:bg-muted disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44"
+                    title={t("mapForm.formatGraph")}
+                    aria-label={t("mapForm.formatGraph")}
+                  >
+                    <Wand2 className="h-4 w-4" aria-hidden="true" />
+                    <span>{t("mapForm.formatGraph")}</span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setCanvasDragMode((current) => !current)}
+                  disabled={readOnly || derivePending}
+                  aria-pressed={canvasDragMode}
+                  title={t("mapForm.dragCanvas")}
+                  aria-label={t("mapForm.dragCanvas")}
+                  className={cn(
+                    "inline-flex h-9 items-center gap-2 rounded-full border px-3 text-sm font-medium shadow-lg shadow-foreground/8 backdrop-blur transition disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-foreground/44",
+                    canvasDragMode
+                      ? "border-primary/45 bg-primary/10 text-primary hover:bg-primary/15"
+                      : "border-border bg-background/95 text-foreground hover:bg-muted"
+                  )}
+                >
+                  <Hand className="h-4 w-4" aria-hidden="true" />
+                  <span>{t("mapForm.dragCanvas")}</span>
+                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setFilterPanelOpen((current) => !current)}
+                    title={t("mapForm.filterGraph")}
+                    aria-label={t("mapForm.filterGraph")}
+                    aria-expanded={filterPanelOpen}
                     className={cn(
-                      "inline-flex h-9 items-center gap-2 rounded-full px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44",
-                      derivePending
-                        ? "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                        : "bg-primary text-white hover:bg-primary/90"
+                      "inline-flex h-9 items-center gap-2 rounded-full border px-3 text-sm font-medium shadow-lg shadow-foreground/8 backdrop-blur transition",
+                      filterPanelOpen || isFilterActive
+                        ? "border-primary/45 bg-primary/10 text-primary hover:bg-primary/15"
+                        : "border-border bg-background/95 text-foreground hover:bg-muted"
                     )}
                   >
-                    {derivePending ? (
-                      <>
-                        <StopCircle className="h-4 w-4" aria-hidden="true" />
-                        {t("mapForm.stopDerive")}
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-4 w-4" aria-hidden="true" />
-                        {t("mapForm.startDerive")}
-                      </>
-                    )}
-                  </button>
-                  {deriveStatus ? (
-                    <span className="inline-flex h-9 max-w-[18rem] items-center gap-2 rounded-full bg-muted px-3 text-xs text-foreground/58" aria-live="polite">
-                      {derivePending ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
-                      <span className="truncate">
-                        {deriveStatus || (deriveRound > 0 ? t("mapForm.deriveRunning") : "")}
+                    <Filter className="h-4 w-4" aria-hidden="true" />
+                    <span>{t("mapForm.filterGraph")}</span>
+                    {isFilterActive ? (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-[11px] font-semibold text-primary">
+                        {visibleNodeTypes.length + visibleRelationTypes.length}
                       </span>
-                    </span>
+                    ) : null}
+                    <ChevronDown className={cn("h-3.5 w-3.5 transition", filterPanelOpen ? "rotate-180" : "")} aria-hidden="true" />
+                  </button>
+                  {filterPanelOpen ? (
+                    <div
+                      ref={filterPanelRef}
+                      className="absolute right-0 top-full z-30 mt-2 w-[22rem] rounded-2xl border border-border bg-background/98 p-3 shadow-2xl shadow-foreground/12 backdrop-blur"
+                    >
+                      <div className="flex items-center justify-between gap-2 border-b border-border/70 pb-2">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground/78">{t("mapForm.filterGraph")}</p>
+                          <p className="text-xs text-foreground/46">{t("mapForm.filterDescription")}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={resetGraphFilters}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-xs font-medium text-foreground transition hover:bg-muted"
+                        >
+                          {t("mapForm.filterReset")}
+                        </button>
+                      </div>
+                      <div className="mt-3 space-y-4">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-foreground/40">{t("mapForm.filterNodeTypes")}</p>
+                            <span className="text-xs text-foreground/42">
+                              {visibleNodeTypes.length}/{mapNodeTypes.length}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {mapNodeTypes.map((type) => {
+                              const active = visibleNodeTypes.includes(type);
+
+                              return (
+                                <label
+                                  key={type}
+                                  className={cn(
+                                    "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition",
+                                    active
+                                      ? "border-primary/30 bg-primary/8 text-foreground"
+                                      : "border-border bg-background text-foreground/60 hover:bg-muted/40"
+                                  )}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={active}
+                                    onChange={() => toggleVisibleNodeType(type)}
+                                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                  />
+                                  <span className="truncate">{t(`mapForm.nodeTypes.${type}`)}</span>
+                                  {active ? <Check className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" /> : null}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-foreground/40">{t("mapForm.filterRelationTypes")}</p>
+                            <span className="text-xs text-foreground/42">
+                              {visibleRelationTypes.length}/{mapRelationTypes.length}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {mapRelationTypes.map((relation) => {
+                              const active = visibleRelationTypes.includes(relation);
+
+                              return (
+                                <label
+                                  key={relation}
+                                  className={cn(
+                                    "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition",
+                                    active
+                                      ? "border-primary/30 bg-primary/8 text-foreground"
+                                      : "border-border bg-background text-foreground/60 hover:bg-muted/40"
+                                  )}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={active}
+                                    onChange={() => toggleVisibleRelationType(relation)}
+                                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                  />
+                                  <span className="truncate">{t(`mapForm.relationTypes.${relation}`)}</span>
+                                  {active ? <Check className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" /> : null}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   ) : null}
-                </>
-              ) : null}
+                </div>
+              </div>
             </div>
           ) : null}
 
           {!readOnly && showSelectionPanel && (selectedNode || selectedEdge) ? (
-            <div className="absolute bottom-4 left-4 z-20 max-w-[22rem] rounded-2xl border border-border bg-background/96 p-3 shadow-lg shadow-foreground/10 backdrop-blur">
+            <div className="absolute bottom-4 left-4 z-20 max-w-[22rem] rounded-2xl border border-border bg-background/98 p-3 shadow-lg shadow-foreground/12 backdrop-blur">
               {selectedNode ? (
                 <div className="space-y-2">
                   <div className="min-w-0">
                     <p className="text-[11px] uppercase tracking-wide text-foreground/38">{t("mapForm.selection.node")}</p>
-                    <p className="truncate text-sm font-semibold text-foreground/76">{selectedNode.name || t("mapForm.nodeUntitled")}</p>
+                    <p className="truncate text-sm font-semibold text-foreground">{selectedNode.name || t("mapForm.nodeUntitled")}</p>
                     <p className="mt-0.5 truncate text-xs text-foreground/46">{t(`mapForm.nodeTypes.${selectedNode.type}`)}</p>
                     {selectedNode.description ? (
                       <p className="mt-2 line-clamp-2 text-xs leading-5 text-foreground/54">{selectedNode.description}</p>
@@ -496,12 +798,47 @@ export function MapGraphEditor({
                       {t("mapForm.connectNodeHint", { node: selectedNode.name || t("mapForm.nodeUntitled") })}
                     </p>
                   ) : null}
+                  <div className="rounded-xl border border-border/70 bg-background/75 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] uppercase tracking-wide text-foreground/38">{t("mapForm.relatedEdgesTitle")}</p>
+                      <span className="text-[11px] text-foreground/42">
+                        {t("mapForm.relatedEdgesCount", { count: selectedNodeRelationEdges.length })}
+                      </span>
+                    </div>
+                    {selectedNodeRelationEdges.length > 0 ? (
+                      <div className="mt-2 space-y-1.5">
+                        {selectedNodeRelationEdges.map((edge) => (
+                          <button
+                            key={edge.id}
+                            type="button"
+                            onClick={() => {
+                              onSelectEdge(edge.id);
+                              onSelectNode("");
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-left transition hover:border-primary/45 hover:bg-primary/8"
+                          >
+                            <Link2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-semibold text-foreground">{relationLabel(edge.relation)}</span>
+                              <span className="mt-0.5 block truncate text-[11px] text-foreground/62">
+                                {formatEdgeEndpointLabel(edge.source, nodeNameById, t)} → {formatEdgeEndpointLabel(edge.target, nodeNameById, t)}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-2.5 py-2 text-xs leading-5 text-foreground/48">
+                        {t("mapForm.relatedEdgesEmpty")}
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : selectedEdge ? (
                 <div className="space-y-2">
                   <div className="min-w-0">
                     <p className="text-[11px] uppercase tracking-wide text-foreground/38">{t("mapForm.selection.edge")}</p>
-                    <p className="truncate text-sm font-semibold text-foreground/76">{relationLabel(selectedEdge.relation)}</p>
+                    <p className="truncate text-sm font-semibold text-foreground">{relationLabel(selectedEdge.relation)}</p>
                     <p className="mt-0.5 truncate text-xs text-foreground/46">
                       {formatEdgeEndpointLabel(selectedEdge.source, nodeNameById, t)} → {formatEdgeEndpointLabel(selectedEdge.target, nodeNameById, t)}
                     </p>
@@ -552,11 +889,11 @@ export function MapGraphEditor({
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 {nodeCount === 0 ? (
                   <div className="grid h-full place-items-center rounded-xl border border-dashed border-border bg-muted/20 px-4 text-center text-sm text-foreground/46">
-                    {t("mapForm.canvasEmpty")}
+                    {draft.nodes.length > 0 ? t("mapForm.filterNoResult") : t("mapForm.canvasEmpty")}
                   </div>
                 ) : (
                   <div className="grid gap-3 lg:grid-cols-2">
-                    {draft.nodes.map((node) => {
+                    {visibleDraft.nodes.map((node) => {
                       const isSelected = selectedNodeId === node.id;
 
                       return (
@@ -580,7 +917,7 @@ export function MapGraphEditor({
                           className={cn(
                             "rounded-xl border px-3 py-3 text-left outline-none transition hover:border-primary/35 hover:bg-muted/40 focus:border-primary/45 focus:bg-muted/40",
                             isSelected
-                              ? "border-primary/45 bg-primary/8 text-foreground shadow-sm shadow-primary/10 ring-1 ring-primary/20"
+                              ? "border-primary/55 bg-primary/12 text-foreground shadow-sm shadow-primary/12 ring-1 ring-primary/25"
                               : "border-border bg-background text-foreground"
                           )}
                         >
@@ -598,7 +935,7 @@ export function MapGraphEditor({
 
                 {edgeCount > 0 ? (
                   <div className="mt-4 space-y-2">
-                    {draft.edges.map((edge) => {
+                    {visibleDraft.edges.map((edge) => {
                       const isSelected = selectedEdgeId === edge.id;
 
                       return (
@@ -612,7 +949,7 @@ export function MapGraphEditor({
                           className={cn(
                             "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:border-primary/35 hover:bg-muted/40",
                             isSelected
-                              ? "border-primary/45 bg-primary/8 text-foreground shadow-sm shadow-primary/10 ring-1 ring-primary/20"
+                              ? "border-primary/55 bg-primary/12 text-foreground shadow-sm shadow-primary/12 ring-1 ring-primary/25"
                               : "border-border bg-background text-foreground"
                           )}
                         >
@@ -647,7 +984,12 @@ function syncGraphToDraft(
   relationLabel: (relation: WorkspaceMapMaterialRelationType) => string,
   colors: {
     edge: string;
+    relatedEdge: string;
     selectedEdge: string;
+  },
+  selection: {
+    relatedNodeIds: Set<string>;
+    relatedEdgeIds: Set<string>;
   }
 ) {
   const nextNodeIds = new Set(draft.nodes.map((node) => node.id));
@@ -661,13 +1003,16 @@ function syncGraphToDraft(
 
   for (const node of draft.nodes) {
     const selected = node.id === selectedNodeId;
+    const related = selection.relatedNodeIds.has(node.id);
     const attributes = {
-      color: getNodeColor(node.type, selected),
-      highlighted: selected,
+      color: getNodeColor(node.type, selected, related),
+      forceLabel: selected || related,
+      highlighted: selected || related,
       label: node.name || " ",
-      size: getNodeSize(node.type, selected),
+      size: getNodeSize(node.type, selected, related),
       mapType: node.type,
       type: "circle",
+      zIndex: selected ? 2 : related ? 1 : 0,
       x: node.x,
       y: node.y
     };
@@ -691,13 +1036,16 @@ function syncGraphToDraft(
     }
 
     const selected = edge.id === selectedEdgeId;
+    const related = selection.relatedEdgeIds.has(edge.id);
     const attributes = {
-      color: selected ? colors.selectedEdge : colors.edge,
+      color: selected ? colors.selectedEdge : related ? colors.relatedEdge : colors.edge,
       description: edge.description,
-      highlighted: selected,
+      forceLabel: selected || related,
+      highlighted: selected || related,
       label: relationLabel(edge.relation),
       relation: edge.relation,
-      size: selected ? 2.2 : 1.1
+      size: selected ? 2.8 : related ? 1.8 : 1.15,
+      zIndex: selected ? 2 : related ? 1 : 0
     };
 
     if (graph.hasEdge(edge.id)) {
@@ -716,20 +1064,84 @@ function syncGraphToDraft(
   }
 }
 
-function getNodeColor(type: WorkspaceMapMaterialNodeType, selected: boolean) {
+function filterMapDraft(
+  draft: MapCreateDraft,
+  visibleNodeTypes: Set<WorkspaceMapMaterialNodeType> | WorkspaceMapMaterialNodeType[],
+  visibleRelationTypes: Set<WorkspaceMapMaterialRelationType> | WorkspaceMapMaterialRelationType[]
+): MapCreateDraft {
+  const nodeTypeSet = visibleNodeTypes instanceof Set ? visibleNodeTypes : new Set(visibleNodeTypes);
+  const relationTypeSet = visibleRelationTypes instanceof Set ? visibleRelationTypes : new Set(visibleRelationTypes);
+  const nodes = draft.nodes.filter((node) => nodeTypeSet.has(node.type));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = draft.edges.filter(
+    (edge) => relationTypeSet.has(edge.relation) && nodeIds.has(edge.source) && nodeIds.has(edge.target)
+  );
+
+  return {
+    ...draft,
+    nodes,
+    edges
+  };
+}
+
+function buildRelatedNodeIdSet(draft: MapCreateDraft, selectedNodeId: string, selectedEdgeId = "") {
+  const result = new Set<string>();
+
+  if (selectedNodeId) {
+    result.add(selectedNodeId);
+
+    for (const edge of draft.edges) {
+      if (edge.source === selectedNodeId || edge.target === selectedNodeId) {
+        result.add(edge.source);
+        result.add(edge.target);
+      }
+    }
+  }
+
+  if (selectedEdgeId) {
+    const edge = draft.edges.find((item) => item.id === selectedEdgeId);
+
+    if (edge) {
+      result.add(edge.source);
+      result.add(edge.target);
+    }
+  }
+
+  return result;
+}
+
+function buildRelatedEdgeIdSet(draft: MapCreateDraft, selectedNodeId: string, selectedEdgeId = "") {
+  const result = new Set<string>();
+
+  if (selectedNodeId) {
+    for (const edge of draft.edges) {
+      if (edge.source === selectedNodeId || edge.target === selectedNodeId) {
+        result.add(edge.id);
+      }
+    }
+  }
+
+  if (selectedEdgeId) {
+    result.add(selectedEdgeId);
+  }
+
+  return result;
+}
+
+function getNodeColor(type: WorkspaceMapMaterialNodeType, selected: boolean, related = false) {
   const palette: Record<WorkspaceMapMaterialNodeType, string> = {
-    country: selected ? "#1D4ED8" : "#3B82F6",
-    region: selected ? "#047857" : "#10B981",
-    city: selected ? "#BE123C" : "#F43F5E",
-    village: selected ? "#B45309" : "#F59E0B",
-    landmark: selected ? "#6D28D9" : "#8B5CF6",
-    path: selected ? "#64748B" : "#94A3B8"
+    country: selected ? "#1E3A8A" : related ? "#2563EB" : "#3B82F6",
+    region: selected ? "#115E59" : related ? "#0F766E" : "#10B981",
+    city: selected ? "#9F1239" : related ? "#DB2777" : "#F43F5E",
+    village: selected ? "#92400E" : related ? "#D97706" : "#F59E0B",
+    landmark: selected ? "#5B21B6" : related ? "#7C3AED" : "#8B5CF6",
+    path: selected ? "#334155" : related ? "#475569" : "#94A3B8"
   };
 
   return palette[type];
 }
 
-function getNodeSize(type: WorkspaceMapMaterialNodeType, selected: boolean) {
+function getNodeSize(type: WorkspaceMapMaterialNodeType, selected: boolean, related = false) {
   const sizes: Record<WorkspaceMapMaterialNodeType, number> = {
     country: 16,
     region: 14,
@@ -739,10 +1151,14 @@ function getNodeSize(type: WorkspaceMapMaterialNodeType, selected: boolean) {
     path: 10
   };
 
-  return (sizes[type] ?? 11) + (selected ? 3 : 0);
+  return (sizes[type] ?? 11) + (selected ? 5 : related ? 2 : 0);
 }
 
-function getCanvasThemeColor(container: HTMLElement, variable: string, fallback: string, alpha?: number) {
+function getCanvasThemeColor(container: HTMLElement | null, variable: string, fallback: string, alpha?: number) {
+  if (!container) {
+    return fallback;
+  }
+
   const value = getComputedStyle(container).getPropertyValue(variable).trim();
 
   if (!value) {
@@ -755,14 +1171,16 @@ function getCanvasThemeColor(container: HTMLElement, variable: string, fallback:
 function getGraphThemeColors(container: HTMLElement | null) {
   if (!container) {
     return {
-      edge: "#94A3B8",
-      selectedEdge: "#2563EB"
+      edge: "#475569",
+      relatedEdge: "#0F172A",
+      selectedEdge: "#1D4ED8"
     };
   }
 
   return {
-    edge: getCanvasThemeColor(container, "--foreground", "#94A3B8", 0.42),
-    selectedEdge: getCanvasThemeColor(container, "--primary", "#2563EB")
+    edge: getCanvasThemeColor(container, "--foreground", "#475569", 0.78),
+    relatedEdge: getCanvasThemeColor(container, "--foreground", "#0F172A", 0.96),
+    selectedEdge: getCanvasThemeColor(container, "--primary", "#1D4ED8")
   };
 }
 
@@ -782,4 +1200,12 @@ function hasCanvasWebglSupport(canvas: HTMLCanvasElement, contextNames: Array<"w
 
 function formatEdgeEndpointLabel(nodeId: string, nodeNameById: Map<string, string>, t: (key: string, values?: Record<string, string | number>) => string) {
   return nodeNameById.get(nodeId) ?? nodeId ?? t("mapForm.none");
+}
+
+function clampMapDeriveMaxRounds(value: number) {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  return Math.min(20, Math.max(1, Math.round(value)));
 }

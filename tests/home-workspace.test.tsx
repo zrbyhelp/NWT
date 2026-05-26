@@ -260,6 +260,99 @@ describe("HomeWorkspace script manager", () => {
     expect(onEdgeSave).not.toHaveBeenCalled();
   });
 
+  it("shows graph toolbar controls, formats nodes, and filters visible content", async () => {
+    const onLayoutNodes = vi.fn();
+    const onChangeDeriveMaxRounds = vi.fn();
+    const onStartDerive = vi.fn();
+    const onStopDerive = vi.fn();
+
+    render(
+      <MapGraphEditor
+        draft={{
+          name: "工具栏地图",
+          description: "用于测试图谱工具栏",
+          communityVisible: true,
+          style: "realistic",
+          nodes: [
+            {
+              id: "node-country",
+              name: "王国",
+              description: "",
+              type: "country",
+              x: 0,
+              y: 0
+            },
+            {
+              id: "node-city",
+              name: "王城",
+              description: "",
+              type: "city",
+              x: 1,
+              y: 1
+            }
+          ],
+          edges: [
+            {
+              id: "edge-connects",
+              relation: "connects",
+              source: "node-country",
+              target: "node-city",
+              description: "王国连到王城"
+            }
+          ]
+        }}
+        onAddNode={vi.fn()}
+        onChangeDeriveMaxRounds={onChangeDeriveMaxRounds}
+        onLayoutNodes={onLayoutNodes}
+        onSelectNode={vi.fn()}
+        onSelectEdge={vi.fn()}
+        onStartDerive={onStartDerive}
+        onStopDerive={onStopDerive}
+        relationLabel={(relation) => readMaterialMessage(`mapForm.relationTypes.${relation}`)}
+        selectedNodeId=""
+        selectedEdgeId=""
+        t={(key, values) => readMaterialMessage(key, values)}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "格式化" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "拖动画布" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "筛选" })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "最多衍生轮次" })).toHaveValue(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "格式化" }));
+
+    await waitFor(() => {
+      expect(onLayoutNodes).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "node-country" }),
+          expect.objectContaining({ id: "node-city" })
+        ])
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "拖动画布" }));
+    expect(screen.getByRole("button", { name: "拖动画布" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    expect(screen.getByText("按节点类型和关系类型控制画布显示。")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "国家" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "国家" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("王国")).not.toBeInTheDocument();
+      expect(screen.queryByText("王国 → 王城")).not.toBeInTheDocument();
+      expect(screen.getByText("王城")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "最多衍生轮次" }), { target: { value: "99" } });
+    expect(onChangeDeriveMaxRounds).toHaveBeenLastCalledWith(20);
+    expect(screen.getByRole("spinbutton", { name: "最多衍生轮次" })).toHaveValue(3);
+
+    expect(onStartDerive).not.toHaveBeenCalled();
+    expect(onStopDerive).not.toHaveBeenCalled();
+  });
+
   it("allows oversized generated item images when building the save payload", () => {
     const draft = createDefaultItemDraft();
     const boardImageFile = new File(["board"], "item-board.png", { type: "image/png" });
