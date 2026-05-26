@@ -3641,9 +3641,8 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       }
 
       const snapshot = serializeMapDraft(mapCreateDraftRef.current);
-      const seedNode = snapshot.nodes[Math.floor(Math.random() * snapshot.nodes.length)] ?? snapshot.nodes[0] ?? null;
 
-      if (!seedNode) {
+      if (snapshot.nodes.length === 0) {
         mapDeriveRunIdRef.current = "";
         setMapDerivePending(false);
         setMapDeriveRound(0);
@@ -3652,17 +3651,14 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         return;
       }
 
-      const seedName = seedNode.name || materialT("mapForm.nodeUntitled");
-
       setMapDeriveRound(roundIndex);
       setMapDeriveStatus(materialT("mapForm.deriveProgress", {
         maxRounds,
-        round: roundIndex,
-        seed: seedName
+        round: roundIndex
       }));
 
       try {
-        const result = await deriveHomeMapGraphRound(snapshot, seedNode.id, roundIndex, maxRounds, locale);
+        const result = await deriveHomeMapGraphRound(snapshot, roundIndex, maxRounds, locale);
 
         if (mapDeriveRunIdRef.current !== runId) {
           return;
@@ -3675,7 +3671,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
         mapCreateDraftRef.current = laidOutDraft;
         setMapCreateDraft(laidOutDraft);
-        setMapSelectedNodeId(firstNewNodeId || seedNode.id);
+        setMapSelectedNodeId(firstNewNodeId || nextDraft.nodes[0]?.id || "");
         setMapSelectedEdgeId("");
         setMapAiMessages((current) => [
           ...current,
@@ -3685,8 +3681,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             content: materialT("mapForm.deriveRoundMessage", {
               maxRounds,
               message: result.message || materialT("mapForm.deriveRoundFallback"),
-              round: roundIndex,
-              seed: seedName
+              round: roundIndex
             })
           }
         ]);

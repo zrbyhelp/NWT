@@ -2506,7 +2506,7 @@ describe("map materials", () => {
       ]
     };
 
-    const prompt = buildMapDeriveRoundMessages(input, "node-city", 2, 5, "zh-CN");
+    const prompt = buildMapDeriveRoundMessages(input, 2, 5, "zh-CN");
     const sanitized = sanitizeMapDeriveRoundPatch(
       {
         addNodes: [
@@ -2542,12 +2542,13 @@ describe("map materials", () => {
       },
       input
     );
-    const result = await deriveMapGraphRound(input, "node-city", 2, 5, "zh-CN");
+    const result = await deriveMapGraphRound(input, 2, 5, "zh-CN");
 
-    expect(prompt[0].content).toContain("Only add new nodes and new edges.");
+    expect(prompt[0].content).toContain("Inspect the whole current map graph and choose the best growth direction yourself.");
     expect(prompt[1].content).toContain('"roundIndex":2');
     expect(prompt[1].content).toContain('"maxRounds":5');
-    expect(prompt[1].content).toContain('"seedNodeId":"node-city"');
+    expect(prompt[1].content).toContain('"currentDraft"');
+    expect(prompt[1].content).not.toContain("seedNodeId");
     expect(sanitized.addNodes).toHaveLength(2);
     expect(sanitized.addEdges).toHaveLength(2);
     expect(sanitized.addNodes?.[0]?.id).not.toBe("node-city");

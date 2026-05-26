@@ -1403,23 +1403,20 @@ export async function assistMapDraft(input: MapMaterialCreateInput, instruction:
 
 export async function deriveMapGraphRound(
   input: MapMaterialCreateInput,
-  seedNodeId: string,
   roundIndex: number,
   maxRounds: number,
   locale: Locale
 ): Promise<MapAiAssistResult> {
   const viewer = await requireAuth();
-  const normalizedSeedNodeId = normalizeMapAssistId(seedNodeId);
-  const seedNode = input.nodes.find((node) => normalizeMapAssistId(node.id) === normalizedSeedNodeId);
   const normalizedRoundIndex = normalizeMapDeriveRound(roundIndex, 1);
   const normalizedMaxRounds = normalizeMapDeriveRound(maxRounds, 3);
 
-  if (input.nodes.length === 0 || !seedNode) {
+  if (input.nodes.length === 0) {
     throw new Error("MAP_DERIVE_EMPTY_GRAPH");
   }
 
   const reply = await generateDefaultLlmReply(
-    buildMapDeriveRoundMessages(input, seedNode.id, normalizedRoundIndex, normalizedMaxRounds, locale),
+    buildMapDeriveRoundMessages(input, normalizedRoundIndex, normalizedMaxRounds, locale),
     viewer.id,
     false,
     locale,
@@ -1429,7 +1426,8 @@ export async function deriveMapGraphRound(
         currentDraft: input,
         maxRounds: normalizedMaxRounds,
         roundIndex: normalizedRoundIndex,
-        seedNode
+        graphNodeCount: input.nodes.length,
+        graphEdgeCount: input.edges.length
       }
     }
   );
@@ -2691,28 +2689,26 @@ export function buildMapAssistMessages(input: MapMaterialCreateInput, instructio
 
 export function buildMapDeriveRoundMessages(
   input: MapMaterialCreateInput,
-  seedNodeId: string,
   roundIndex: number,
   maxRounds: number,
   locale: Locale
 ): RuntimeChatMessage[] {
   const isEnglish = locale === "en-US";
   const languageRule = isEnglish ? "Respond in English." : "请使用中文回复。";
-  const normalizedSeedNodeId = normalizeMapAssistId(seedNodeId);
-  const seedNode = input.nodes.find((node) => normalizeMapAssistId(node.id) === normalizedSeedNodeId) ?? null;
 
   return [
     {
       role: "system",
       content: [
         "You are an assistant for growing a map material graph in New World Novel.",
-        "This task is one derivation round. Focus growth around the seed node, but keep the result coherent with the whole current map graph.",
+        "This task is one derivation round. Inspect the whole current map graph and choose the best growth direction yourself.",
+        "You may extend an existing cluster or start a new branch, but the result must stay coherent with the whole current map graph.",
         "Only add new nodes and new edges. Do not update, delete, rename, or move existing nodes, edges, map name, map description, or style.",
         "Node types must be one of country, region, city, village, landmark, path.",
         "Relation types must be one of contains, belongs_to, adjacent, connects, through, north_of, south_of, east_of, west_of.",
         "You may freely decide how many new nodes and edges to add in this round.",
         "Every new node must have a legal type, a non-empty name, and a description.",
-        "At least one new edge must connect a newly added node back to an existing node, preferably the seed node.",
+        "At least one new edge must connect a newly added node back to an existing node.",
         "Do not reuse existing node ids or edge ids. If you are unsure, create stable ids prefixed with derive-node or derive-edge.",
         "Coordinates are optional and should usually be omitted because the app will generate layout positions.",
         "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{\"addNodes\":[...],\"addEdges\":[...]}}.",
@@ -2726,9 +2722,7 @@ export function buildMapDeriveRoundMessages(
       content: JSON.stringify({
         currentDraft: input,
         maxRounds,
-        roundIndex,
-        seedNode,
-        seedNodeId: normalizedSeedNodeId || seedNodeId
+        roundIndex
       })
     }
   ];

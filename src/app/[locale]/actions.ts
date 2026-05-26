@@ -174,12 +174,11 @@ export async function assistHomeMapDraft(input: MapMaterialCreateInput, instruct
 
 export async function deriveHomeMapGraphRound(
   input: MapMaterialCreateInput,
-  seedNodeId: string,
   roundIndex: number,
   maxRounds: number,
   locale: Locale
 ) {
-  return deriveMapGraphRound(input, seedNodeId, roundIndex, maxRounds, locale);
+  return deriveMapGraphRound(input, roundIndex, maxRounds, locale);
 }
 
 export async function assistHomeSceneDraftWithImages(formData: FormData, locale: Locale) {

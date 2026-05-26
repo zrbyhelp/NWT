@@ -909,8 +909,6 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByRole("spinbutton", { name: "最多衍生轮次" }), { target: { value: "1" } });
     expect(screen.getByRole("spinbutton", { name: "最多衍生轮次" })).toHaveValue(1);
 
-    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
-
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "开始衍生" })).not.toBeDisabled();
     });
@@ -918,7 +916,7 @@ describe("HomeWorkspace script manager", () => {
 
     await waitFor(() => {
       expect(deriveHomeMapGraphRound).toHaveBeenCalledTimes(1);
-      expect(screen.getByText("开始逐轮衍生，共 1 轮。")).toBeInTheDocument();
+      expect(screen.getByText("开始逐轮衍生，共 1 轮，AI 将根据整张图自主判断增长方向。")).toBeInTheDocument();
       expect(screen.getByText((content) => content.includes("已从悬空城衍生东港。"))).toBeInTheDocument();
       expect(screen.getAllByText("东港").length).toBeGreaterThan(0);
     });
@@ -931,13 +929,11 @@ describe("HomeWorkspace script manager", () => {
           })
         ])
       }),
-      "node-country",
       1,
       1,
       "zh-CN"
     );
     expect(updateHomeMapMaterial).toHaveBeenCalledTimes(1);
-    randomSpy.mockRestore();
 
     fireEvent.click(screen.getAllByRole("button", { name: "新增节点" })[0]);
     const nodeDialog = screen.getByRole("heading", { name: "新增节点" }).closest("section") as HTMLElement;
