@@ -163,6 +163,16 @@ export async function uploadItemModelInputImage(userId: string, file: File, opti
   return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "item-model-inputs", options);
 }
 
+export async function uploadMapImage(userId: string, file: File, options: MaterialImageValidationOptions = {}) {
+  const contentType = file.type.toLowerCase();
+
+  if (!isValidMaterialImageFile(file, options)) {
+    throw new Error("INVALID_MAP_IMAGE_FILE");
+  }
+
+  return uploadMaterialImageBytes(userId, Buffer.from(await file.arrayBuffer()), contentType, "map-images", options);
+}
+
 export async function uploadItemModelBytes(userId: string, bytes: Uint8Array, contentType: string, fileName = "item-model.glb") {
   const normalizedContentType = normalizeMaterialModelContentType(contentType);
 

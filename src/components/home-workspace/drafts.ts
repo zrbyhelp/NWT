@@ -15,6 +15,7 @@ import type {
   SceneMaterialCreateInput,
   WorkspaceItemMaterialMetadata,
   WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialImage,
   WorkspaceMapMaterialMetadata,
   WorkspaceMapMaterialNode,
   WorkspaceMapMaterialNodeType,
@@ -29,6 +30,7 @@ import type {
 } from "@/lib/home-workspace";
 import {
   applyPatchToMapDraft,
+  buildMapGraphSignature,
   buildMapMaterialMetadata,
   createDefaultMapDraft,
   createMapEdge,
@@ -41,6 +43,7 @@ import {
   mapNodeTypes,
   mapRelationTypes,
   normalizeMapMaterialInput,
+  normalizeMapImageNodeBatchSize,
   serializeMapDraft,
   validateMapDraftForGraphSave,
   validateMapDraftForSave,
@@ -101,6 +104,8 @@ import {
   type CreatureTaxonomyFieldId,
   type CreatureVocalizationFieldId,
   type MaskAiMessage,
+  type MapGeoJsonDraft,
+  type MapImageDraft,
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource,
   type MaskBodyFieldId,
@@ -149,6 +154,8 @@ export {
   createInitialScenePanoramaGenerationDraft,
   createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
+  createMapImageDraftFromMaterial,
+  createMapGeoJsonDraftFromMaterial,
   createMapDraftFromMaterial,
   createMapEdge,
   createMapNode,
@@ -188,9 +195,11 @@ export {
   isValidSceneReferenceImage,
   isZipArchiveFile,
   normalizeSceneFaceSource,
+  normalizeMapImageNodeBatchSize,
   normalizeMapMaterialInput,
   normalizeScenePanoramaMaxRedrawAttempts,
   readTransferErrorCode,
+  revokeMapImagePreview,
   revokeItemBoardPreview,
   revokeCreatureBoardPreview,
   revokeItemDraftPreviews,
@@ -209,6 +218,7 @@ export {
   serializeMapDraft,
   serializeSceneTextDraft,
   applyPatchToMapDraft,
+  buildMapGraphSignature,
   buildMapMaterialMetadata,
   isMapNodeType,
   isMapRelationType,
@@ -653,6 +663,62 @@ function createSceneDraftFromMaterial(material: WorkspaceMaterial): SceneCreateD
   };
 }
 
+function createMapImageDraftFromMaterial(material: WorkspaceMaterial): MapImageDraft | null {
+  if (material.category !== "map") {
+    return null;
+  }
+
+  const mapDraft = createMapDraftFromMaterial(material);
+  const graphSignature = buildMapGraphSignature(mapDraft);
+  const metadata = getMapMaterialMetadata(material.metadata);
+  const image = metadata?.image ?? null;
+  const url = image?.url || material.previewUrl || "";
+
+  if (!url) {
+    return null;
+  }
+
+  return {
+    edgeCount: image?.edgeCount ?? mapDraft.edges.length,
+    file: null,
+    generatedAt: image?.generatedAt,
+    graphSignature: image?.graphSignature || graphSignature,
+    iterationCount: image?.iterationCount,
+    nodeBatchSize: normalizeMapImageNodeBatchSize(image?.nodeBatchSize),
+    nodeCount: image?.nodeCount ?? mapDraft.nodes.length,
+    outlineError: null,
+    outlinePending: false,
+    outlinePreviewUrl: null,
+    previewUrl: url,
+    referencePrompt: image?.referencePrompt ?? "",
+    source: normalizeMapImageSource(image?.source),
+    stale: Boolean(image?.graphSignature && image.graphSignature !== graphSignature),
+    storedUrl: url
+  };
+}
+
+function createMapGeoJsonDraftFromMaterial(material: WorkspaceMaterial): MapGeoJsonDraft | null {
+  if (material.category !== "map") {
+    return null;
+  }
+
+  const mapDraft = createMapDraftFromMaterial(material);
+  const graphSignature = buildMapGraphSignature(mapDraft);
+  const metadata = getMapMaterialMetadata(material.metadata);
+  const geojson = metadata?.geojson ?? null;
+
+  if (!geojson?.data) {
+    return null;
+  }
+
+  return {
+    ...geojson,
+    error: null,
+    pending: false,
+    stale: geojson.graphSignature !== graphSignature
+  };
+}
+
 function serializeMaskDraft(draft: MaskCreateDraft) {
   return {
     name: draft.name,
@@ -985,6 +1051,10 @@ function isWorkspaceMaterialStyle(style: string): style is WorkspaceMaterialStyl
   return materialStyles.includes(style as WorkspaceMaterialStyle);
 }
 
+function normalizeMapImageSource(source: WorkspaceMapMaterialImage["source"] | undefined | null) {
+  return source === "generated" ? "generated" : "uploaded";
+}
+
 function isMaskBoardDrawingStyle(style: string): style is MaskBoardDrawingStyle {
   return maskBoardDrawingStyles.includes(style as MaskBoardDrawingStyle);
 }
@@ -1113,12 +1183,78 @@ function buildItemMaterialFormData(draft: ItemCreateDraft, isEditing: boolean) {
   return formData;
 }
 
-function buildMapMaterialFormData(draft: MapCreateDraft) {
+function buildMapMaterialFormData(
+  draft: MapCreateDraft,
+  image: MapImageDraft | null = null,
+  geojson: MapGeoJsonDraft | null = null,
+  isEditing = false
+) {
   const formData = new FormData();
 
   formData.append("draft", JSON.stringify(serializeMapDraft(draft)));
+  const mode = getMapImageMode(image, isEditing);
+
+  formData.append("mapImageMode", mode);
+
+  if (image && mode !== "clear") {
+    formData.append("mapImageMeta", JSON.stringify(buildMapImageMetaForSave(image, draft)));
+  }
+
+  if (image?.file && mode === "replace") {
+    if (!isValidMaskBoardImage(image.file, { allowOversize: image.source === "generated" })) {
+      throw new Error("INVALID_MAP_IMAGE_FILE");
+    }
+
+    formData.append("mapImage", image.file);
+  }
+
+  if (geojson?.data && !geojson.stale && geojson.graphSignature === buildMapGraphSignature(draft)) {
+    formData.append("mapGeoJsonMeta", JSON.stringify(buildMapGeoJsonMetaForSave(geojson, draft)));
+  }
 
   return formData;
+}
+
+function getMapImageMode(image: MapImageDraft | null, isEditing: boolean): "keep" | "replace" | "clear" {
+  if (!image || image.stale) {
+    return "clear";
+  }
+
+  if (image.file) {
+    return "replace";
+  }
+
+  if (isEditing && image.storedUrl) {
+    return "keep";
+  }
+
+  return "clear";
+}
+
+function buildMapImageMetaForSave(image: MapImageDraft, draft: MapCreateDraft) {
+  return {
+    edgeCount: image.edgeCount ?? draft.edges.length,
+    generatedAt: image.generatedAt ?? new Date().toISOString(),
+    graphSignature: image.graphSignature || buildMapGraphSignature(draft),
+    iterationCount: image.iterationCount,
+    nodeBatchSize: normalizeMapImageNodeBatchSize(image.nodeBatchSize),
+    nodeCount: image.nodeCount ?? draft.nodes.length,
+    referencePrompt: image.referencePrompt ?? "",
+    source: image.source === "generated" ? "generated" : "uploaded"
+  };
+}
+
+function buildMapGeoJsonMetaForSave(geojson: MapGeoJsonDraft, draft: MapCreateDraft) {
+  return {
+    source: "algorithm",
+    data: geojson.data,
+    scale: geojson.scale,
+    edgeCount: geojson.edgeCount ?? draft.edges.length,
+    generatedAt: geojson.generatedAt ?? new Date().toISOString(),
+    graphSignature: geojson.graphSignature || buildMapGraphSignature(draft),
+    nodeCount: geojson.nodeCount ?? draft.nodes.length,
+    outlineBased: Boolean(geojson.outlineBased)
+  };
 }
 
 function normalizeScenePanoramaMaxRedrawAttempts(value: unknown) {
@@ -1537,6 +1673,26 @@ function getArchiveFileName(contentDisposition: string | null) {
 function revokeMaskBoardPreview(url: string) {
   if (url.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
     URL.revokeObjectURL(url);
+  }
+}
+
+function revokeMapImagePreview(image: MapImageDraft | null | undefined, nextImage: MapImageDraft | null | undefined = null) {
+  if (
+    image?.previewUrl.startsWith("blob:") &&
+    image.previewUrl !== nextImage?.previewUrl &&
+    typeof URL !== "undefined" &&
+    typeof URL.revokeObjectURL === "function"
+  ) {
+    URL.revokeObjectURL(image.previewUrl);
+  }
+
+  if (
+    image?.outlinePreviewUrl?.startsWith("blob:") &&
+    image.outlinePreviewUrl !== nextImage?.outlinePreviewUrl &&
+    typeof URL !== "undefined" &&
+    typeof URL.revokeObjectURL === "function"
+  ) {
+    URL.revokeObjectURL(image.outlinePreviewUrl);
   }
 }
 

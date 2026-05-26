@@ -39,6 +39,22 @@ export function appendItemBoardTargetPrompt(prompt: string) {
   return [prompt, ...target].join("\n");
 }
 
+export function appendMapImageTargetPrompt(prompt: string) {
+  const target = hasCjkText(prompt)
+    ? [
+        `目标输出：4K 16:9 横版世界地图插画，${maskBoardTargetResolution}。`,
+        "画面应像可阅读的小说世界地图：地理层级清楚，区域、城市、村落、地标和路径关系可辨。",
+        "可以使用简短地图标签辅助理解节点名称；不要水印，不要 UI 操作控件，不要生成进度环。"
+      ]
+    : [
+        `Target output: 4K 16:9 world map illustration, ${maskBoardTargetResolution}.`,
+        "Make it readable as an interactive fiction world map, with clear hierarchy across regions, settlements, landmarks, and routes.",
+        "Concise cartographic labels are allowed for node names. No watermark, UI controls, or progress ring in the image."
+      ];
+
+  return [prompt, ...target].join("\n");
+}
+
 export function buildItemViewPrompt(basePrompt: string, face: ScenePanoramaFace) {
   const faceLabelZh: Record<ScenePanoramaFace, string> = {
     back: "后视图",

@@ -31,7 +31,10 @@ import type {
   WorkspaceData,
   WorkspaceItemMaterialMetadata,
   WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialGeoJson,
   WorkspaceMapMaterialMetadata,
+  WorkspaceMapMaterialImage,
+  WorkspaceMapMaterialImageSource,
   WorkspaceMapMaterialNode,
   WorkspaceMapMaterialNodeType,
   WorkspaceMapMaterialRelationType,
@@ -58,7 +61,10 @@ export type {
   WorkspaceData,
   WorkspaceItemMaterialMetadata,
   WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialGeoJson,
   WorkspaceMapMaterialMetadata,
+  WorkspaceMapMaterialImage,
+  WorkspaceMapMaterialImageSource,
   WorkspaceMapMaterialNode,
   WorkspaceMapMaterialNodeType,
   WorkspaceMapMaterialRelationType,
@@ -159,6 +165,10 @@ export const sceneScalePresets = [
 ] as const;
 export const defaultSceneScalePreset = "mid" satisfies WorkspaceSceneScalePreset;
 export const maxSceneReferenceImages = 3;
+export const maxMapReferenceImages = 3;
+export const minMapImageNodeBatchSize = 1;
+export const maxMapImageNodeBatchSize = 100;
+export const defaultMapImageNodeBatchSize = 10;
 export const defaultScenePanoramaMaxRedrawAttempts = 1;
 export const minScenePanoramaMaxRedrawAttempts = 1;
 export const maxScenePanoramaMaxRedrawAttempts = 10;
@@ -416,6 +426,47 @@ export type SceneReferenceImageDraft = {
   id: string;
   file: File;
   previewUrl: string;
+};
+export type MapImageDraft = {
+  edgeCount?: number;
+  file: File | null;
+  generatedAt?: string;
+  graphSignature: string;
+  iterationCount?: number;
+  nodeBatchSize?: number;
+  nodeCount?: number;
+  outlineError?: string | null;
+  outlinePending?: boolean;
+  outlinePreviewUrl?: string | null;
+  previewUrl: string;
+  referencePrompt?: string;
+  source: WorkspaceMapMaterialImageSource | null;
+  stale: boolean;
+  storedUrl: string | null;
+};
+export type MapImageOutlineResult = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+  height: number;
+  width: number;
+};
+export type MapImageGenerationDraft = {
+  completedNodeIds: string[];
+  error: string | null;
+  failedRound: number;
+  paused: boolean;
+  pending: boolean;
+  progress: number;
+  relationSummary: string;
+  round: number;
+  totalRounds: number;
+};
+export type MapImageMetaDraft = WorkspaceMapMaterialImage;
+export type MapGeoJsonDraft = WorkspaceMapMaterialGeoJson & {
+  error?: string | null;
+  pending?: boolean;
+  stale?: boolean;
 };
 export type MaskCreateDraft = {
   name: string;

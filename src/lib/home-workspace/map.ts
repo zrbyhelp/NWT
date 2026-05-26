@@ -5,6 +5,8 @@ import type {
   MapDraftPatch,
   MapMaterialCreateInput,
   WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialGeoJson,
+  WorkspaceMapMaterialImage,
   WorkspaceMapMaterialMetadata,
   WorkspaceMapMaterialNode,
   WorkspaceMapMaterialNodeType,
@@ -25,6 +27,9 @@ export const mapRelationTypes = [
   "east_of",
   "west_of"
 ] as const;
+export const defaultMapImageNodeBatchSize = 10;
+export const minMapImageNodeBatchSize = 1;
+export const maxMapImageNodeBatchSize = 100;
 
 export function createDefaultMapDraft(): MapCreateDraft {
   return {
@@ -425,7 +430,11 @@ export function validateMapMaterialInput(input: MapMaterialCreateInput) {
   return normalized;
 }
 
-export function buildMapMaterialMetadata(input: MapMaterialCreateInput): WorkspaceMapMaterialMetadata {
+export function buildMapMaterialMetadata(
+  input: MapMaterialCreateInput,
+  image: WorkspaceMapMaterialImage | null = null,
+  geojson: WorkspaceMapMaterialGeoJson | null = null
+): WorkspaceMapMaterialMetadata {
   const normalized = validateMapMaterialInput(input);
 
   return {
@@ -435,7 +444,9 @@ export function buildMapMaterialMetadata(input: MapMaterialCreateInput): Workspa
     description: normalized.description,
     style: normalized.style,
     nodes: normalized.nodes,
-    edges: normalized.edges
+    edges: normalized.edges,
+    image,
+    geojson
   };
 }
 
@@ -457,6 +468,83 @@ export function isMapNodeType(value: string): value is WorkspaceMapMaterialNodeT
 
 export function isMapRelationType(value: string): value is WorkspaceMapMaterialRelationType {
   return mapRelationTypes.includes(value as WorkspaceMapMaterialRelationType);
+}
+
+export function normalizeMapImageNodeBatchSize(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
+
+  if (!Number.isFinite(parsed)) {
+    return defaultMapImageNodeBatchSize;
+  }
+
+  return Math.min(maxMapImageNodeBatchSize, Math.max(minMapImageNodeBatchSize, Math.round(parsed)));
+}
+
+export type MapImageNodeBatch = {
+  completedNodeIds: string[];
+  edges: WorkspaceMapMaterialEdge[];
+  index: number;
+  nodes: WorkspaceMapMaterialNode[];
+};
+
+export function buildMapImageNodeBatches(input: MapMaterialCreateInput, nodeBatchSize: unknown): MapImageNodeBatch[] {
+  const normalized = normalizeMapMaterialInput(input);
+  const batchSize = normalizeMapImageNodeBatchSize(nodeBatchSize);
+  const orderedNodes = sortMapImageNodesByHierarchy(normalized.nodes);
+  const batches: MapImageNodeBatch[] = [];
+  const completedNodeIds = new Set<string>();
+
+  for (let index = 0; index < orderedNodes.length; index += batchSize) {
+    const nodes = orderedNodes.slice(index, index + batchSize);
+    const currentNodeIds = new Set(nodes.map((node) => node.id));
+
+    nodes.forEach((node) => completedNodeIds.add(node.id));
+
+    const edges = normalized.edges.filter((edge) =>
+      completedNodeIds.has(edge.source) &&
+      completedNodeIds.has(edge.target) &&
+      (currentNodeIds.has(edge.source) || currentNodeIds.has(edge.target))
+    );
+
+    batches.push({
+      completedNodeIds: Array.from(completedNodeIds),
+      edges,
+      index: batches.length,
+      nodes
+    });
+  }
+
+  return batches;
+}
+
+export function buildMapGraphSignature(input: MapMaterialCreateInput) {
+  const normalized = normalizeMapMaterialInput(input);
+  const payload = {
+    description: normalized.description,
+    edges: [...normalized.edges]
+      .sort((left, right) => `${left.id}:${left.source}:${left.target}:${left.relation}`.localeCompare(`${right.id}:${right.source}:${right.target}:${right.relation}`, "zh-CN"))
+      .map((edge) => ({
+        description: edge.description,
+        id: edge.id,
+        relation: edge.relation,
+        source: edge.source,
+        target: edge.target
+      })),
+    name: normalized.name,
+    nodes: [...normalized.nodes]
+      .sort((left, right) => left.id.localeCompare(right.id, "zh-CN"))
+      .map((node) => ({
+        description: node.description,
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        x: roundMapLayoutCoordinate(node.x),
+        y: roundMapLayoutCoordinate(node.y)
+      })),
+    style: normalized.style
+  };
+
+  return `map-${hashStableString(JSON.stringify(payload))}`;
 }
 
 function normalizeMapMaterialInputStrict(input: MapMaterialCreateInput) {
@@ -528,6 +616,34 @@ function normalizeMapEdges(edges: WorkspaceMapMaterialEdge[] | undefined, nodeId
 
       return true;
     });
+}
+
+function sortMapImageNodesByHierarchy(nodes: WorkspaceMapMaterialNode[]) {
+  const typeRank = new Map(mapNodeTypes.map((type, index) => [type, index] as const));
+
+  return nodes
+    .map((node, index) => ({ index, node }))
+    .sort((left, right) => {
+      const rankDelta = (typeRank.get(left.node.type) ?? mapNodeTypes.length) - (typeRank.get(right.node.type) ?? mapNodeTypes.length);
+
+      if (rankDelta !== 0) {
+        return rankDelta;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.node);
+}
+
+function hashStableString(value: string) {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(36);
 }
 
 function createMapId(prefix: string) {

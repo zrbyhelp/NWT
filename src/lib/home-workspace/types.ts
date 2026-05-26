@@ -221,6 +221,81 @@ export type WorkspaceMapMaterialEdge = {
   description: string;
 };
 
+export type WorkspaceMapMaterialImageSource = "generated" | "uploaded";
+
+export type WorkspaceMapMaterialImage = {
+  source: WorkspaceMapMaterialImageSource;
+  url: string;
+  nodeBatchSize?: number;
+  iterationCount?: number;
+  nodeCount?: number;
+  edgeCount?: number;
+  graphSignature?: string;
+  referencePrompt?: string;
+  generatedAt?: string;
+};
+
+export type WorkspaceMapGeoJsonPosition = [number, number];
+
+export type WorkspaceMapGeoJsonGeometry =
+  | {
+      type: "Point";
+      coordinates: WorkspaceMapGeoJsonPosition;
+    }
+  | {
+      type: "LineString";
+      coordinates: WorkspaceMapGeoJsonPosition[];
+    }
+  | {
+      type: "Polygon";
+      coordinates: WorkspaceMapGeoJsonPosition[][];
+    };
+
+export type WorkspaceMapGeoJsonFeature = {
+  type: "Feature";
+  id: string;
+  geometry: WorkspaceMapGeoJsonGeometry;
+  properties: {
+    id: string;
+    name: string;
+    description?: string;
+    featureKind: "area" | "route" | "place" | "relation";
+    nodeId?: string;
+    edgeId?: string;
+    nodeType?: WorkspaceMapMaterialNodeType;
+    relationType?: WorkspaceMapMaterialRelationType;
+    parentId?: string;
+    sourceNodeId?: string;
+    targetNodeId?: string;
+    level: number;
+    radiusKm?: number;
+  };
+};
+
+export type WorkspaceMapGeoJsonFeatureCollection = {
+  type: "FeatureCollection";
+  bbox: [number, number, number, number];
+  features: WorkspaceMapGeoJsonFeature[];
+};
+
+export type WorkspaceMapGeoJsonScale = {
+  unit: "km";
+  widthKm: number;
+  heightKm: number;
+  metersPerUnit: number;
+};
+
+export type WorkspaceMapMaterialGeoJson = {
+  source: "algorithm";
+  data: WorkspaceMapGeoJsonFeatureCollection;
+  scale: WorkspaceMapGeoJsonScale;
+  graphSignature: string;
+  nodeCount: number;
+  edgeCount: number;
+  generatedAt: string;
+  outlineBased?: boolean;
+};
+
 export type MapMaterialCreateInput = {
   name: string;
   description: string;
@@ -277,6 +352,65 @@ export type MapAiAssistResult = {
   message: string;
   patch: MapDraftPatch;
 };
+
+export type MapImageMetaInput = Omit<WorkspaceMapMaterialImage, "url"> & {
+  url?: string;
+};
+
+export type MapGeoJsonMetaInput = WorkspaceMapMaterialGeoJson;
+
+export type MapImageStreamImage = {
+  contentType: string;
+  dataUrl: string;
+  fileName: string;
+};
+
+export type MapImageStreamDoneEvent = {
+  edgeCount: number;
+  graphSignature: string;
+  image: MapImageStreamImage;
+  iterationCount: number;
+  nodeBatchSize: number;
+  nodeCount: number;
+  referencePrompt?: string;
+  type: "done";
+};
+
+export type MapImageStreamEvent =
+  | {
+      type: "progress";
+      progress: number;
+      round: number;
+      totalRounds: number;
+      stage: "queued" | "generating" | "retrying";
+      attempt?: number;
+      messageKey: string;
+      relationSummary?: string;
+    }
+  | {
+      type: "image";
+      completedNodeIds: string[];
+      image: MapImageStreamImage;
+      progress: number;
+      relationSummary: string;
+      round: number;
+      totalRounds: number;
+    }
+  | {
+      type: "paused";
+      completedNodeIds: string[];
+      failedRound: number;
+      image?: MapImageStreamImage;
+      message: string;
+      progress: number;
+      relationSummary?: string;
+      round: number;
+      totalRounds: number;
+    }
+  | MapImageStreamDoneEvent
+  | { type: "error"; message: string };
+
+export type MapImageStreamHandler = (event: MapImageStreamEvent) => Promise<void> | void;
 
 export type ItemDraftPatch = Partial<Pick<
   ItemMaterialCreateInput,
@@ -569,6 +703,8 @@ export type WorkspaceMapMaterialMetadata = {
   style: WorkspaceMaterialStyle;
   nodes: WorkspaceMapMaterialNode[];
   edges: WorkspaceMapMaterialEdge[];
+  image?: WorkspaceMapMaterialImage | null;
+  geojson?: WorkspaceMapMaterialGeoJson | null;
 };
 
 export type WorkspaceMaterialMetadata =
@@ -581,6 +717,7 @@ export type WorkspaceMaterialMetadata =
 
 export type MaskMaterialBoardImageMode = "keep" | "replace" | "clear";
 export type ItemMaterialImageMode = MaskMaterialBoardImageMode;
+export type MapMaterialImageMode = MaskMaterialBoardImageMode;
 
 export type WorkspaceMessage = {
   id: string;

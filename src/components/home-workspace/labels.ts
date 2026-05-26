@@ -103,6 +103,7 @@ export {
   resolveMaskSaveError,
   resolveMapAiError,
   resolveMapDeriveError,
+  resolveMapImageError,
   resolveMapSaveError,
   resolveMaterialExportError,
   resolveMaterialImportError,
@@ -383,6 +384,32 @@ function resolveMapDeriveError(error: unknown, t: (key: string) => string) {
   return t("mapForm.deriveFailed");
 }
 
+function resolveMapImageError(error: unknown, t: (key: string) => string) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message.includes("missing-default-image")) {
+    return t("mapForm.imageMissingDefaultImage");
+  }
+
+  if (message.includes("missing-provider-secret")) {
+    return t("mapForm.missingProviderSecret");
+  }
+
+  if (message.includes("INVALID_MAP_REFERENCE_IMAGE_FILE")) {
+    return t("mapForm.invalidReferenceImage");
+  }
+
+  if (message.includes("INVALID_MAP_IMAGE_FILE")) {
+    return t("mapForm.invalidFinalImage");
+  }
+
+  if (message.includes("MAP_IMAGE_NODE_REQUIRED")) {
+    return t("mapForm.imageNodeRequired");
+  }
+
+  return t("mapForm.imageGenerateFailed");
+}
+
 function resolveScenePanoramaError(error: unknown, t: (key: string) => string) {
   const message = error instanceof Error ? error.message : "";
 
@@ -529,6 +556,10 @@ function resolveMapSaveError(error: unknown, t: (key: string) => string, isEditi
 
   if (message.includes("MAP_EDGE_INVALID")) {
     return t("mapForm.errors.edgeInvalid");
+  }
+
+  if (message.includes("INVALID_MAP_IMAGE_FILE")) {
+    return t("mapForm.invalidFinalImage");
   }
 
   if (message.includes("MAP_GRAPH_SYNC_FAILED")) {

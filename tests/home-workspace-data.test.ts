@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateDefaultItemBoardImage, generateDefaultMaskBoardImage, generateDefaultScenePanorama, generateDefaultScenePanoramaMother } from "@/lib/ai/image-runtime";
+import {
+  generateDefaultItemBoardImage,
+  generateDefaultMapImage,
+  generateDefaultMaskBoardImage,
+  generateDefaultScenePanorama,
+  generateDefaultScenePanoramaMother
+} from "@/lib/ai/image-runtime";
 import { getScenePanoramaFaceSourceCoordinate, splitEquirectangularToCubemap } from "@/lib/ai/scene-panorama-projection";
 import {
   analyzeScenePanoramaFaces,
@@ -23,6 +29,7 @@ import {
 import type {
   CreatureMaterialCreateInput,
   ItemMaterialCreateInput,
+  MapImageStreamEvent,
   MapMaterialCreateInput,
   MaskMaterialCreateInput,
   SceneMaterialCreateInput
@@ -37,13 +44,18 @@ import {
 } from "@/lib/home-workspace";
 import {
   buildMapMaterialMetadata,
+  buildMapGraphSignature,
+  buildMapImageNodeBatches,
   createDefaultMapDraft,
   applyPatchToMapDraft,
   getMapGraphNodeBaseSize,
   layoutMapGraphNodes,
+  normalizeMapImageNodeBatchSize,
   validateMapDraftForGraphSave,
   validateMapDraftForSave
 } from "@/lib/home-workspace/map";
+import { generateMapImageOutlinePreview } from "@/lib/home-workspace/map-image-outline";
+import { generateMapGeoJson } from "@/lib/home-workspace/map-geojson";
 import { formatMaterialMarkdown } from "@/lib/material-transfer/markdown";
 
 type ScriptRecord = {
@@ -125,6 +137,7 @@ vi.mock("@/lib/ai/runtime", () => ({
 
 vi.mock("@/lib/ai/image-runtime", () => ({
   generateDefaultItemBoardImage: vi.fn(),
+  generateDefaultMapImage: vi.fn(),
   generateDefaultMaskBoardImage: vi.fn(),
   generateDefaultScenePanorama: vi.fn(),
   generateDefaultScenePanoramaMother: vi.fn(),
@@ -197,6 +210,7 @@ vi.mock("@/lib/storage/material", () => ({
   uploadItemModelBytes: vi.fn(async () => "https://cdn.example.com/materials/imported-model.glb"),
   uploadItemModelInputImage: vi.fn(async () => "https://cdn.example.com/materials/item-model-input.png"),
   uploadItemViewImage: vi.fn(async () => "https://cdn.example.com/materials/item-view.png"),
+  uploadMapImage: vi.fn(async () => "https://cdn.example.com/materials/map-image.png"),
   uploadMaskBoardImage: vi.fn(async () => "https://cdn.example.com/materials/mask-board.png"),
   uploadScenePanoramaFaceImage: vi.fn(async () => "https://cdn.example.com/materials/scene-face.png"),
   uploadScenePanoramaMotherImage: vi.fn(async () => "https://cdn.example.com/materials/scene-mother.png"),
@@ -2117,6 +2131,10 @@ describe("home workspace data", () => {
 });
 
 describe("map materials", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("normalizes map drafts and builds markdown and projection payloads", () => {
     const baseDraft = createDefaultMapDraft();
     const seededDraft = applyPatchToMapDraft(baseDraft, {
@@ -2204,6 +2222,298 @@ describe("map materials", () => {
     });
     expect(payload.nodes).toHaveLength(3);
     expect(payload.edges).toHaveLength(1);
+
+    expect(
+      buildMapMaterialMetadata(patchedDraft, {
+        edgeCount: patchedDraft.edges.length,
+        generatedAt: "2026-05-27T00:00:00.000Z",
+        graphSignature: "map-signature",
+        iterationCount: 2,
+        nodeBatchSize: 10,
+        nodeCount: patchedDraft.nodes.length,
+        referencePrompt: "沿用蓝色海岸和手绘地形符号",
+        source: "generated",
+        url: "https://cdn.example.com/materials/map-image.png"
+      }).image
+    ).toMatchObject({
+      graphSignature: "map-signature",
+      source: "generated",
+      url: "https://cdn.example.com/materials/map-image.png"
+    });
+  });
+
+  it("builds stable map image batches and graph signatures", () => {
+    const input: MapMaterialCreateInput = {
+      ...createDefaultMapDraft(),
+      name: "批次地图",
+      description: "用于测试地图图像逐轮生成。",
+      nodes: [
+        {
+          id: "node-city",
+          name: "王城",
+          description: "",
+          type: "city",
+          x: 3,
+          y: 3
+        },
+        {
+          id: "node-country",
+          name: "王国",
+          description: "",
+          type: "country",
+          x: 1,
+          y: 1
+        },
+        {
+          id: "node-path",
+          name: "旧路",
+          description: "",
+          type: "path",
+          x: 4,
+          y: 4
+        },
+        {
+          id: "node-region",
+          name: "北境",
+          description: "",
+          type: "region",
+          x: 2,
+          y: 2
+        }
+      ],
+      edges: [
+        {
+          id: "edge-country-region",
+          relation: "contains",
+          source: "node-country",
+          target: "node-region",
+          description: "王国包含北境"
+        },
+        {
+          id: "edge-region-city",
+          relation: "contains",
+          source: "node-region",
+          target: "node-city",
+          description: "北境包含王城"
+        },
+        {
+          id: "edge-country-path",
+          relation: "connects",
+          source: "node-country",
+          target: "node-path",
+          description: "王国连接旧路"
+        }
+      ]
+    };
+    const batches = buildMapImageNodeBatches(input, 2);
+    const reorderedInput: MapMaterialCreateInput = {
+      ...input,
+      nodes: [...input.nodes].reverse(),
+      edges: [...input.edges].reverse()
+    };
+
+    expect(normalizeMapImageNodeBatchSize(undefined)).toBe(10);
+    expect(normalizeMapImageNodeBatchSize(0)).toBe(1);
+    expect(normalizeMapImageNodeBatchSize(150)).toBe(100);
+    expect(batches.map((batch) => batch.nodes.map((node) => node.id))).toEqual([
+      ["node-country", "node-region"],
+      ["node-city", "node-path"]
+    ]);
+    expect(batches[0].edges.map((edge) => edge.id)).toEqual(["edge-country-region"]);
+    expect(batches[1].edges.map((edge) => edge.id).sort()).toEqual(["edge-country-path", "edge-region-city"]);
+    expect(buildMapGraphSignature(input)).toBe(buildMapGraphSignature(reorderedInput));
+  });
+
+  it("streams map image events and uses the previous image as the next reference", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { streamMapImage } = await import("@/lib/home-workspace");
+    const input = createMapImageStreamInput();
+    const events: MapImageStreamEvent[] = [];
+
+    vi.mocked(generateDefaultMapImage).mockReset();
+    vi.mocked(requireAuth).mockResolvedValue({
+      id: "viewer-id"
+    } as never);
+    vi.mocked(generateDefaultMapImage)
+      .mockResolvedValueOnce({
+        contentType: "image/png",
+        dataUrl: "data:image/png;base64,cm91bmQtMQ==",
+        fileName: "round-1.png"
+      })
+      .mockResolvedValueOnce({
+        contentType: "image/png",
+        dataUrl: "data:image/png;base64,cm91bmQtMg==",
+        fileName: "round-2.png"
+      });
+
+    const result = await streamMapImage(input, "zh-CN", (event) => {
+      events.push(event);
+    }, {
+      nodeBatchSize: 1,
+      referenceImages: [
+        {
+          bytes: Buffer.from("reference"),
+          contentType: "image/png",
+          fileName: "reference.png"
+        }
+      ],
+      referencePrompt: "沿用参考图中的海岸线和手绘地图符号"
+    });
+
+    expect(events.map((event) => event.type)).toEqual(["progress", "image", "progress", "image", "done"]);
+    expect(result.type).toBe("done");
+    if (result.type !== "done") {
+      throw new Error("Expected map image stream to finish.");
+    }
+    expect(result.image.dataUrl).toBe("data:image/png;base64,cm91bmQtMg==");
+    expect(result.nodeBatchSize).toBe(1);
+    expect(result.iterationCount).toBe(2);
+    expect(result.referencePrompt).toBe("沿用参考图中的海岸线和手绘地图符号");
+    expect(vi.mocked(generateDefaultMapImage)).toHaveBeenCalledTimes(2);
+    const firstCallReferences = vi.mocked(generateDefaultMapImage).mock.calls[0][3]?.referenceImages ?? [];
+    const secondCallReferences = vi.mocked(generateDefaultMapImage).mock.calls[1][3]?.referenceImages ?? [];
+
+    expect(firstCallReferences).toHaveLength(1);
+    expect(secondCallReferences).toHaveLength(2);
+    expect(secondCallReferences[0]).toMatchObject({
+      contentType: "image/png",
+      fileName: "round-1.png"
+    });
+    expect(secondCallReferences[0]?.bytes.toString()).toBe("round-1");
+    expect(secondCallReferences[1]).toMatchObject({
+      contentType: "image/png",
+      fileName: "reference.png"
+    });
+    expect(secondCallReferences[1]?.bytes.toString()).toBe("reference");
+  });
+
+  it("pauses map image generation after retries and keeps the last successful image", async () => {
+    const { requireAuth } = await import("@/lib/auth");
+    const { streamMapImage } = await import("@/lib/home-workspace");
+    const input = createMapImageStreamInput();
+    const events: MapImageStreamEvent[] = [];
+
+    vi.mocked(generateDefaultMapImage).mockReset();
+    vi.mocked(requireAuth).mockResolvedValue({
+      id: "viewer-id"
+    } as never);
+    vi.mocked(generateDefaultMapImage)
+      .mockResolvedValueOnce({
+        contentType: "image/png",
+        dataUrl: "data:image/png;base64,Zmlyc3Q=",
+        fileName: "first.png"
+      })
+      .mockRejectedValueOnce(new Error("ROUND_FAILED"))
+      .mockRejectedValueOnce(new Error("ROUND_FAILED"))
+      .mockRejectedValueOnce(new Error("ROUND_FAILED"));
+
+    const result = await streamMapImage(input, "zh-CN", (event) => {
+      events.push(event);
+    }, {
+      nodeBatchSize: 1,
+      referencePrompt: "保留上一轮地图结构"
+    });
+
+    expect(result.type).toBe("paused");
+    if (result.type !== "paused") {
+      throw new Error("Expected map image stream to pause.");
+    }
+    expect(result.failedRound).toBe(2);
+    expect(result.image?.dataUrl).toBe("data:image/png;base64,Zmlyc3Q=");
+    expect(result.completedNodeIds).toEqual(["node-country"]);
+    expect(events.at(-1)).toMatchObject({
+      type: "paused",
+      failedRound: 2,
+      image: expect.objectContaining({
+        fileName: "first.png"
+      })
+    });
+    expect(vi.mocked(generateDefaultMapImage)).toHaveBeenCalledTimes(4);
+  });
+
+  it("generates a pure outline preview from the final map image", async () => {
+    const sourceBytes = await sharp({
+      create: {
+        background: { alpha: 1, b: 255, g: 255, r: 255 },
+        channels: 4,
+        height: 64,
+        width: 64
+      }
+    })
+      .composite([
+        {
+          input: Buffer.from('<svg width="64" height="64"><rect x="16" y="16" width="32" height="32" fill="black"/></svg>')
+        }
+      ])
+      .png()
+      .toBuffer();
+
+    const outline = await generateMapImageOutlinePreview(sourceBytes);
+    const outlineBytes = Buffer.from(outline.dataUrl.replace(/^data:image\/png;base64,/, ""), "base64");
+    const { data } = await sharp(outlineBytes)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let blackPixelCount = 0;
+
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index] < 24 && data[index + 1] < 24 && data[index + 2] < 24) {
+        blackPixelCount += 1;
+      }
+    }
+
+    expect(outline).toMatchObject({
+      contentType: "image/png",
+      fileName: "map-outline.png",
+      height: 64,
+      width: 64
+    });
+    expect(outline.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(blackPixelCount).toBeGreaterThan(0);
+  });
+
+  it("generates map GeoJSON with hierarchy, routes, and a kilometer scale", async () => {
+    const input = createMapImageStreamInput();
+    const geojson = await generateMapGeoJson(input, {
+      image: {
+        bytes: Buffer.from([137, 80, 78, 71]),
+        contentType: "image/png",
+        fileName: "outline.png"
+      }
+    });
+    const countryArea = geojson.data.features.find((feature) => feature.id === "area-node-country");
+    const cityPlace = geojson.data.features.find((feature) => feature.id === "place-node-city");
+    const relation = geojson.data.features.find((feature) => feature.id === "relation-edge-country-city");
+
+    expect(geojson.source).toBe("algorithm");
+    expect(geojson.scale).toMatchObject({
+      metersPerUnit: 1000,
+      unit: "km"
+    });
+    expect(geojson.scale.widthKm).toBeGreaterThan(0);
+    expect(geojson.data.type).toBe("FeatureCollection");
+    expect(geojson.data.bbox).toHaveLength(4);
+    expect(countryArea).toMatchObject({
+      geometry: { type: "Polygon" },
+      properties: {
+        featureKind: "area",
+        nodeId: "node-country"
+      }
+    });
+    expect(cityPlace).toMatchObject({
+      geometry: { type: "Point" },
+      properties: {
+        parentId: "node-country"
+      }
+    });
+    expect(relation).toMatchObject({
+      geometry: { type: "LineString" },
+      properties: {
+        relationType: "contains",
+        sourceNodeId: "node-country",
+        targetNodeId: "node-city"
+      }
+    });
   });
 
   it("lays out map graph nodes with stable finite coordinates", () => {
@@ -2578,6 +2888,42 @@ describe("map materials", () => {
     expect(result.patch.addEdges).toHaveLength(2);
   });
 });
+
+function createMapImageStreamInput(): MapMaterialCreateInput {
+  return {
+    ...createDefaultMapDraft(),
+    name: "流式地图",
+    description: "用于测试地图图像逐轮生成。",
+    style: "sciFi",
+    nodes: [
+      {
+        id: "node-country",
+        name: "王国",
+        description: "地图主体",
+        type: "country",
+        x: 0,
+        y: 0
+      },
+      {
+        id: "node-city",
+        name: "王城",
+        description: "核心城市",
+        type: "city",
+        x: 1,
+        y: 1
+      }
+    ],
+    edges: [
+      {
+        id: "edge-country-city",
+        relation: "contains",
+        source: "node-country",
+        target: "node-city",
+        description: "王国包含王城"
+      }
+    ]
+  };
+}
 
 function createScript(slug: string, titleZh: string, titleEn: string): ScriptRecord {
   return {
