@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Graph, { MultiDirectedGraph } from "graphology";
-import type { EdgeLabelDrawingFunction, NodeLabelDrawingFunction } from "sigma/rendering";
+import type { EdgeLabelDrawingFunction, NodeHoverDrawingFunction, NodeLabelDrawingFunction } from "sigma/rendering";
 import {
   Check,
   ChevronDown,
@@ -26,7 +26,7 @@ import type {
   WorkspaceMapMaterialNodeType,
   WorkspaceMapMaterialRelationType
 } from "@/lib/home-workspace";
-import { layoutMapGraphNodes, mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
+import { getMapGraphNodeBaseSize, layoutMapGraphNodes, mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
 
 export function MapGraphEditor({
   deriveMaxRounds = 3,
@@ -298,6 +298,7 @@ export function MapGraphEditor({
         const themeColors = getGraphThemeColors(container, currentGraphTheme);
         const renderer = new Sigma(graph, container as HTMLElement, {
           defaultDrawEdgeLabel: createMapEdgeLabelDrawer(currentGraphTheme),
+          defaultDrawNodeHover: createMapNodeHoverDrawer(currentGraphTheme),
           defaultDrawNodeLabel: createMapNodeLabelDrawer(currentGraphTheme),
           renderEdgeLabels: true,
           renderLabels: true,
@@ -458,6 +459,7 @@ export function MapGraphEditor({
 
     renderer.setSettings?.({
       defaultDrawEdgeLabel: createMapEdgeLabelDrawer(graphTheme),
+      defaultDrawNodeHover: createMapNodeHoverDrawer(graphTheme),
       defaultDrawNodeLabel: createMapNodeLabelDrawer(graphTheme),
       edgeLabelColor: { color: themeColors.edgeLabel },
       labelColor: { color: themeColors.nodeLabel }
@@ -1035,6 +1037,7 @@ function syncGraphToDraft(
   selectedEdgeId: string,
   relationLabel: (relation: WorkspaceMapMaterialRelationType) => string,
   colors: {
+    dimmedEdge: string;
     edge: string;
     relatedEdge: string;
     selectedEdge: string;
@@ -1047,6 +1050,7 @@ function syncGraphToDraft(
   const nextNodeIds = new Set(draft.nodes.map((node) => node.id));
   const nextEdgeIds = new Set(draft.edges.map((edge) => edge.id));
   const hasSelection = Boolean(selectedNodeId || selectedEdgeId);
+  const relationCountByNodeId = buildRelationCountByNodeId(draft);
 
   for (const nodeId of graph.nodes()) {
     if (!nextNodeIds.has(nodeId)) {
@@ -1062,7 +1066,7 @@ function syncGraphToDraft(
       forceLabel: selected || related,
       highlighted: selected || related,
       label: node.name || " ",
-      size: getNodeSize(node.type, selected, related),
+      size: getNodeSize(node.type, relationCountByNodeId.get(node.id) ?? 0, selected, related),
       mapType: node.type,
       type: "circle",
       zIndex: selected ? 2 : related ? 1 : 0,
@@ -1090,14 +1094,15 @@ function syncGraphToDraft(
 
     const selected = edge.id === selectedEdgeId;
     const related = selection.relatedEdgeIds.has(edge.id);
+    const dimmed = hasSelection && !selected && !related;
     const attributes = {
-      color: selected ? colors.selectedEdge : related ? colors.relatedEdge : colors.edge,
+      color: selected ? colors.selectedEdge : related ? colors.relatedEdge : dimmed ? colors.dimmedEdge : colors.edge,
       description: edge.description,
       forceLabel: selected || related,
       highlighted: selected || related,
-      label: relationLabel(edge.relation),
+      label: dimmed ? "" : relationLabel(edge.relation),
       relation: edge.relation,
-      size: selected ? 3.4 : related ? 2.35 : hasSelection ? 1.18 : 1.45,
+      size: selected ? 3.6 : related ? 2.45 : dimmed ? 0.72 : 1.45,
       zIndex: selected ? 2 : related ? 1 : 0
     };
 
@@ -1115,6 +1120,26 @@ function syncGraphToDraft(
       graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, attributes);
     }
   }
+}
+
+function buildRelationCountByNodeId(draft: MapCreateDraft) {
+  const nodeIds = new Set(draft.nodes.map((node) => node.id));
+  const counts = new Map<string, number>();
+
+  for (const nodeId of nodeIds) {
+    counts.set(nodeId, 0);
+  }
+
+  for (const edge of draft.edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target) || edge.source === edge.target) {
+      continue;
+    }
+
+    counts.set(edge.source, (counts.get(edge.source) ?? 0) + 1);
+    counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
+  }
+
+  return counts;
 }
 
 function filterMapDraft(
@@ -1204,17 +1229,8 @@ function getNodeColor(type: WorkspaceMapMaterialNodeType, selected: boolean, rel
   return palette[type];
 }
 
-function getNodeSize(type: WorkspaceMapMaterialNodeType, selected: boolean, related = false) {
-  const sizes: Record<WorkspaceMapMaterialNodeType, number> = {
-    country: 16,
-    region: 14,
-    city: 13,
-    village: 11,
-    landmark: 12,
-    path: 10
-  };
-
-  return (sizes[type] ?? 11) + (selected ? 5 : related ? 2 : 0);
+function getNodeSize(type: WorkspaceMapMaterialNodeType, relationCount: number, selected: boolean, related = false) {
+  return getMapGraphNodeBaseSize(type, relationCount) + (selected ? 4.2 : related ? 1.6 : 0);
 }
 
 function getCanvasThemeColor(container: HTMLElement | null, variable: string, fallback: string, alpha?: number) {
@@ -1254,6 +1270,7 @@ function getMapGraphThemeMode(): "light" | "dark" {
 function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "dark" = getMapGraphThemeMode()) {
   if (theme === "dark") {
     return {
+      dimmedEdge: "rgba(100, 116, 139, 0.22)",
       edge: "rgba(148, 163, 184, 0.82)",
       edgeLabel: "#F8FAFC",
       edgeLabelHalo: "rgba(2, 6, 23, 0.96)",
@@ -1265,6 +1282,7 @@ function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "da
   }
 
   return {
+    dimmedEdge: getCanvasThemeColor(container, "--foreground", "#475569", 0.18),
     edge: getCanvasThemeColor(container, "--foreground", "#475569", 0.74),
     edgeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
     edgeLabelHalo: "rgba(255, 255, 255, 0.96)",
@@ -1272,6 +1290,36 @@ function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "da
     nodeLabelHalo: "rgba(255, 255, 255, 0.96)",
     relatedEdge: getCanvasThemeColor(container, "--foreground", "#0F172A", 0.96),
     selectedEdge: getCanvasThemeColor(container, "--primary", "#1D4ED8")
+  };
+}
+
+function createMapNodeHoverDrawer(theme: "light" | "dark"): NodeHoverDrawingFunction {
+  return (context, data, settings) => {
+    const label = typeof data.label === "string" ? data.label.trim() : "";
+    const labelColors = getReadableGraphLabelColors("", theme);
+
+    context.save();
+    context.beginPath();
+    context.arc(data.x, data.y, data.size + 5, 0, Math.PI * 2);
+    context.fillStyle = theme === "dark" ? "rgba(2, 6, 23, 0.68)" : "rgba(255, 255, 255, 0.78)";
+    context.fill();
+    context.lineWidth = 2.25;
+    context.strokeStyle = typeof data.color === "string" ? data.color : labelColors.fill;
+    context.stroke();
+    context.restore();
+
+    if (!label) {
+      return;
+    }
+
+    drawMapGraphLabel(context, label, data.x + data.size + 8, data.y, {
+      align: "left",
+      fill: labelColors.fill,
+      font: settings.labelFont,
+      halo: labelColors.halo,
+      size: Math.max(13, settings.labelSize + 1),
+      weight: "700"
+    });
   };
 }
 
@@ -1363,6 +1411,11 @@ function getReadableGraphLabelColors(color: string, theme: "light" | "dark") {
         fill: "#0F172A",
         halo: "rgba(255, 255, 255, 0.96)"
       };
+
+  if (theme === "dark") {
+    return fallback;
+  }
+
   const rgba = parseGraphColor(color);
 
   if (!rgba) {

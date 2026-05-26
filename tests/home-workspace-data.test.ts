@@ -39,6 +39,7 @@ import {
   buildMapMaterialMetadata,
   createDefaultMapDraft,
   applyPatchToMapDraft,
+  getMapGraphNodeBaseSize,
   layoutMapGraphNodes,
   validateMapDraftForGraphSave,
   validateMapDraftForSave
@@ -2259,6 +2260,16 @@ describe("map materials", () => {
       expect(Number.isFinite(node.x)).toBe(true);
       expect(Number.isFinite(node.y)).toBe(true);
     }
+  });
+
+  it("scales map graph node size by relation count first", () => {
+    const isolatedCity = getMapGraphNodeBaseSize("city", 0);
+    const connectedVillage = getMapGraphNodeBaseSize("village", 4);
+    const connectedCountry = getMapGraphNodeBaseSize("country", 4);
+
+    expect(connectedVillage).toBeGreaterThan(isolatedCity);
+    expect(connectedCountry).toBeGreaterThan(connectedVillage);
+    expect(getMapGraphNodeBaseSize("landmark", Number.NaN)).toBe(getMapGraphNodeBaseSize("landmark", 0));
   });
 
   it("builds and sanitizes map AI patches", async () => {

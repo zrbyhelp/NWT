@@ -117,12 +117,13 @@ export function layoutMapGraphNodes(
   const graph = new MultiDirectedGraph();
   const initialPositions = createMapLayoutInitialPositions(sortedNodes);
   const nodeIds = new Set(sortedNodes.map((node) => node.id));
+  const relationCountByNodeId = buildMapLayoutRelationCountByNodeId(sortedNodes, edges);
 
   sortedNodes.forEach((node) => {
     const position = initialPositions[node.id];
 
     graph.addNode(node.id, {
-      size: getMapLayoutNodeSize(node.type),
+      size: getMapGraphNodeBaseSize(node.type, relationCountByNodeId.get(node.id) ?? 0),
       x: position.x,
       y: position.y
     });
@@ -144,6 +145,7 @@ export function layoutMapGraphNodes(
       iterations: getMapForceAtlasIterations(graph.order),
       settings: {
         ...inferredSettings,
+        adjustSizes: true,
         barnesHutOptimize: graph.order >= 80,
         edgeWeightInfluence: 0.65,
         gravity: Math.max(0.6, Math.min(2.2, Math.sqrt(graph.order) / 5)),
@@ -157,6 +159,21 @@ export function layoutMapGraphNodes(
   } catch {
     return normalizeMapForceAtlasPositions(sortedNodes, initialPositions, initialPositions);
   }
+}
+
+export function getMapGraphNodeBaseSize(type: WorkspaceMapMaterialNodeType, relationCount: number) {
+  const typeBonus: Record<WorkspaceMapMaterialNodeType, number> = {
+    country: 2,
+    region: 1.2,
+    city: 1,
+    village: 0,
+    landmark: 0.5,
+    path: -0.5
+  };
+  const normalizedCount = Number.isFinite(relationCount) ? Math.max(0, relationCount) : 0;
+  const relationWeight = Math.min(9.5, Math.sqrt(normalizedCount) * 3.15);
+
+  return 9.8 + (typeBonus[type] ?? 0) + relationWeight;
 }
 
 export function createMapDraftFromMaterial(material: WorkspaceMaterial): MapCreateDraft {
@@ -609,17 +626,24 @@ function getMapLayoutNodeTypeRank(type: WorkspaceMapMaterialNodeType) {
   return index === -1 ? mapNodeTypes.length : index;
 }
 
-function getMapLayoutNodeSize(type: WorkspaceMapMaterialNodeType) {
-  const sizes: Record<WorkspaceMapMaterialNodeType, number> = {
-    country: 16,
-    region: 14,
-    city: 13,
-    village: 11,
-    landmark: 12,
-    path: 10
-  };
+function buildMapLayoutRelationCountByNodeId(nodes: WorkspaceMapMaterialNode[], edges: WorkspaceMapMaterialEdge[]) {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const counts = new Map<string, number>();
 
-  return sizes[type] ?? 11;
+  for (const nodeId of nodeIds) {
+    counts.set(nodeId, 0);
+  }
+
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target) || edge.source === edge.target) {
+      continue;
+    }
+
+    counts.set(edge.source, (counts.get(edge.source) ?? 0) + 1);
+    counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
+  }
+
+  return counts;
 }
 
 function getMapLayoutEdgeWeight(relation: WorkspaceMapMaterialRelationType) {
