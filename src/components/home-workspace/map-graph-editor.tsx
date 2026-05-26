@@ -556,60 +556,78 @@ export function MapGraphEditor({
                   </div>
                 ) : (
                   <div className="grid gap-3 lg:grid-cols-2">
-                    {draft.nodes.map((node) => (
-                      <div
-                        key={node.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => {
-                          onSelectNode(node.id);
-                          onSelectEdge("");
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") {
-                            return;
-                          }
+                    {draft.nodes.map((node) => {
+                      const isSelected = selectedNodeId === node.id;
 
-                          event.preventDefault();
-                          onSelectNode(node.id);
-                          onSelectEdge("");
-                        }}
-                        className={cn(
-                          "rounded-xl border px-3 py-3 text-left outline-none transition hover:border-primary/35 hover:bg-muted/40 focus:border-primary/45 focus:bg-muted/40",
-                          selectedNodeId === node.id ? "border-primary bg-primary/8" : "border-border bg-background"
-                        )}
-                      >
-                        <span className="block text-sm font-medium text-foreground/72">{node.name || t("mapForm.nodeUntitled")}</span>
-                        <span className="mt-1 block text-xs text-foreground/46">{t(`mapForm.nodeTypes.${node.type}`)}</span>
-                      </div>
-                    ))}
+                      return (
+                        <div
+                          key={node.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            onSelectNode(node.id);
+                            onSelectEdge("");
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") {
+                              return;
+                            }
+
+                            event.preventDefault();
+                            onSelectNode(node.id);
+                            onSelectEdge("");
+                          }}
+                          className={cn(
+                            "rounded-xl border px-3 py-3 text-left outline-none transition hover:border-primary/35 hover:bg-muted/40 focus:border-primary/45 focus:bg-muted/40",
+                            isSelected
+                              ? "border-primary/45 bg-primary/8 text-foreground shadow-sm shadow-primary/10 ring-1 ring-primary/20"
+                              : "border-border bg-background text-foreground"
+                          )}
+                        >
+                          <span className={cn("block text-sm font-medium", isSelected ? "text-foreground" : "text-foreground/72")}>
+                            {node.name || t("mapForm.nodeUntitled")}
+                          </span>
+                          <span className={cn("mt-1 block text-xs", isSelected ? "text-foreground/64" : "text-foreground/46")}>
+                            {t(`mapForm.nodeTypes.${node.type}`)}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
                 {edgeCount > 0 ? (
                   <div className="mt-4 space-y-2">
-                    {draft.edges.map((edge) => (
-                      <button
-                        key={edge.id}
-                        type="button"
-                        onClick={() => {
-                          onSelectEdge(edge.id);
-                          onSelectNode("");
-                        }}
-                        className={cn(
-                          "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:border-primary/35 hover:bg-muted/40",
-                          selectedEdgeId === edge.id ? "border-primary bg-primary/8" : "border-border bg-background"
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium text-foreground/72">{relationLabel(edge.relation)}</span>
-                          <span className="mt-0.5 block truncate text-xs text-foreground/46">
-                            {formatEdgeEndpointLabel(edge.source, nodeNameById, t)} → {formatEdgeEndpointLabel(edge.target, nodeNameById, t)}
+                    {draft.edges.map((edge) => {
+                      const isSelected = selectedEdgeId === edge.id;
+
+                      return (
+                        <button
+                          key={edge.id}
+                          type="button"
+                          onClick={() => {
+                            onSelectEdge(edge.id);
+                            onSelectNode("");
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:border-primary/35 hover:bg-muted/40",
+                            isSelected
+                              ? "border-primary/45 bg-primary/8 text-foreground shadow-sm shadow-primary/10 ring-1 ring-primary/20"
+                              : "border-border bg-background text-foreground"
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className={cn("block text-sm font-medium", isSelected ? "text-foreground" : "text-foreground/72")}>
+                              {relationLabel(edge.relation)}
+                            </span>
+                            <span className={cn("mt-0.5 block truncate text-xs", isSelected ? "text-foreground/64" : "text-foreground/46")}>
+                              {formatEdgeEndpointLabel(edge.source, nodeNameById, t)} → {formatEdgeEndpointLabel(edge.target, nodeNameById, t)}
+                            </span>
                           </span>
-                        </span>
-                        <Move className="h-4 w-4 shrink-0 text-foreground/32" aria-hidden="true" />
-                      </button>
-                    ))}
+                          <Move className={cn("h-4 w-4 shrink-0", isSelected ? "text-foreground/48" : "text-foreground/32")} aria-hidden="true" />
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>

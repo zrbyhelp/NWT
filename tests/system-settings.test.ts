@@ -1,3 +1,4 @@
+import { createServer } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
   defaultOutboundProxySettings,
@@ -5,6 +6,7 @@ import {
   outboundProxyInputSchema
 } from "@/lib/system-settings-types";
 import { getProxyUrlForRequest, resolveServerProxyConfig } from "@/lib/network/proxy-utils";
+import { probeServerProxyConfig } from "@/lib/network/proxy";
 
 describe("outbound proxy settings", () => {
   it("normalizes missing values to the disabled default", () => {
@@ -48,5 +50,43 @@ describe("outbound proxy settings", () => {
     expect(getProxyUrlForRequest("https://cdn.example.test/image.png", config)).toBe("");
     expect(getProxyUrlForRequest("https://api.service.test:8443/models", config)).toBe("");
     expect(getProxyUrlForRequest("https://api.service.test:9443/models", config)).toBe("http://secure-proxy.local:7890");
+  });
+
+  it("probes whether a proxy endpoint is reachable before enabling it", async () => {
+    const server = createServer((socket) => {
+      socket.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    const address = server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("Failed to bind a proxy test port.");
+    }
+
+    const config = resolveServerProxyConfig({
+      enabled: true,
+      httpProxy: `http://127.0.0.1:${address.port}`,
+      httpsProxy: "",
+      noProxy: "127.0.0.1,localhost"
+    });
+
+    await expect(probeServerProxyConfig(config)).resolves.toBe(true);
+
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+
+    await expect(probeServerProxyConfig(config)).resolves.toBe(false);
   });
 });

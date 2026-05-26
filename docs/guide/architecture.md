@@ -32,7 +32,7 @@
 
 项目不再提供独立 `/admin` 后台路由，原后台占位仪表盘和后台 shell 已移除。管理员身份只由当前登录账号是否等于 `ADMIN_ACCOUNT` 判断，不读取数据库 `role` 作为权限来源；`ADMIN_PASSWORD` 只用于确保该账号可登录。普通用户不会看到设置中的“管理员”分类，直接调用管理员服务端动作会返回 `FORBIDDEN`。
 
-全局出站代理配置保存在 `SystemSetting.outboundProxy`。启用时必须至少填写一个 `http://` 或 `https://` 代理地址，默认 `NO_PROXY` 为 `127.0.0.1,localhost`，用于避开本地 MySQL、Redis、Qdrant、Ollama 等服务。服务端 AI 调用、图片生成、供应商 `/models` 拉取、素材导入导出的图片下载，以及 Cloudflare R2 读写都会读取这份全局配置。
+全局出站代理配置保存在 `SystemSetting.outboundProxy`。启用时必须至少填写一个 `http://` 或 `https://` 代理地址，默认 `NO_PROXY` 为 `127.0.0.1,localhost`，用于避开本地 MySQL、Redis、Qdrant、Ollama 等服务。服务端 AI 调用、图片生成、供应商 `/models` 拉取、素材导入导出的图片下载，以及 Cloudflare R2 读写都会读取这份全局配置。服务端会短暂探测已配置的代理端点并缓存健康状态；如果代理端口不可达，会回退为直连，避免地图衍生、AI 辅助和存储访问被本地代理拒绝连接阻断。
 
 ## AI 边界
 
