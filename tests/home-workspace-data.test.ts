@@ -2262,6 +2262,35 @@ describe("map materials", () => {
     }
   });
 
+  it("keeps formatted map graph nodes separated", () => {
+    const nodes: MapMaterialCreateInput["nodes"] = Array.from({ length: 8 }, (_, index) => ({
+      id: `node-${index}`,
+      type: index === 0 ? "country" : index % 3 === 0 ? "region" : "city",
+      name: `节点 ${index}`,
+      description: "",
+      x: 0,
+      y: 0
+    }));
+    const edges: MapMaterialCreateInput["edges"] = nodes.slice(1).map((node, index) => ({
+      id: `edge-${index}`,
+      relation: index % 2 === 0 ? "contains" : "connects",
+      source: "node-0",
+      target: node.id,
+      description: ""
+    }));
+    const layout = layoutMapGraphNodes(nodes, edges);
+    const minDistance = layout.reduce((currentMin, left, leftIndex) => {
+      const nextMin = layout.slice(leftIndex + 1).reduce(
+        (innerMin, right) => Math.min(innerMin, Math.hypot(right.x - left.x, right.y - left.y)),
+        currentMin
+      );
+
+      return nextMin;
+    }, Number.POSITIVE_INFINITY);
+
+    expect(minDistance).toBeGreaterThanOrEqual(2.4);
+  });
+
   it("scales map graph node size by relation count first", () => {
     const isolatedCity = getMapGraphNodeBaseSize("city", 0);
     const connectedVillage = getMapGraphNodeBaseSize("village", 4);

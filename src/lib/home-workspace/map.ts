@@ -148,9 +148,9 @@ export function layoutMapGraphNodes(
         adjustSizes: true,
         barnesHutOptimize: graph.order >= 80,
         edgeWeightInfluence: 0.65,
-        gravity: Math.max(0.6, Math.min(2.2, Math.sqrt(graph.order) / 5)),
-        scalingRatio: Math.max(2, Math.min(16, Math.sqrt(graph.order) * 2)),
-        slowDown: 1.25,
+        gravity: Math.max(0.4, Math.min(1.8, Math.sqrt(graph.order) / 7)),
+        scalingRatio: Math.max(3.5, Math.min(24, Math.sqrt(graph.order) * 2.8)),
+        slowDown: 1.35,
         strongGravityMode: graph.order > 40
       }
     });
@@ -603,12 +603,12 @@ function createMapLayoutInitialPositions(nodes: WorkspaceMapMaterialNode[]) {
   const positions: Record<string, { x: number; y: number }> = {};
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
   const total = Math.max(nodes.length, 1);
-  const baseRadius = Math.max(2.2, Math.sqrt(total) * 1.15);
+  const baseRadius = Math.max(3, Math.sqrt(total) * 1.45);
 
   nodes.forEach((node, index) => {
     const typeRank = getMapLayoutNodeTypeRank(node.type);
     const ringIndex = Math.floor(index / 6);
-    const radius = baseRadius + typeRank * 0.7 + ringIndex * 0.55;
+    const radius = baseRadius + typeRank * 0.9 + ringIndex * 0.8;
     const angle = index * goldenAngle + typeRank * 0.43;
 
     positions[node.id] = {
@@ -710,20 +710,103 @@ function normalizeMapForceAtlasPositions(
     x: position.x - centerX,
     y: position.y - centerY
   }));
-  const centeredPositionByNodeId = new Map(centeredPositions.map((position) => [position.id, position] as const));
-  const maxRadius = centeredPositions.reduce((max, position) => Math.max(max, Math.hypot(position.x, position.y)), 0);
-  const targetRadius = Math.max(4.5, Math.min(34, Math.sqrt(nodes.length) * 3.1));
-  const scale = maxRadius > 0 ? targetRadius / maxRadius : 1;
+  const scaledPositions = centerAndScaleMapPositions(centeredPositions, Math.max(6, Math.min(46, Math.sqrt(nodes.length) * 4.2)));
+  const separatedPositions = spreadMapLayoutPositions(scaledPositions, Math.max(2.75, Math.min(6.5, 2.6 + Math.sqrt(nodes.length) * 0.33)));
+  const centeredPositionByNodeId = new Map(separatedPositions.map((position) => [position.id, position] as const));
 
   return nodes.map((node) => {
     const position = centeredPositionByNodeId.get(node.id) ?? { id: node.id, x: 0, y: 0 };
 
     return {
       id: node.id,
-      x: roundMapLayoutCoordinate(position.x * scale),
-      y: roundMapLayoutCoordinate(position.y * scale)
+      x: roundMapLayoutCoordinate(position.x),
+      y: roundMapLayoutCoordinate(position.y)
     };
   });
+}
+
+function centerAndScaleMapPositions(
+  positions: Array<{ id: string; x: number; y: number }>,
+  targetRadius: number
+) {
+  if (positions.length === 0) {
+    return [];
+  }
+
+  const maxRadius = positions.reduce((max, position) => Math.max(max, Math.hypot(position.x, position.y)), 0);
+  const scale = maxRadius > 0 ? targetRadius / maxRadius : 1;
+  const scaled = positions.map((position) => ({
+    id: position.id,
+    x: position.x * scale,
+    y: position.y * scale
+  }));
+  const centerX = scaled.reduce((sum, position) => sum + position.x, 0) / scaled.length;
+  const centerY = scaled.reduce((sum, position) => sum + position.y, 0) / scaled.length;
+
+  return scaled.map((position) => ({
+    id: position.id,
+    x: position.x - centerX,
+    y: position.y - centerY
+  }));
+}
+
+function spreadMapLayoutPositions(
+  positions: Array<{ id: string; x: number; y: number }>,
+  minDistance: number
+) {
+  if (positions.length <= 1) {
+    return positions;
+  }
+
+  const next = positions.map((position) => ({ ...position }));
+
+  for (let pass = 0; pass < 8; pass++) {
+    let moved = false;
+
+    for (let leftIndex = 0; leftIndex < next.length; leftIndex++) {
+      for (let rightIndex = leftIndex + 1; rightIndex < next.length; rightIndex++) {
+        const left = next[leftIndex];
+        const right = next[rightIndex];
+        const dx = right.x - left.x;
+        const dy = right.y - left.y;
+        const distance = Math.hypot(dx, dy);
+
+        if (distance >= minDistance) {
+          continue;
+        }
+
+        const push = (minDistance - distance) / 2;
+        const [unitX, unitY] = distance > 1e-6
+          ? [dx / distance, dy / distance]
+          : getMapLayoutPairDirection(leftIndex, rightIndex);
+
+        left.x -= unitX * push;
+        left.y -= unitY * push;
+        right.x += unitX * push;
+        right.y += unitY * push;
+        moved = true;
+      }
+    }
+
+    if (!moved) {
+      break;
+    }
+  }
+
+  const centerX = next.reduce((sum, position) => sum + position.x, 0) / next.length;
+  const centerY = next.reduce((sum, position) => sum + position.y, 0) / next.length;
+
+  return next.map((position) => ({
+    id: position.id,
+    x: position.x - centerX,
+    y: position.y - centerY
+  }));
+}
+
+function getMapLayoutPairDirection(leftIndex: number, rightIndex: number) {
+  const angle = ((leftIndex + 1) * 41 + (rightIndex + 1) * 67) * (Math.PI / 180);
+
+  return [Math.cos(angle), Math.sin(angle)] as const;
 }
 
 function getDefaultMapNodeName(type: WorkspaceMapMaterialNodeType, index: number) {
