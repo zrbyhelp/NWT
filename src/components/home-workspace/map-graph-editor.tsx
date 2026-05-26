@@ -1386,8 +1386,8 @@ function createMapNodeLabelDrawer(theme: "light" | "dark"): NodeLabelDrawingFunc
     const fontSize = Math.max(12, settings.labelSize + (highlighted ? 1 : 0));
     const labelColors = getReadableGraphLabelColors(theme);
 
-    drawMapGraphLabel(context, label, data.x + data.size + 6, data.y, {
-      align: "left",
+    drawMapGraphLabel(context, label, data.x, data.y, {
+      align: "center",
       fill: labelColors.fill,
       font: settings.labelFont,
       size: fontSize,
