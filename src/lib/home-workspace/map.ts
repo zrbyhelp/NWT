@@ -146,8 +146,8 @@ export function layoutMapGraphNodes(
         ...inferredSettings,
         barnesHutOptimize: graph.order >= 80,
         edgeWeightInfluence: 0.65,
-        gravity: Math.max(0.8, Math.min(2.8, Math.sqrt(graph.order) / 4)),
-        scalingRatio: Math.max(1.5, Math.min(12, Math.sqrt(graph.order) * 1.6)),
+        gravity: Math.max(0.6, Math.min(2.2, Math.sqrt(graph.order) / 5)),
+        scalingRatio: Math.max(2, Math.min(16, Math.sqrt(graph.order) * 2)),
         slowDown: 1.25,
         strongGravityMode: graph.order > 40
       }
@@ -586,7 +586,7 @@ function createMapLayoutInitialPositions(nodes: WorkspaceMapMaterialNode[]) {
   const positions: Record<string, { x: number; y: number }> = {};
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
   const total = Math.max(nodes.length, 1);
-  const baseRadius = Math.max(1.8, Math.sqrt(total) * 0.95);
+  const baseRadius = Math.max(2.2, Math.sqrt(total) * 1.15);
 
   nodes.forEach((node, index) => {
     const typeRank = getMapLayoutNodeTypeRank(node.type);
@@ -688,7 +688,7 @@ function normalizeMapForceAtlasPositions(
   }));
   const centeredPositionByNodeId = new Map(centeredPositions.map((position) => [position.id, position] as const));
   const maxRadius = centeredPositions.reduce((max, position) => Math.max(max, Math.hypot(position.x, position.y)), 0);
-  const targetRadius = Math.max(2.5, Math.min(18, Math.sqrt(nodes.length) * 2.2));
+  const targetRadius = Math.max(4.5, Math.min(34, Math.sqrt(nodes.length) * 3.1));
   const scale = maxRadius > 0 ? targetRadius / maxRadius : 1;
 
   return nodes.map((node) => {

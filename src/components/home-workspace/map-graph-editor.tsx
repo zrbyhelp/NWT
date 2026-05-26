@@ -1276,8 +1276,6 @@ function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "da
 }
 
 function createMapNodeLabelDrawer(theme: "light" | "dark"): NodeLabelDrawingFunction {
-  const colors = getGraphThemeColors(null, theme);
-
   return (context, data, settings) => {
     const label = typeof data.label === "string" ? data.label.trim() : "";
 
@@ -1287,12 +1285,13 @@ function createMapNodeLabelDrawer(theme: "light" | "dark"): NodeLabelDrawingFunc
 
     const highlighted = Boolean((data as { highlighted?: boolean }).highlighted);
     const fontSize = Math.max(12, settings.labelSize + (highlighted ? 1 : 0));
+    const labelColors = getReadableGraphLabelColors(typeof data.color === "string" ? data.color : "", theme);
 
     drawMapGraphLabel(context, label, data.x + data.size + 6, data.y, {
       align: "left",
-      fill: colors.nodeLabel,
+      fill: labelColors.fill,
       font: settings.labelFont,
-      halo: colors.nodeLabelHalo,
+      halo: labelColors.halo,
       size: fontSize,
       weight: highlighted ? "700" : settings.labelWeight
     });
@@ -1300,8 +1299,6 @@ function createMapNodeLabelDrawer(theme: "light" | "dark"): NodeLabelDrawingFunc
 }
 
 function createMapEdgeLabelDrawer(theme: "light" | "dark"): EdgeLabelDrawingFunction {
-  const colors = getGraphThemeColors(null, theme);
-
   return (context, edgeData, sourceData, targetData, settings) => {
     const label = typeof edgeData.label === "string" ? edgeData.label.trim() : "";
 
@@ -1315,12 +1312,13 @@ function createMapEdgeLabelDrawer(theme: "light" | "dark"): EdgeLabelDrawingFunc
     const offset = Math.min(14, Math.max(8, edgeData.size * 4));
     const highlighted = Boolean((edgeData as { highlighted?: boolean }).highlighted);
     const fontSize = Math.max(11, settings.edgeLabelSize - 1 + (highlighted ? 1 : 0));
+    const labelColors = getReadableGraphLabelColors(typeof edgeData.color === "string" ? edgeData.color : "", theme);
 
     drawMapGraphLabel(context, label, (sourceData.x + targetData.x) / 2 - (dy / length) * offset, (sourceData.y + targetData.y) / 2 + (dx / length) * offset, {
       align: "center",
-      fill: colors.edgeLabel,
+      fill: labelColors.fill,
       font: settings.edgeLabelFont,
-      halo: colors.edgeLabelHalo,
+      halo: labelColors.halo,
       size: fontSize,
       weight: highlighted ? "700" : settings.edgeLabelWeight
     });
@@ -1348,11 +1346,103 @@ function drawMapGraphLabel(
   context.lineJoin = "round";
   context.miterLimit = 2;
   context.strokeStyle = options.halo;
-  context.lineWidth = Math.max(3, Math.round(options.size / 3));
+  context.lineWidth = Math.max(4, Math.round(options.size / 2.5));
   context.strokeText(label, x, y);
   context.fillStyle = options.fill;
   context.fillText(label, x, y);
   context.restore();
+}
+
+function getReadableGraphLabelColors(color: string, theme: "light" | "dark") {
+  const fallback = theme === "dark"
+    ? {
+        fill: "#F8FAFC",
+        halo: "rgba(2, 6, 23, 0.96)"
+      }
+    : {
+        fill: "#0F172A",
+        halo: "rgba(255, 255, 255, 0.96)"
+      };
+  const rgba = parseGraphColor(color);
+
+  if (!rgba) {
+    return fallback;
+  }
+
+  const luminance = getRelativeLuminance(rgba);
+
+  if (luminance >= 0.62) {
+    return {
+      fill: "#0F172A",
+      halo: "rgba(255, 255, 255, 0.96)"
+    };
+  }
+
+  if (luminance <= 0.34) {
+    return {
+      fill: "#F8FAFC",
+      halo: "rgba(2, 6, 23, 0.96)"
+    };
+  }
+
+  return fallback;
+}
+
+function parseGraphColor(color: string) {
+  const normalized = color.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const hex = normalized.match(/^#([0-9a-f]{3,8})$/i);
+
+  if (hex?.[1]) {
+    const value = hex[1];
+
+    if (value.length === 3 || value.length === 4) {
+      const [r, g, b] = value.slice(0, 3).split("").map((part) => Number.parseInt(part + part, 16));
+      return { r, g, b };
+    }
+
+    if (value.length === 6 || value.length === 8) {
+      return {
+        r: Number.parseInt(value.slice(0, 2), 16),
+        g: Number.parseInt(value.slice(2, 4), 16),
+        b: Number.parseInt(value.slice(4, 6), 16)
+      };
+    }
+  }
+
+  const rgb = normalized.match(/^rgba?\(([^)]+)\)$/i);
+
+  if (rgb?.[1]) {
+    const parts = rgb[1].split(",").map((part) => Number.parseFloat(part.trim()));
+
+    if (parts.length >= 3 && parts.every((part) => Number.isFinite(part))) {
+      return {
+        r: parts[0],
+        g: parts[1],
+        b: parts[2]
+      };
+    }
+  }
+
+  return null;
+}
+
+function getRelativeLuminance(color: { r: number; g: number; b: number }) {
+  const normalize = (value: number) => {
+    const channel = value / 255;
+
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
+
+  const r = normalize(color.r);
+  const g = normalize(color.g);
+  const b = normalize(color.b);
+
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 function hasCanvasWebglSupport(canvas: HTMLCanvasElement, contextNames: Array<"webgl2" | "webgl" | "experimental-webgl">) {
