@@ -249,6 +249,7 @@ import {
   serializeMapDraft,
   serializeSceneTextDraft,
   applyPatchToMapDraft,
+  layoutMapGraphNodes,
   validateMapDraftForGraphSave,
   validateMapDraftForSave,
   uploadSceneDraftPanoramaFaces,
@@ -3299,6 +3300,16 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setMapEditingMaterialId("");
   }
 
+  function updateMapCreateDraft(updater: (current: MapCreateDraft) => MapCreateDraft) {
+    setMapCreateDraft((current) => {
+      const nextDraft = updater(current);
+
+      mapCreateDraftRef.current = nextDraft;
+
+      return nextDraft;
+    });
+  }
+
   function resetMapAiState() {
     setMapAiInput("");
     setMapAiMessages([]);
@@ -3496,19 +3507,19 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   }
 
   function updateMapName(name: string) {
-    setMapCreateDraft((current) => ({ ...current, name }));
+    updateMapCreateDraft((current) => ({ ...current, name }));
   }
 
   function updateMapDescription(description: string) {
-    setMapCreateDraft((current) => ({ ...current, description }));
+    updateMapCreateDraft((current) => ({ ...current, description }));
   }
 
   function updateMapStyle(style: WorkspaceMaterialStyle) {
-    setMapCreateDraft((current) => ({ ...current, style }));
+    updateMapCreateDraft((current) => ({ ...current, style }));
   }
 
   function updateMapCommunityVisible(checked: boolean) {
-    setMapCreateDraft((current) => ({ ...current, communityVisible: checked }));
+    updateMapCreateDraft((current) => ({ ...current, communityVisible: checked }));
   }
 
   async function sendMapAiMessage(authenticatedViewer = viewer) {
@@ -3526,7 +3537,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       return;
     }
 
-    const snapshot = serializeMapDraft(mapCreateDraft);
+    const snapshot = serializeMapDraft(mapCreateDraftRef.current);
     setMapAiInput("");
     setMapAiPending(true);
     setMapAiMessages((current) => [
@@ -3537,7 +3548,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     try {
       const result = await assistHomeMapDraft(snapshot, instruction, locale);
 
-      setMapCreateDraft((current) => applyPatchToMapDraft(current, result.patch));
+      updateMapCreateDraft((current) => applyPatchToMapDraft(current, result.patch));
       setMapAiMessages((current) => [
         ...current,
         { id: createClientId("map-ai-assistant"), role: "assistant", content: result.message }
@@ -3659,9 +3670,11 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
         const nextDraft = applyPatchToMapDraft(mapCreateDraftRef.current, result.patch);
         const firstNewNodeId = result.patch.addNodes?.[0]?.id ?? "";
+        const layoutUpdates = layoutMapGraphNodes(nextDraft.nodes, nextDraft.edges);
+        const laidOutDraft = applyMapLayoutUpdatesToDraft(nextDraft, layoutUpdates);
 
-        mapCreateDraftRef.current = nextDraft;
-        setMapCreateDraft(nextDraft);
+        mapCreateDraftRef.current = laidOutDraft;
+        setMapCreateDraft(laidOutDraft);
         setMapSelectedNodeId(firstNewNodeId || seedNode.id);
         setMapSelectedEdgeId("");
         setMapAiMessages((current) => [
@@ -3715,7 +3728,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     nodeId: string,
     patch: Partial<Pick<WorkspaceMapMaterialNode, "description" | "name" | "type" | "x" | "y">>
   ) {
-    setMapCreateDraft((current) => ({
+    updateMapCreateDraft((current) => ({
       ...current,
       nodes: current.nodes.map((node) =>
         node.id === nodeId
@@ -3736,7 +3749,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     edgeId: string,
     patch: Partial<Pick<WorkspaceMapMaterialEdge, "description" | "relation" | "source" | "target">>
   ) {
-    setMapCreateDraft((current) => ({
+    updateMapCreateDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) =>
         edge.id === edgeId
@@ -3770,7 +3783,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       description: value.description
     });
 
-    setMapCreateDraft((current) => ({
+    updateMapCreateDraft((current) => ({
       ...current,
       nodes: [...current.nodes, node]
     }));
@@ -3801,7 +3814,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       description: value.description
     });
 
-    setMapCreateDraft((current) => ({
+    updateMapCreateDraft((current) => ({
       ...current,
       edges: [...current.edges, edge]
     }));
@@ -3814,7 +3827,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     let nextSelectedNodeId = mapSelectedNodeId;
     let nextSelectedEdgeId = mapSelectedEdgeId;
 
-    setMapCreateDraft((current) => {
+    updateMapCreateDraft((current) => {
       const nextNodes = current.nodes.filter((node) => node.id !== nodeId);
       const nextEdges = current.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
 
@@ -3844,7 +3857,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   function removeMapEdge(edgeId: string) {
     let nextSelectedEdgeId = mapSelectedEdgeId;
 
-    setMapCreateDraft((current) => {
+    updateMapCreateDraft((current) => {
       const nextEdges = current.edges.filter((edge) => edge.id !== edgeId);
 
       if (nextSelectedEdgeId === edgeId || !nextEdges.some((edge) => edge.id === nextSelectedEdgeId)) {
@@ -3865,23 +3878,14 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   }
 
   function moveMapNode(nodeId: string, x: number, y: number) {
-    setMapCreateDraft((current) => ({
+    updateMapCreateDraft((current) => ({
       ...current,
       nodes: current.nodes.map((node) => (node.id === nodeId ? { ...node, x, y } : node))
     }));
   }
 
   function layoutMapNodes(updates: Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">>) {
-    const updateByNodeId = new Map(updates.map((update) => [update.id, update]));
-
-    setMapCreateDraft((current) => ({
-      ...current,
-      nodes: current.nodes.map((node) => {
-        const update = updateByNodeId.get(node.id);
-
-        return update ? { ...node, x: update.x, y: update.y } : node;
-      })
-    }));
+    updateMapCreateDraft((current) => applyMapLayoutUpdatesToDraft(current, updates));
   }
 
   async function submitMapDraft(mode: "basic" | "graph", authenticatedViewer = viewer) {
@@ -5094,6 +5098,22 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       />
     </div>
   );
+}
+
+function applyMapLayoutUpdatesToDraft(
+  draft: MapCreateDraft,
+  updates: Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">>
+) {
+  const updateByNodeId = new Map(updates.map((update) => [update.id, update] as const));
+
+  return {
+    ...draft,
+    nodes: draft.nodes.map((node) => {
+      const update = updateByNodeId.get(node.id);
+
+      return update ? { ...node, x: update.x, y: update.y } : node;
+    })
+  };
 }
 
 

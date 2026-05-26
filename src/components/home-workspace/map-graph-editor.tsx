@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Graph, { MultiDirectedGraph } from "graphology";
+import type { EdgeLabelDrawingFunction, NodeLabelDrawingFunction } from "sigma/rendering";
 import {
   Check,
   ChevronDown,
@@ -97,6 +98,7 @@ export function MapGraphEditor({
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [visibleNodeTypes, setVisibleNodeTypes] = useState<WorkspaceMapMaterialNodeType[]>(() => [...mapNodeTypes]);
   const [visibleRelationTypes, setVisibleRelationTypes] = useState<WorkspaceMapMaterialRelationType[]>(() => [...mapRelationTypes]);
+  const [graphTheme, setGraphTheme] = useState<"light" | "dark">(() => getMapGraphThemeMode());
   const callbacksRef = useRef({
     onMoveNode,
     onSelectEdge,
@@ -153,7 +155,35 @@ export function MapGraphEditor({
   }, [filterPanelOpen]);
 
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+    const syncTheme = () => {
+      setGraphTheme(getMapGraphThemeMode());
+    };
+
+    syncTheme();
+
+    const observer = typeof MutationObserver !== "undefined" ? new MutationObserver(syncTheme) : null;
+    observer?.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "style"]
+    });
+
+    const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    media?.addEventListener("change", syncTheme);
+
+    return () => {
+      observer?.disconnect();
+      media?.removeEventListener("change", syncTheme);
+    };
+  }, []);
+
+  useEffect(() => {
     const graphDraft = filterMapDraft(draft, visibleNodeTypes, visibleRelationTypes);
+    const themeColors = getGraphThemeColors(containerRef.current, graphTheme);
 
     syncGraphToDraft(
       graph,
@@ -161,7 +191,7 @@ export function MapGraphEditor({
       selectedNodeId,
       selectedEdgeId,
       relationLabel,
-      getGraphThemeColors(containerRef.current),
+      themeColors,
       {
         relatedNodeIds: buildRelatedNodeIdSet(graphDraft, selectedNodeId, selectedEdgeId),
         relatedEdgeIds: buildRelatedEdgeIdSet(graphDraft, selectedNodeId, selectedEdgeId)
@@ -171,7 +201,7 @@ export function MapGraphEditor({
     if (rendererRef.current) {
       rendererRef.current.refresh?.();
     }
-  }, [draft, graph, relationLabel, selectedEdgeId, selectedNodeId, visibleNodeTypes, visibleRelationTypes]);
+  }, [draft, graph, graphTheme, relationLabel, selectedEdgeId, selectedNodeId, visibleNodeTypes, visibleRelationTypes]);
 
   useEffect(() => {
     if (selectedNodeId && !draft.nodes.some((node) => node.id === selectedNodeId && visibleNodeTypes.includes(node.type))) {
@@ -264,13 +294,17 @@ export function MapGraphEditor({
         }
 
         const { default: Sigma } = await import("sigma");
+        const currentGraphTheme = getMapGraphThemeMode();
+        const themeColors = getGraphThemeColors(container, currentGraphTheme);
         const renderer = new Sigma(graph, container as HTMLElement, {
+          defaultDrawEdgeLabel: createMapEdgeLabelDrawer(currentGraphTheme),
+          defaultDrawNodeLabel: createMapNodeLabelDrawer(currentGraphTheme),
           renderEdgeLabels: true,
           renderLabels: true,
-          labelColor: { color: getCanvasThemeColor(container, "--foreground", "#111827") },
+          labelColor: { color: themeColors.nodeLabel },
           labelRenderedSizeThreshold: 4,
           labelWeight: "600",
-          edgeLabelColor: { color: getCanvasThemeColor(container, "--foreground", "#111827", 0.88) },
+          edgeLabelColor: { color: themeColors.edgeLabel },
           edgeLabelWeight: "500",
           zIndex: true
         });
@@ -412,6 +446,24 @@ export function MapGraphEditor({
       cleanup();
     };
   }, [graph]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+
+    if (!renderer) {
+      return;
+    }
+
+    const themeColors = getGraphThemeColors(containerRef.current, graphTheme);
+
+    renderer.setSettings?.({
+      defaultDrawEdgeLabel: createMapEdgeLabelDrawer(graphTheme),
+      defaultDrawNodeLabel: createMapNodeLabelDrawer(graphTheme),
+      edgeLabelColor: { color: themeColors.edgeLabel },
+      labelColor: { color: themeColors.nodeLabel }
+    });
+    renderer.refresh?.();
+  }, [graphTheme]);
 
   const visibleNodeTypeSet = useMemo(() => new Set(visibleNodeTypes), [visibleNodeTypes]);
   const visibleRelationTypeSet = useMemo(() => new Set(visibleRelationTypes), [visibleRelationTypes]);
@@ -743,7 +795,7 @@ export function MapGraphEditor({
           ) : null}
 
           {!readOnly && showSelectionPanel && (selectedNode || selectedEdge) ? (
-            <div className="absolute bottom-4 left-4 z-20 max-w-[22rem] rounded-2xl border border-border bg-background/98 p-3 shadow-lg shadow-foreground/12 backdrop-blur">
+            <div className="absolute bottom-4 left-4 z-20 max-h-[26rem] max-w-[22rem] overflow-hidden rounded-2xl bg-background/96 p-3 shadow-lg shadow-foreground/12 ring-1 ring-border/55 backdrop-blur">
               {selectedNode ? (
                 <div className="space-y-2">
                   <div className="min-w-0">
@@ -798,7 +850,7 @@ export function MapGraphEditor({
                       {t("mapForm.connectNodeHint", { node: selectedNode.name || t("mapForm.nodeUntitled") })}
                     </p>
                   ) : null}
-                  <div className="rounded-xl border border-border/70 bg-background/75 p-2">
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[11px] uppercase tracking-wide text-foreground/38">{t("mapForm.relatedEdgesTitle")}</p>
                       <span className="text-[11px] text-foreground/42">
@@ -806,7 +858,7 @@ export function MapGraphEditor({
                       </span>
                     </div>
                     {selectedNodeRelationEdges.length > 0 ? (
-                      <div className="mt-2 space-y-1.5">
+                      <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
                         {selectedNodeRelationEdges.map((edge) => (
                           <button
                             key={edge.id}
@@ -815,7 +867,7 @@ export function MapGraphEditor({
                               onSelectEdge(edge.id);
                               onSelectNode("");
                             }}
-                            className="flex w-full items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-left transition hover:border-primary/45 hover:bg-primary/8"
+                            className="flex w-full items-center gap-2 rounded-lg bg-muted/25 px-2.5 py-2 text-left transition hover:bg-primary/10"
                           >
                             <Link2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
                             <span className="min-w-0">
@@ -828,7 +880,7 @@ export function MapGraphEditor({
                         ))}
                       </div>
                     ) : (
-                      <p className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-2.5 py-2 text-xs leading-5 text-foreground/48">
+                      <p className="rounded-lg bg-muted/20 px-2.5 py-2 text-xs leading-5 text-foreground/48">
                         {t("mapForm.relatedEdgesEmpty")}
                       </p>
                     )}
@@ -994,6 +1046,7 @@ function syncGraphToDraft(
 ) {
   const nextNodeIds = new Set(draft.nodes.map((node) => node.id));
   const nextEdgeIds = new Set(draft.edges.map((edge) => edge.id));
+  const hasSelection = Boolean(selectedNodeId || selectedEdgeId);
 
   for (const nodeId of graph.nodes()) {
     if (!nextNodeIds.has(nodeId)) {
@@ -1044,7 +1097,7 @@ function syncGraphToDraft(
       highlighted: selected || related,
       label: relationLabel(edge.relation),
       relation: edge.relation,
-      size: selected ? 2.8 : related ? 1.8 : 1.15,
+      size: selected ? 3.4 : related ? 2.35 : hasSelection ? 1.18 : 1.45,
       zIndex: selected ? 2 : related ? 1 : 0
     };
 
@@ -1129,7 +1182,8 @@ function buildRelatedEdgeIdSet(draft: MapCreateDraft, selectedNodeId: string, se
 }
 
 function getNodeColor(type: WorkspaceMapMaterialNodeType, selected: boolean, related = false) {
-  const palette: Record<WorkspaceMapMaterialNodeType, string> = {
+  const dark = getMapGraphThemeMode() === "dark";
+  const lightPalette: Record<WorkspaceMapMaterialNodeType, string> = {
     country: selected ? "#1E3A8A" : related ? "#2563EB" : "#3B82F6",
     region: selected ? "#115E59" : related ? "#0F766E" : "#10B981",
     city: selected ? "#9F1239" : related ? "#DB2777" : "#F43F5E",
@@ -1137,6 +1191,15 @@ function getNodeColor(type: WorkspaceMapMaterialNodeType, selected: boolean, rel
     landmark: selected ? "#5B21B6" : related ? "#7C3AED" : "#8B5CF6",
     path: selected ? "#334155" : related ? "#475569" : "#94A3B8"
   };
+  const darkPalette: Record<WorkspaceMapMaterialNodeType, string> = {
+    country: selected ? "#60A5FA" : related ? "#93C5FD" : "#3B82F6",
+    region: selected ? "#2DD4BF" : related ? "#5EEAD4" : "#14B8A6",
+    city: selected ? "#FB7185" : related ? "#FDA4AF" : "#F43F5E",
+    village: selected ? "#FBBF24" : related ? "#FDE68A" : "#F59E0B",
+    landmark: selected ? "#A78BFA" : related ? "#C4B5FD" : "#8B5CF6",
+    path: selected ? "#CBD5E1" : related ? "#E2E8F0" : "#94A3B8"
+  };
+  const palette = dark ? darkPalette : lightPalette;
 
   return palette[type];
 }
@@ -1168,20 +1231,128 @@ function getCanvasThemeColor(container: HTMLElement | null, variable: string, fa
   return `hsl(${value}${typeof alpha === "number" ? ` / ${alpha}` : ""})`;
 }
 
-function getGraphThemeColors(container: HTMLElement | null) {
-  if (!container) {
+function getMapGraphThemeMode(): "light" | "dark" {
+  if (typeof document !== "undefined") {
+    const root = document.documentElement;
+
+    if (root.classList.contains("dark") || root.style.colorScheme === "dark") {
+      return "dark";
+    }
+
+    if (root.style.colorScheme === "light") {
+      return "light";
+    }
+  }
+
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+
+  return "light";
+}
+
+function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "dark" = getMapGraphThemeMode()) {
+  if (theme === "dark") {
     return {
-      edge: "#475569",
-      relatedEdge: "#0F172A",
-      selectedEdge: "#1D4ED8"
+      edge: "rgba(148, 163, 184, 0.82)",
+      edgeLabel: "#F8FAFC",
+      edgeLabelHalo: "rgba(2, 6, 23, 0.96)",
+      nodeLabel: "#F8FAFC",
+      nodeLabelHalo: "rgba(2, 6, 23, 0.96)",
+      relatedEdge: "rgba(248, 250, 252, 0.98)",
+      selectedEdge: "#60A5FA"
     };
   }
 
   return {
-    edge: getCanvasThemeColor(container, "--foreground", "#475569", 0.78),
+    edge: getCanvasThemeColor(container, "--foreground", "#475569", 0.74),
+    edgeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
+    edgeLabelHalo: "rgba(255, 255, 255, 0.96)",
+    nodeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
+    nodeLabelHalo: "rgba(255, 255, 255, 0.96)",
     relatedEdge: getCanvasThemeColor(container, "--foreground", "#0F172A", 0.96),
     selectedEdge: getCanvasThemeColor(container, "--primary", "#1D4ED8")
   };
+}
+
+function createMapNodeLabelDrawer(theme: "light" | "dark"): NodeLabelDrawingFunction {
+  const colors = getGraphThemeColors(null, theme);
+
+  return (context, data, settings) => {
+    const label = typeof data.label === "string" ? data.label.trim() : "";
+
+    if (!label) {
+      return;
+    }
+
+    const highlighted = Boolean((data as { highlighted?: boolean }).highlighted);
+    const fontSize = Math.max(12, settings.labelSize + (highlighted ? 1 : 0));
+
+    drawMapGraphLabel(context, label, data.x + data.size + 6, data.y, {
+      align: "left",
+      fill: colors.nodeLabel,
+      font: settings.labelFont,
+      halo: colors.nodeLabelHalo,
+      size: fontSize,
+      weight: highlighted ? "700" : settings.labelWeight
+    });
+  };
+}
+
+function createMapEdgeLabelDrawer(theme: "light" | "dark"): EdgeLabelDrawingFunction {
+  const colors = getGraphThemeColors(null, theme);
+
+  return (context, edgeData, sourceData, targetData, settings) => {
+    const label = typeof edgeData.label === "string" ? edgeData.label.trim() : "";
+
+    if (!label) {
+      return;
+    }
+
+    const dx = targetData.x - sourceData.x;
+    const dy = targetData.y - sourceData.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const offset = Math.min(14, Math.max(8, edgeData.size * 4));
+    const highlighted = Boolean((edgeData as { highlighted?: boolean }).highlighted);
+    const fontSize = Math.max(11, settings.edgeLabelSize - 1 + (highlighted ? 1 : 0));
+
+    drawMapGraphLabel(context, label, (sourceData.x + targetData.x) / 2 - (dy / length) * offset, (sourceData.y + targetData.y) / 2 + (dx / length) * offset, {
+      align: "center",
+      fill: colors.edgeLabel,
+      font: settings.edgeLabelFont,
+      halo: colors.edgeLabelHalo,
+      size: fontSize,
+      weight: highlighted ? "700" : settings.edgeLabelWeight
+    });
+  };
+}
+
+function drawMapGraphLabel(
+  context: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  y: number,
+  options: {
+    align: CanvasTextAlign;
+    fill: string;
+    font: string;
+    halo: string;
+    size: number;
+    weight: string;
+  }
+) {
+  context.save();
+  context.font = `${options.weight} ${options.size}px ${options.font}`;
+  context.textAlign = options.align;
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+  context.miterLimit = 2;
+  context.strokeStyle = options.halo;
+  context.lineWidth = Math.max(3, Math.round(options.size / 3));
+  context.strokeText(label, x, y);
+  context.fillStyle = options.fill;
+  context.fillText(label, x, y);
+  context.restore();
 }
 
 function hasCanvasWebglSupport(canvas: HTMLCanvasElement, contextNames: Array<"webgl2" | "webgl" | "experimental-webgl">) {

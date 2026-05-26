@@ -1,3 +1,5 @@
+import { MultiDirectedGraph } from "graphology";
+import forceAtlas2 from "graphology-layout-forceatlas2";
 import type {
   MapCreateDraft,
   MapDraftPatch,
@@ -102,66 +104,59 @@ export function layoutMapGraphNodes(
   nodes: WorkspaceMapMaterialNode[],
   edges: WorkspaceMapMaterialEdge[]
 ): Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">> {
-  if (nodes.length === 0) {
+  const sortedNodes = sortMapLayoutNodes(nodes);
+
+  if (sortedNodes.length === 0) {
     return [];
   }
 
-  if (nodes.length === 1) {
-    return [{ id: nodes[0].id, x: 0, y: 0 }];
+  if (sortedNodes.length === 1) {
+    return [{ id: sortedNodes[0].id, x: 0, y: 0 }];
   }
 
-  const degreeByNodeId = new Map(nodes.map((node) => [node.id, 0]));
+  const graph = new MultiDirectedGraph();
+  const initialPositions = createMapLayoutInitialPositions(sortedNodes);
+  const nodeIds = new Set(sortedNodes.map((node) => node.id));
 
-  for (const edge of edges) {
-    if (degreeByNodeId.has(edge.source)) {
-      degreeByNodeId.set(edge.source, (degreeByNodeId.get(edge.source) ?? 0) + 1);
-    }
+  sortedNodes.forEach((node) => {
+    const position = initialPositions[node.id];
 
-    if (degreeByNodeId.has(edge.target)) {
-      degreeByNodeId.set(edge.target, (degreeByNodeId.get(edge.target) ?? 0) + 1);
-    }
-  }
-
-  const nodesByType = mapNodeTypes.reduce<Record<WorkspaceMapMaterialNodeType, WorkspaceMapMaterialNode[]>>((result, type) => {
-    result[type] = [];
-    return result;
-  }, {} as Record<WorkspaceMapMaterialNodeType, WorkspaceMapMaterialNode[]>);
-
-  for (const node of nodes) {
-    const type = isMapNodeType(node.type) ? node.type : "landmark";
-
-    nodesByType[type].push(node);
-  }
-
-  const activeTypes = mapNodeTypes.filter((type) => nodesByType[type].length > 0);
-  const rowSpacing = 1.45;
-  const columnSpacing = 1.65;
-  const firstRowY = -((activeTypes.length - 1) * rowSpacing) / 2;
-  const updates: Array<Pick<WorkspaceMapMaterialNode, "id" | "x" | "y">> = [];
-
-  activeTypes.forEach((type, rowIndex) => {
-    const rowNodes = [...nodesByType[type]].sort((a, b) => {
-      const degreeDelta = (degreeByNodeId.get(b.id) ?? 0) - (degreeByNodeId.get(a.id) ?? 0);
-
-      if (degreeDelta !== 0) {
-        return degreeDelta;
-      }
-
-      return `${a.name || ""}:${a.id}`.localeCompare(`${b.name || ""}:${b.id}`, "zh-CN");
-    });
-    const firstColumnX = -((rowNodes.length - 1) * columnSpacing) / 2;
-    const y = roundMapLayoutCoordinate(firstRowY + rowIndex * rowSpacing);
-
-    rowNodes.forEach((node, columnIndex) => {
-      updates.push({
-        id: node.id,
-        x: roundMapLayoutCoordinate(firstColumnX + columnIndex * columnSpacing),
-        y
-      });
+    graph.addNode(node.id, {
+      size: getMapLayoutNodeSize(node.type),
+      x: position.x,
+      y: position.y
     });
   });
 
-  return updates;
+  [...edges]
+    .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target) && edge.source !== edge.target)
+    .sort((a, b) => `${a.source}:${a.target}:${a.relation}:${a.id}`.localeCompare(`${b.source}:${b.target}:${b.relation}:${b.id}`, "zh-CN"))
+    .forEach((edge, index) => {
+      graph.addDirectedEdgeWithKey(`layout-edge-${normalizeId(edge.id, String(index))}-${index}`, edge.source, edge.target, {
+        weight: getMapLayoutEdgeWeight(edge.relation)
+      });
+    });
+
+  try {
+    const inferredSettings = forceAtlas2.inferSettings(graph);
+    const positions = forceAtlas2(graph, {
+      getEdgeWeight: "weight",
+      iterations: getMapForceAtlasIterations(graph.order),
+      settings: {
+        ...inferredSettings,
+        barnesHutOptimize: graph.order >= 80,
+        edgeWeightInfluence: 0.65,
+        gravity: Math.max(0.8, Math.min(2.8, Math.sqrt(graph.order) / 4)),
+        scalingRatio: Math.max(1.5, Math.min(12, Math.sqrt(graph.order) * 1.6)),
+        slowDown: 1.25,
+        strongGravityMode: graph.order > 40
+      }
+    });
+
+    return normalizeMapForceAtlasPositions(sortedNodes, positions, initialPositions);
+  } catch {
+    return normalizeMapForceAtlasPositions(sortedNodes, initialPositions, initialPositions);
+  }
 }
 
 export function createMapDraftFromMaterial(material: WorkspaceMaterial): MapCreateDraft {
@@ -562,6 +557,149 @@ function getDefaultMapNodePosition(index: number) {
 
 function roundMapLayoutCoordinate(value: number) {
   return Number(value.toFixed(3));
+}
+
+function sortMapLayoutNodes(nodes: WorkspaceMapMaterialNode[]) {
+  const nodeTypeOrder = new Map(mapNodeTypes.map((type, index) => [type, index] as const));
+
+  return [...nodes].sort((left, right) => {
+    const leftRank = nodeTypeOrder.get(left.type) ?? mapNodeTypes.length;
+    const rightRank = nodeTypeOrder.get(right.type) ?? mapNodeTypes.length;
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    const leftName = left.name.trim() || left.id;
+    const rightName = right.name.trim() || right.id;
+    const nameCompare = leftName.localeCompare(rightName, "zh-CN");
+
+    if (nameCompare !== 0) {
+      return nameCompare;
+    }
+
+    return left.id.localeCompare(right.id, "zh-CN");
+  });
+}
+
+function createMapLayoutInitialPositions(nodes: WorkspaceMapMaterialNode[]) {
+  const positions: Record<string, { x: number; y: number }> = {};
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const total = Math.max(nodes.length, 1);
+  const baseRadius = Math.max(1.8, Math.sqrt(total) * 0.95);
+
+  nodes.forEach((node, index) => {
+    const typeRank = getMapLayoutNodeTypeRank(node.type);
+    const ringIndex = Math.floor(index / 6);
+    const radius = baseRadius + typeRank * 0.7 + ringIndex * 0.55;
+    const angle = index * goldenAngle + typeRank * 0.43;
+
+    positions[node.id] = {
+      x: roundMapLayoutCoordinate(Math.cos(angle) * radius),
+      y: roundMapLayoutCoordinate(Math.sin(angle) * radius)
+    };
+  });
+
+  return positions;
+}
+
+function getMapLayoutNodeTypeRank(type: WorkspaceMapMaterialNodeType) {
+  const index = mapNodeTypes.indexOf(type);
+
+  return index === -1 ? mapNodeTypes.length : index;
+}
+
+function getMapLayoutNodeSize(type: WorkspaceMapMaterialNodeType) {
+  const sizes: Record<WorkspaceMapMaterialNodeType, number> = {
+    country: 16,
+    region: 14,
+    city: 13,
+    village: 11,
+    landmark: 12,
+    path: 10
+  };
+
+  return sizes[type] ?? 11;
+}
+
+function getMapLayoutEdgeWeight(relation: WorkspaceMapMaterialRelationType) {
+  const weights: Record<WorkspaceMapMaterialRelationType, number> = {
+    contains: 1.65,
+    belongs_to: 1.45,
+    adjacent: 1.05,
+    connects: 1.2,
+    through: 1.15,
+    north_of: 0.82,
+    south_of: 0.82,
+    east_of: 0.82,
+    west_of: 0.82
+  };
+
+  return weights[relation] ?? 1;
+}
+
+function getMapForceAtlasIterations(order: number) {
+  if (!Number.isFinite(order) || order <= 1) {
+    return 1;
+  }
+
+  return Math.min(180, Math.max(48, Math.round(32 + Math.sqrt(order) * 14)));
+}
+
+function normalizeMapForceAtlasPositions(
+  nodes: WorkspaceMapMaterialNode[],
+  positions: Record<string, { x: number; y: number }>,
+  fallbackPositions: Record<string, { x: number; y: number }>
+) {
+  if (nodes.length === 0) {
+    return [];
+  }
+
+  const resolvedPositions = nodes.map((node) => {
+    const position = positions[node.id] ?? fallbackPositions[node.id] ?? { x: 0, y: 0 };
+
+    return {
+      id: node.id,
+      x: Number.isFinite(position.x) ? position.x : 0,
+      y: Number.isFinite(position.y) ? position.y : 0
+    };
+  });
+
+  const allCollapsed = resolvedPositions.every((position) => position.x === resolvedPositions[0].x && position.y === resolvedPositions[0].y);
+
+  if (allCollapsed) {
+    return nodes.map((node) => {
+      const fallback = fallbackPositions[node.id] ?? { x: 0, y: 0 };
+
+      return {
+        id: node.id,
+        x: roundMapLayoutCoordinate(fallback.x),
+        y: roundMapLayoutCoordinate(fallback.y)
+      };
+    });
+  }
+
+  const centerX = resolvedPositions.reduce((sum, position) => sum + position.x, 0) / resolvedPositions.length;
+  const centerY = resolvedPositions.reduce((sum, position) => sum + position.y, 0) / resolvedPositions.length;
+  const centeredPositions = resolvedPositions.map((position) => ({
+    id: position.id,
+    x: position.x - centerX,
+    y: position.y - centerY
+  }));
+  const centeredPositionByNodeId = new Map(centeredPositions.map((position) => [position.id, position] as const));
+  const maxRadius = centeredPositions.reduce((max, position) => Math.max(max, Math.hypot(position.x, position.y)), 0);
+  const targetRadius = Math.max(2.5, Math.min(18, Math.sqrt(nodes.length) * 2.2));
+  const scale = maxRadius > 0 ? targetRadius / maxRadius : 1;
+
+  return nodes.map((node) => {
+    const position = centeredPositionByNodeId.get(node.id) ?? { id: node.id, x: 0, y: 0 };
+
+    return {
+      id: node.id,
+      x: roundMapLayoutCoordinate(position.x * scale),
+      y: roundMapLayoutCoordinate(position.y * scale)
+    };
+  });
 }
 
 function getDefaultMapNodeName(type: WorkspaceMapMaterialNodeType, index: number) {
