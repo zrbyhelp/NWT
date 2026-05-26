@@ -1102,7 +1102,7 @@ function syncGraphToDraft(
       highlighted: selected || related,
       label: dimmed ? "" : relationLabel(edge.relation),
       relation: edge.relation,
-      size: selected ? 3.6 : related ? 2.45 : dimmed ? 0.3 : 1.45,
+      size: selected ? 3.6 : related ? 1.75 : dimmed ? 0.3 : 1.45,
       zIndex: selected ? 2 : related ? 1 : 0
     };
 
@@ -1276,7 +1276,7 @@ function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "da
       edgeLabelHalo: "rgba(2, 6, 23, 0.96)",
       nodeLabel: "#F8FAFC",
       nodeLabelHalo: "rgba(2, 6, 23, 0.96)",
-      relatedEdge: "rgba(248, 250, 252, 0.98)",
+      relatedEdge: "rgba(226, 232, 240, 0.62)",
       selectedEdge: "#60A5FA"
     };
   }
@@ -1288,7 +1288,7 @@ function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "da
     edgeLabelHalo: "rgba(255, 255, 255, 0.96)",
     nodeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
     nodeLabelHalo: "rgba(255, 255, 255, 0.96)",
-    relatedEdge: getCanvasThemeColor(container, "--foreground", "#0F172A", 0.96),
+    relatedEdge: getCanvasThemeColor(container, "--foreground", "#0F172A", 0.48),
     selectedEdge: getCanvasThemeColor(container, "--primary", "#1D4ED8")
   };
 }
