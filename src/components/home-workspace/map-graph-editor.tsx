@@ -1102,7 +1102,7 @@ function syncGraphToDraft(
       highlighted: selected || related,
       label: dimmed ? "" : relationLabel(edge.relation),
       relation: edge.relation,
-      size: selected ? 3.6 : related ? 2.45 : dimmed ? 0.48 : 1.45,
+      size: selected ? 3.6 : related ? 2.45 : dimmed ? 0.3 : 1.45,
       zIndex: selected ? 2 : related ? 1 : 0
     };
 
@@ -1270,7 +1270,7 @@ function getMapGraphThemeMode(): "light" | "dark" {
 function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "dark" = getMapGraphThemeMode()) {
   if (theme === "dark") {
     return {
-      dimmedEdge: "rgba(100, 116, 139, 0.12)",
+      dimmedEdge: "rgba(100, 116, 139, 0.08)",
       edge: "rgba(148, 163, 184, 0.82)",
       edgeLabel: "#F8FAFC",
       edgeLabelHalo: "rgba(2, 6, 23, 0.96)",
@@ -1282,7 +1282,7 @@ function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "da
   }
 
   return {
-    dimmedEdge: getCanvasThemeColor(container, "--foreground", "#475569", 0.1),
+    dimmedEdge: getCanvasThemeColor(container, "--foreground", "#475569", 0.06),
     edge: getCanvasThemeColor(container, "--foreground", "#475569", 0.74),
     edgeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
     edgeLabelHalo: "rgba(255, 255, 255, 0.96)",
