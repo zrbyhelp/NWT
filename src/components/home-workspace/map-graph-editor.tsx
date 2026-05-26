@@ -300,6 +300,7 @@ export function MapGraphEditor({
           defaultDrawEdgeLabel: createMapEdgeLabelDrawer(currentGraphTheme),
           defaultDrawNodeHover: createMapNodeHoverDrawer(currentGraphTheme),
           defaultDrawNodeLabel: createMapNodeLabelDrawer(currentGraphTheme),
+          minEdgeThickness: 0.45,
           renderEdgeLabels: true,
           renderLabels: true,
           labelColor: { color: themeColors.nodeLabel },
@@ -461,6 +462,7 @@ export function MapGraphEditor({
       defaultDrawEdgeLabel: createMapEdgeLabelDrawer(graphTheme),
       defaultDrawNodeHover: createMapNodeHoverDrawer(graphTheme),
       defaultDrawNodeLabel: createMapNodeLabelDrawer(graphTheme),
+      minEdgeThickness: 0.45,
       edgeLabelColor: { color: themeColors.edgeLabel },
       labelColor: { color: themeColors.nodeLabel }
     });
@@ -1102,7 +1104,7 @@ function syncGraphToDraft(
       highlighted: selected || related,
       label: dimmed ? "" : relationLabel(edge.relation),
       relation: edge.relation,
-      size: selected ? 3.6 : related ? 1.75 : dimmed ? 0.3 : 1.45,
+      size: selected ? 3.6 : related ? 2.45 : dimmed ? 0.72 : 0.82,
       zIndex: selected ? 2 : related ? 1 : 0
     };
 
@@ -1270,27 +1272,90 @@ function getMapGraphThemeMode(): "light" | "dark" {
 function getGraphThemeColors(container: HTMLElement | null, theme: "light" | "dark" = getMapGraphThemeMode()) {
   if (theme === "dark") {
     return {
-      dimmedEdge: "rgba(100, 116, 139, 0.08)",
-      edge: "rgba(148, 163, 184, 0.82)",
+      dimmedEdge: "rgba(100, 116, 139, 0.22)",
+      edge: "rgba(148, 163, 184, 0.26)",
       edgeLabel: "#F8FAFC",
       edgeLabelHalo: "rgba(2, 6, 23, 0.96)",
       nodeLabel: "#F8FAFC",
       nodeLabelHalo: "rgba(2, 6, 23, 0.96)",
-      relatedEdge: "rgba(226, 232, 240, 0.62)",
+      relatedEdge: "rgba(248, 250, 252, 0.98)",
       selectedEdge: "#60A5FA"
     };
   }
 
   return {
-    dimmedEdge: getCanvasThemeColor(container, "--foreground", "#475569", 0.06),
-    edge: getCanvasThemeColor(container, "--foreground", "#475569", 0.74),
+    dimmedEdge: getCanvasThemeRgbaColor(container, "--foreground", "rgba(71, 85, 105, 0.18)", 0.18),
+    edge: getCanvasThemeRgbaColor(container, "--foreground", "rgba(71, 85, 105, 0.18)", 0.18),
     edgeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
     edgeLabelHalo: "rgba(255, 255, 255, 0.96)",
     nodeLabel: getCanvasThemeColor(container, "--foreground", "#0F172A"),
     nodeLabelHalo: "rgba(255, 255, 255, 0.96)",
-    relatedEdge: getCanvasThemeColor(container, "--foreground", "#0F172A", 0.48),
-    selectedEdge: getCanvasThemeColor(container, "--primary", "#1D4ED8")
+    relatedEdge: getCanvasThemeRgbaColor(container, "--foreground", "rgba(15, 23, 42, 0.96)", 0.96),
+    selectedEdge: getCanvasThemeRgbaColor(container, "--primary", "rgba(37, 99, 235, 0.92)", 0.92)
   };
+}
+
+function getCanvasThemeRgbaColor(container: HTMLElement | null, variable: string, fallback: string, alpha: number) {
+  if (!container) {
+    return fallback;
+  }
+
+  const value = getComputedStyle(container).getPropertyValue(variable).trim();
+
+  if (!value) {
+    return fallback;
+  }
+
+  const hsl = value.match(/^(-?\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+
+  if (!hsl) {
+    return fallback;
+  }
+
+  const hue = Number.parseFloat(hsl[1]);
+  const saturation = Number.parseFloat(hsl[2]) / 100;
+  const lightness = Number.parseFloat(hsl[3]) / 100;
+  const [r, g, b] = hslToRgb(hue, saturation, lightness);
+
+  return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
+}
+
+function hslToRgb(hue: number, saturation: number, lightness: number) {
+  const normalizedHue = ((hue % 360) + 360) % 360 / 360;
+
+  if (saturation === 0) {
+    return [lightness, lightness, lightness] as const;
+  }
+
+  const q = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
+  const p = 2 * lightness - q;
+  const hueToRgb = (t: number) => {
+    let next = t;
+
+    if (next < 0) {
+      next += 1;
+    }
+
+    if (next > 1) {
+      next -= 1;
+    }
+
+    if (next < 1 / 6) {
+      return p + (q - p) * 6 * next;
+    }
+
+    if (next < 1 / 2) {
+      return q;
+    }
+
+    if (next < 2 / 3) {
+      return p + (q - p) * (2 / 3 - next) * 6;
+    }
+
+    return p;
+  };
+
+  return [hueToRgb(normalizedHue + 1 / 3), hueToRgb(normalizedHue), hueToRgb(normalizedHue - 1 / 3)] as const;
 }
 
 function createMapNodeHoverDrawer(theme: "light" | "dark"): NodeHoverDrawingFunction {
