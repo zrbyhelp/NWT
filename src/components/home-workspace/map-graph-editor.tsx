@@ -1359,8 +1359,7 @@ function hslToRgb(hue: number, saturation: number, lightness: number) {
 }
 
 function createMapNodeHoverDrawer(theme: "light" | "dark"): NodeHoverDrawingFunction {
-  return (context, data, settings) => {
-    const label = typeof data.label === "string" ? data.label.trim() : "";
+  return (context, data) => {
     const labelColors = getReadableGraphLabelColors(theme);
 
     context.save();
@@ -1372,18 +1371,6 @@ function createMapNodeHoverDrawer(theme: "light" | "dark"): NodeHoverDrawingFunc
     context.strokeStyle = typeof data.color === "string" ? data.color : labelColors.fill;
     context.stroke();
     context.restore();
-
-    if (!label) {
-      return;
-    }
-
-    drawMapGraphLabel(context, label, data.x + data.size + 8, data.y, {
-      align: "left",
-      fill: labelColors.fill,
-      font: settings.labelFont,
-      size: Math.max(13, settings.labelSize + 1),
-      weight: "700"
-    });
   };
 }
 
