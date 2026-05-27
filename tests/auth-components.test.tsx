@@ -83,7 +83,7 @@ describe("auth components", () => {
   it("switches between login and register in the auth panel", () => {
     render(<AuthPanel variant="page" />);
 
-    expect(screen.getByRole("heading", { name: "登录新世界小说" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "登录栖境AI" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "还没有账号？立即注册" }));
 

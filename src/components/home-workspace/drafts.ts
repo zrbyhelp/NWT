@@ -104,7 +104,6 @@ import {
   type CreatureTaxonomyFieldId,
   type CreatureVocalizationFieldId,
   type MaskAiMessage,
-  type MapGeoJsonDraft,
   type MapImageDraft,
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource,
@@ -155,7 +154,6 @@ export {
   createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
   createMapImageDraftFromMaterial,
-  createMapGeoJsonDraftFromMaterial,
   createMapDraftFromMaterial,
   createMapEdge,
   createMapNode,
@@ -697,28 +695,6 @@ function createMapImageDraftFromMaterial(material: WorkspaceMaterial): MapImageD
   };
 }
 
-function createMapGeoJsonDraftFromMaterial(material: WorkspaceMaterial): MapGeoJsonDraft | null {
-  if (material.category !== "map") {
-    return null;
-  }
-
-  const mapDraft = createMapDraftFromMaterial(material);
-  const graphSignature = buildMapGraphSignature(mapDraft);
-  const metadata = getMapMaterialMetadata(material.metadata);
-  const geojson = metadata?.geojson ?? null;
-
-  if (!geojson?.data) {
-    return null;
-  }
-
-  return {
-    ...geojson,
-    error: null,
-    pending: false,
-    stale: geojson.graphSignature !== graphSignature
-  };
-}
-
 function serializeMaskDraft(draft: MaskCreateDraft) {
   return {
     name: draft.name,
@@ -1186,7 +1162,6 @@ function buildItemMaterialFormData(draft: ItemCreateDraft, isEditing: boolean) {
 function buildMapMaterialFormData(
   draft: MapCreateDraft,
   image: MapImageDraft | null = null,
-  geojson: MapGeoJsonDraft | null = null,
   isEditing = false
 ) {
   const formData = new FormData();
@@ -1206,10 +1181,6 @@ function buildMapMaterialFormData(
     }
 
     formData.append("mapImage", image.file);
-  }
-
-  if (geojson?.data && !geojson.stale && geojson.graphSignature === buildMapGraphSignature(draft)) {
-    formData.append("mapGeoJsonMeta", JSON.stringify(buildMapGeoJsonMetaForSave(geojson, draft)));
   }
 
   return formData;
@@ -1241,19 +1212,6 @@ function buildMapImageMetaForSave(image: MapImageDraft, draft: MapCreateDraft) {
     nodeCount: image.nodeCount ?? draft.nodes.length,
     referencePrompt: image.referencePrompt ?? "",
     source: image.source === "generated" ? "generated" : "uploaded"
-  };
-}
-
-function buildMapGeoJsonMetaForSave(geojson: MapGeoJsonDraft, draft: MapCreateDraft) {
-  return {
-    source: "algorithm",
-    data: geojson.data,
-    scale: geojson.scale,
-    edgeCount: geojson.edgeCount ?? draft.edges.length,
-    generatedAt: geojson.generatedAt ?? new Date().toISOString(),
-    graphSignature: geojson.graphSignature || buildMapGraphSignature(draft),
-    nodeCount: geojson.nodeCount ?? draft.nodes.length,
-    outlineBased: Boolean(geojson.outlineBased)
   };
 }
 

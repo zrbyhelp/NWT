@@ -62,7 +62,6 @@ import {
   isMapRelationType,
   normalizeMapImageNodeBatchSize
 } from "./map";
-import { normalizeMapGeoJsonForSave } from "./map-geojson";
 
 export type {
   WorkspaceScript,
@@ -97,12 +96,6 @@ export type {
   WorkspaceMapMaterialEdge,
   WorkspaceMapMaterialImage,
   WorkspaceMapMaterialImageSource,
-  WorkspaceMapGeoJsonFeature,
-  WorkspaceMapGeoJsonFeatureCollection,
-  WorkspaceMapGeoJsonGeometry,
-  WorkspaceMapGeoJsonPosition,
-  WorkspaceMapGeoJsonScale,
-  WorkspaceMapMaterialGeoJson,
   ItemDraftPatch,
   ItemAiAssistResult,
   SceneMaterialBlockInput,
@@ -135,7 +128,6 @@ export type {
   WorkspaceSceneMaterialMetadata,
   WorkspaceMapMaterialMetadata,
   MapImageMetaInput,
-  MapGeoJsonMetaInput,
   MapImageStreamImage,
   MapImageStreamDoneEvent,
   MapImageStreamEvent,
@@ -182,12 +174,6 @@ import type {
   WorkspaceMapMaterialEdge,
   WorkspaceMapMaterialImage,
   WorkspaceMapMaterialImageSource,
-  WorkspaceMapGeoJsonFeature,
-  WorkspaceMapGeoJsonFeatureCollection,
-  WorkspaceMapGeoJsonGeometry,
-  WorkspaceMapGeoJsonPosition,
-  WorkspaceMapGeoJsonScale,
-  WorkspaceMapMaterialGeoJson,
   ItemDraftPatch,
   ItemAiAssistResult,
   SceneMaterialBlockInput,
@@ -220,7 +206,6 @@ import type {
   WorkspaceSceneMaterialMetadata,
   WorkspaceMapMaterialMetadata,
   MapImageMetaInput,
-  MapGeoJsonMetaInput,
   MapImageStreamImage,
   MapImageStreamDoneEvent,
   MapImageStreamEvent,
@@ -1210,8 +1195,7 @@ export async function createMapMaterial(
   locale: Locale,
   mapImageFile: File | null = null,
   mapImageMode: MapMaterialImageMode = "clear",
-  mapImageMeta: MapImageMetaInput | null = null,
-  mapGeoJsonMeta: MapGeoJsonMetaInput | null = null
+  mapImageMeta: MapImageMetaInput | null = null
 ) {
   const viewer = await requireAuth();
   let persistenceStage: MapMaterialPersistenceStage = "prepare";
@@ -1219,7 +1203,6 @@ export async function createMapMaterial(
 
   try {
     const graphSignature = buildMapGraphSignature(input);
-    const mapGeoJson = normalizeMapGeoJsonForSave(mapGeoJsonMeta, graphSignature);
     const normalizedImageMeta = resolveMapMaterialImageMeta(mapImageMeta, graphSignature);
     const mapImage = await resolveMapMaterialImageForSave(
       viewer.id,
@@ -1229,7 +1212,7 @@ export async function createMapMaterial(
       null,
       uploadedUrls
     );
-    const metadata = buildMapMaterialMetadata(input, mapImage, mapGeoJson);
+    const metadata = buildMapMaterialMetadata(input, mapImage);
     const name = metadata.name;
     const description = metadata.description;
 
@@ -1283,8 +1266,7 @@ export async function updateMapMaterial(
   locale: Locale,
   mapImageFile: File | null = null,
   mapImageMode: MapMaterialImageMode = "keep",
-  mapImageMeta: MapImageMetaInput | null = null,
-  mapGeoJsonMeta: MapGeoJsonMetaInput | null = null
+  mapImageMeta: MapImageMetaInput | null = null
 ) {
   const viewer = await requireAuth();
   let persistenceStage: MapMaterialPersistenceStage = "prepare";
@@ -1292,7 +1274,6 @@ export async function updateMapMaterial(
 
   try {
     const graphSignature = buildMapGraphSignature(input);
-    const mapGeoJson = normalizeMapGeoJsonForSave(mapGeoJsonMeta, graphSignature);
 
     persistenceStage = "record";
     const material = await prisma.$transaction(async (tx) => {
@@ -1321,7 +1302,7 @@ export async function updateMapMaterial(
         existingMetadata?.image ?? null,
         uploadedUrls
       );
-      const metadata = buildMapMaterialMetadata(input, mapImage, mapGeoJson);
+      const metadata = buildMapMaterialMetadata(input, mapImage);
       const name = metadata.name;
       const description = metadata.description;
 
@@ -1950,7 +1931,7 @@ function buildMapImageRoundPrompt(
 
   if (isEnglish) {
     return [
-      `Create round ${round}/${totalRounds} of an iterative world map illustration for an interactive fiction map graph.`,
+      `Create round ${round}/${totalRounds} of an iterative world map illustration for an interactive world graph.`,
       previousInstruction,
       referenceInstruction,
       "The image must stay readable as a map, not as a dashboard or graph UI. Draw geography, regions, routes, landmarks, and settlement symbols.",
@@ -1967,7 +1948,7 @@ function buildMapImageRoundPrompt(
   }
 
   return [
-    `为交互小说地图图谱生成第 ${round}/${totalRounds} 轮世界地图插画。`,
+    `为交互世界图谱生成第 ${round}/${totalRounds} 轮世界地图插画。`,
     previousInstruction,
     referenceInstruction,
     "画面必须像地图，而不是后台仪表盘或节点图 UI。请绘制地理、区域、路线、地标和聚落符号。",
@@ -2081,7 +2062,7 @@ function getMapImageStylePrompt(style: WorkspaceMaterialStyle, locale: Locale) {
     fantasy: { en: "fantasy atlas illustration with readable terrain and landmarks", zh: "奇幻地图册插画，地形与地标清晰可读" },
     mystery: { en: "mysterious investigative map, subtle symbols and atmospheric terrain", zh: "神秘调查地图，符号克制、氛围地形明显" },
     realistic: { en: "realistic illustrated atlas with plausible terrain", zh: "写实插画地图，地形可信" },
-    sciFi: { en: "science fiction atlas, layered districts and technical routes", zh: "科幻地图册，分层区域与技术路线清晰" }
+    sciFi: { en: "sci-fi atlas, layered districts and technical routes", zh: "科幻地图册，分层区域与技术路线清晰" }
   };
 
   return locale === "en-US" ? labels[style].en : labels[style].zh;
@@ -3197,7 +3178,7 @@ function buildMaskAssistMessages(input: MaskMaterialCreateInput, instruction: st
     {
       role: "system",
       content: [
-        "You are an assistant for editing a facade material in New World Novel.",
+        "You are an assistant for editing a facade material in an interactive creation workspace.",
         "A facade only includes outward presentation: appearance, personality expression, speech style, voice traits, and habits.",
         "Never create backstory, life history, origin, family history, plot events, or world relationships.",
         "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
@@ -3226,8 +3207,8 @@ function buildCreatureAssistMessages(input: CreatureMaterialCreateInput, instruc
     {
       role: "system",
       content: [
-        "You are an assistant for editing a creature material in New World Novel.",
-        "A creature material defines a reusable species or population for interactive fiction, not a human facade and not a single character biography.",
+        "You are an assistant for editing a creature material in an interactive creation workspace.",
+        "A creature material defines a reusable species or population for an interactive experience, not a human facade and not a single character biography.",
         "You may define morphology, ecology, vocalization, senses, abilities, limitations, behavior logic, and interaction rules.",
         "Do not turn the creature into a human character with personal backstory, family history, plot events, or world relationships.",
         "Return strict JSON only: {\"message\":\"short explanation\",\"patch\":{...}}.",
@@ -3276,8 +3257,8 @@ function buildSceneAssistMessages(
     {
       role: "system",
       content: [
-        "You are an assistant for editing a scene material in New World Novel.",
-        "A scene material describes an interactive fiction place and its sub-areas.",
+        "You are an assistant for editing a scene material in an interactive creation workspace.",
+        "A scene material describes an interactive place and its sub-areas.",
         "Scene description and every block description must be non-empty.",
         "You may update scene name, scene description, style, block names, block descriptions, block scale presets, add blocks, or remove blocks.",
         "When reference images are attached, inspect them and use visible spatial layout, scale, materials, lighting, and mood to update the text draft.",
@@ -3305,7 +3286,7 @@ export function buildMapAssistMessages(input: MapMaterialCreateInput, instructio
     {
       role: "system",
       content: [
-        "You are an assistant for editing a map material in New World Novel.",
+        "You are an assistant for editing a map material in an interactive creation workspace.",
         "A map material organizes geography, settlements, landmarks, routes, and directional relationships in a story world.",
         "You may update map name, description, style, add nodes, update nodes, remove nodes, add edges, update edges, or remove edges.",
         "Node types must be one of country, region, city, village, landmark, path.",
@@ -3345,7 +3326,7 @@ export function buildMapDeriveRoundMessages(
     {
       role: "system",
       content: [
-        "You are an assistant for growing a map material graph in New World Novel.",
+        "You are an assistant for growing a map material graph in an interactive creation workspace.",
         "This task is one derivation round. Inspect the whole current map graph and choose the best growth direction yourself.",
         "You may extend an existing cluster or start a new branch, but the result must stay coherent with the whole current map graph.",
         "Only add new nodes and new edges. Do not update, delete, rename, or move existing nodes, edges, map name, map description, or style.",
@@ -3401,8 +3382,8 @@ function buildItemAssistMessages(
     {
       role: "system",
       content: [
-        "You are an assistant for editing an item material in New World Novel.",
-        "An item material describes a visible, usable object for interactive fiction.",
+        "You are an assistant for editing an item material in an interactive creation workspace.",
+        "An item material describes a visible, usable object for an interactive experience.",
         "Keep the result focused on inspectable object properties, usage, function, materials, colors, style, brand, model, keywords, and scale.",
         "When reference images are attached, inspect only visible object information: silhouette, components, material, color, style, affordances, and approximate scale.",
         "Do not copy image text, watermarks, UI, background clutter, unrelated scene context, people, hands, or brand marks unless the user explicitly asks to keep a visible brand.",
@@ -3482,7 +3463,7 @@ function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
 
   if (isEnglish) {
     return [
-      "Create a 16:9 horizontal character setting board for an interactive novel facade.",
+      "Create a 16:9 horizontal character setting board for an interactive facade asset.",
       "Focus only on outward presentation: appearance, expression, posture, clothing mood, speaking aura, and visual temperament.",
       "Do not depict backstory scenes, family history, plot events, or world relationships.",
       `Name: ${input.name || "Untitled facade"}.`,
@@ -3496,7 +3477,7 @@ function buildMaskBoardPrompt(input: MaskMaterialCreateInput, locale: Locale) {
   }
 
   return [
-    "生成一张 16:9 横版角色设定板，用于交互小说的假面素材。",
+    "生成一张 16:9 横版角色设定板，用于交互创作的假面素材。",
     "只表现外显内容：外观、神态、姿态、服饰氛围、说话气质和视觉性格。",
     "不要画人物背景故事、身世经历、剧情事件、家族关系或世界关系。",
     `名称：${input.name || "未命名假面"}。`,
@@ -3516,7 +3497,7 @@ function buildCreatureBoardPrompt(input: CreatureMaterialCreateInput, locale: Lo
 
   if (isEnglish) {
     return [
-      "Create a 16:9 horizontal creature design board for an interactive novel species material.",
+      "Create a 16:9 horizontal creature design board for an interactive species material.",
       "Define the creature as a reusable species or population, not a single human-like character portrait.",
       "Show one clear main creature, morphology/anatomy callouts, scale reference, habitat hint, and small behavior-logic vignettes.",
       "Avoid personal biography scenes, family history, plot events, human costumes as the focus, UI screenshots, and watermarks.",
@@ -3527,7 +3508,7 @@ function buildCreatureBoardPrompt(input: CreatureMaterialCreateInput, locale: Lo
   }
 
   return [
-    "生成一张 16:9 横版生物设定板，用于交互小说的物种/族群素材。",
+    "生成一张 16:9 横版生物设定板，用于交互创作的物种/族群素材。",
     "把它定义为可复用的生物物种或族群，不是单个人类角色肖像。",
     "画面包含一个清晰的主体生物、形态/解剖标注、比例参考、栖息地提示和少量行为逻辑小图示。",
     "不要画个人传记场景、家族史、剧情事件、以人类服装为中心的设计、UI 截图或水印。",
@@ -3544,24 +3525,24 @@ function buildItemBoardPrompt(input: ItemMaterialCreateInput, locale: Locale) {
 
   if (isEnglish) {
     return [
-      "Create a 16:9 horizontal item design board for an interactive novel material.",
+      "Create a 16:9 horizontal item design board for an interactive material.",
       "The board should make the item easy to inspect and later reconstruct as a 3D asset.",
       "If reference images are provided, use them for the item's silhouette, materials, color zones, relative proportions, interaction affordances, and style direction; do not copy watermarks, text, UI, people, hands, or unrelated backgrounds.",
       `Drawing style: ${drawingStyle}.`,
       itemData,
       "Composition: one clear hero view of the object, small material/color/use callouts, and a readable scale ruler.",
-      "Treat the item as a fictional static prop or asset reference. No characters holding or using it, no injury, blood, threat, attack scene, busy scene background, or watermark."
+      "Treat the item as a designed static prop or asset reference. No characters holding or using it, no injury, blood, threat, attack scene, busy scene background, or watermark."
     ].join("\n");
   }
 
   return [
-    "生成一张 16:9 横版物品设定板，用于交互小说素材。",
+    "生成一张 16:9 横版物品设定板，用于交互创作素材。",
     "设定板要便于查看物品外观，并能作为后续 3D 重建的参考。",
     "如果提供了参考图，请参考物品轮廓、材质、颜色分区、相对比例、可交互部件和风格方向；不要复制水印、文字、UI、人物、手部或无关背景。",
     `绘制风格：${drawingStyle}。`,
     itemData,
     "构图：一个清晰的物品主视觉，少量材质/颜色/用途标注，并包含可读比例尺。",
-    "仅作为虚构静态道具或资产参考；不要人物手持或使用，不要真实伤害、血迹、威胁或攻击场景，不要复杂场景背景，不要水印。"
+    "仅作为原创静态道具或资产参考；不要人物手持或使用，不要真实伤害、血迹、威胁或攻击场景，不要复杂场景背景，不要水印。"
   ].join("\n");
 }
 

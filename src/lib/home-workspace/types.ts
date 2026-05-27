@@ -235,67 +235,6 @@ export type WorkspaceMapMaterialImage = {
   generatedAt?: string;
 };
 
-export type WorkspaceMapGeoJsonPosition = [number, number];
-
-export type WorkspaceMapGeoJsonGeometry =
-  | {
-      type: "Point";
-      coordinates: WorkspaceMapGeoJsonPosition;
-    }
-  | {
-      type: "LineString";
-      coordinates: WorkspaceMapGeoJsonPosition[];
-    }
-  | {
-      type: "Polygon";
-      coordinates: WorkspaceMapGeoJsonPosition[][];
-    };
-
-export type WorkspaceMapGeoJsonFeature = {
-  type: "Feature";
-  id: string;
-  geometry: WorkspaceMapGeoJsonGeometry;
-  properties: {
-    id: string;
-    name: string;
-    description?: string;
-    featureKind: "area" | "route" | "place" | "relation";
-    nodeId?: string;
-    edgeId?: string;
-    nodeType?: WorkspaceMapMaterialNodeType;
-    relationType?: WorkspaceMapMaterialRelationType;
-    parentId?: string;
-    sourceNodeId?: string;
-    targetNodeId?: string;
-    level: number;
-    radiusKm?: number;
-  };
-};
-
-export type WorkspaceMapGeoJsonFeatureCollection = {
-  type: "FeatureCollection";
-  bbox: [number, number, number, number];
-  features: WorkspaceMapGeoJsonFeature[];
-};
-
-export type WorkspaceMapGeoJsonScale = {
-  unit: "km";
-  widthKm: number;
-  heightKm: number;
-  metersPerUnit: number;
-};
-
-export type WorkspaceMapMaterialGeoJson = {
-  source: "algorithm";
-  data: WorkspaceMapGeoJsonFeatureCollection;
-  scale: WorkspaceMapGeoJsonScale;
-  graphSignature: string;
-  nodeCount: number;
-  edgeCount: number;
-  generatedAt: string;
-  outlineBased?: boolean;
-};
-
 export type MapMaterialCreateInput = {
   name: string;
   description: string;
@@ -356,8 +295,6 @@ export type MapAiAssistResult = {
 export type MapImageMetaInput = Omit<WorkspaceMapMaterialImage, "url"> & {
   url?: string;
 };
-
-export type MapGeoJsonMetaInput = WorkspaceMapMaterialGeoJson;
 
 export type MapImageStreamImage = {
   contentType: string;
@@ -704,7 +641,6 @@ export type WorkspaceMapMaterialMetadata = {
   nodes: WorkspaceMapMaterialNode[];
   edges: WorkspaceMapMaterialEdge[];
   image?: WorkspaceMapMaterialImage | null;
-  geojson?: WorkspaceMapMaterialGeoJson | null;
 };
 
 export type WorkspaceMaterialMetadata =

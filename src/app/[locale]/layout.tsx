@@ -9,8 +9,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { routing, type Locale } from "@/i18n/routing";
 
 export const metadata: Metadata = {
-  title: "新世界小说",
-  description: "AI 驱动的新体系交互式小说体验"
+  title: "栖境AI",
+  description: "面向多场景的 AI 综合功能体"
 };
 
 export function generateStaticParams() {

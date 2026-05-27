@@ -7,7 +7,7 @@ import type { MapCreateDraft, WorkspaceMapMaterialNodeType, WorkspaceMapMaterial
 import { mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
 import { MaterialVisibilityField } from "./form-fields";
 import { MapGraphEditor } from "./map-graph-editor";
-import type { MapAiMessage, MapGeoJsonDraft, MapImageDraft, MapImageGenerationDraft, SceneReferenceImageDraft } from "./shared";
+import type { MapAiMessage, MapImageDraft, MapImageGenerationDraft, SceneReferenceImageDraft } from "./shared";
 
 type MapNodeFormValue = {
   type: WorkspaceMapMaterialNodeType;
@@ -153,7 +153,6 @@ export function MapGraphDialog({
   deriveRound,
   deriveStatus,
   isPending,
-  mapGeoJsonDraft,
   mapImageDraft,
   mapImageGeneration,
   mapImageNodeBatchSize,
@@ -182,7 +181,6 @@ export function MapGraphDialog({
   onSelectNode,
   onSendAiMessage,
   onAddMapImageReferenceImages,
-  onGenerateMapGeoJson,
   onGenerateMapImage,
   onContinueMapImage,
   onRemoveMapImageReferenceImage,
@@ -203,7 +201,6 @@ export function MapGraphDialog({
   deriveRound: number;
   deriveStatus: string;
   isPending: boolean;
-  mapGeoJsonDraft: MapGeoJsonDraft | null;
   mapImageDraft: MapImageDraft | null;
   mapImageGeneration: MapImageGenerationDraft;
   mapImageNodeBatchSize: number;
@@ -232,7 +229,6 @@ export function MapGraphDialog({
   onSelectNode: (nodeId: string) => void;
   onSendAiMessage: () => void;
   onAddMapImageReferenceImages: (files: FileList | File[]) => void;
-  onGenerateMapGeoJson: () => void;
   onGenerateMapImage: () => void;
   onContinueMapImage: () => void;
   onRemoveMapImageReferenceImage: (imageId: string) => void;
@@ -264,7 +260,6 @@ export function MapGraphDialog({
             deriveStatus={deriveStatus}
             draft={draft}
             embedded
-            mapGeoJsonDraft={mapGeoJsonDraft}
             mapImageDraft={mapImageDraft}
             mapImageGeneration={mapImageGeneration}
             mapImageNodeBatchSize={mapImageNodeBatchSize}
@@ -280,7 +275,6 @@ export function MapGraphDialog({
             onContinueMapImage={onContinueMapImage}
             onEditEdge={onEditEdge}
             onEditNode={onEditNode}
-            onGenerateMapGeoJson={onGenerateMapGeoJson}
             onGenerateMapImage={onGenerateMapImage}
             onLayoutNodes={onLayoutNodes}
             onMoveNode={onMoveNode}

@@ -55,7 +55,6 @@ import {
   validateMapDraftForSave
 } from "@/lib/home-workspace/map";
 import { generateMapImageOutlinePreview } from "@/lib/home-workspace/map-image-outline";
-import { generateMapGeoJson } from "@/lib/home-workspace/map-geojson";
 import { formatMaterialMarkdown } from "@/lib/material-transfer/markdown";
 
 type ScriptRecord = {
@@ -2470,50 +2469,6 @@ describe("map materials", () => {
     });
     expect(outline.dataUrl).toMatch(/^data:image\/png;base64,/);
     expect(blackPixelCount).toBeGreaterThan(0);
-  });
-
-  it("generates map GeoJSON with hierarchy, routes, and a kilometer scale", async () => {
-    const input = createMapImageStreamInput();
-    const geojson = await generateMapGeoJson(input, {
-      image: {
-        bytes: Buffer.from([137, 80, 78, 71]),
-        contentType: "image/png",
-        fileName: "outline.png"
-      }
-    });
-    const countryArea = geojson.data.features.find((feature) => feature.id === "area-node-country");
-    const cityPlace = geojson.data.features.find((feature) => feature.id === "place-node-city");
-    const relation = geojson.data.features.find((feature) => feature.id === "relation-edge-country-city");
-
-    expect(geojson.source).toBe("algorithm");
-    expect(geojson.scale).toMatchObject({
-      metersPerUnit: 1000,
-      unit: "km"
-    });
-    expect(geojson.scale.widthKm).toBeGreaterThan(0);
-    expect(geojson.data.type).toBe("FeatureCollection");
-    expect(geojson.data.bbox).toHaveLength(4);
-    expect(countryArea).toMatchObject({
-      geometry: { type: "Polygon" },
-      properties: {
-        featureKind: "area",
-        nodeId: "node-country"
-      }
-    });
-    expect(cityPlace).toMatchObject({
-      geometry: { type: "Point" },
-      properties: {
-        parentId: "node-country"
-      }
-    });
-    expect(relation).toMatchObject({
-      geometry: { type: "LineString" },
-      properties: {
-        relationType: "contains",
-        sourceNodeId: "node-country",
-        targetNodeId: "node-city"
-      }
-    });
   });
 
   it("lays out map graph nodes with stable finite coordinates", () => {

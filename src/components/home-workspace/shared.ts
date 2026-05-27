@@ -31,7 +31,6 @@ import type {
   WorkspaceData,
   WorkspaceItemMaterialMetadata,
   WorkspaceMapMaterialEdge,
-  WorkspaceMapMaterialGeoJson,
   WorkspaceMapMaterialMetadata,
   WorkspaceMapMaterialImage,
   WorkspaceMapMaterialImageSource,
@@ -61,7 +60,6 @@ export type {
   WorkspaceData,
   WorkspaceItemMaterialMetadata,
   WorkspaceMapMaterialEdge,
-  WorkspaceMapMaterialGeoJson,
   WorkspaceMapMaterialMetadata,
   WorkspaceMapMaterialImage,
   WorkspaceMapMaterialImageSource,
@@ -463,11 +461,6 @@ export type MapImageGenerationDraft = {
   totalRounds: number;
 };
 export type MapImageMetaDraft = WorkspaceMapMaterialImage;
-export type MapGeoJsonDraft = WorkspaceMapMaterialGeoJson & {
-  error?: string | null;
-  pending?: boolean;
-  stale?: boolean;
-};
 export type MaskCreateDraft = {
   name: string;
   intro: string;

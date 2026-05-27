@@ -68,9 +68,9 @@ describe("home workspace utilities", () => {
       userContent: "enter the forest"
     });
 
-    expect(zhMessages[0].content).toContain("新世界小说");
+    expect(zhMessages[0].content).toContain("AI 交互创作工作台");
     expect(zhMessages.at(-1)).toEqual({ role: "user", content: "进入森林" });
-    expect(enMessages[0].content).toContain("New World Novel");
+    expect(enMessages[0].content).toContain("AI interactive creation workspace");
     expect(enMessages.at(-1)).toEqual({ role: "user", content: "enter the forest" });
   });
 

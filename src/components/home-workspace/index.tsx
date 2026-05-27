@@ -84,7 +84,6 @@ import { Metric } from "./form-fields";
 import { groupConversations, mergeMaterials, mergeScripts, upsertMaterialList } from "./lists";
 import {
   generateHomeMapImageOutline,
-  generateHomeMapGeoJson,
   resolveSendError,
   streamHomeMapImage,
   streamHomeMessage,
@@ -170,7 +169,6 @@ import {
   type CreatureVocalizationFieldId,
   type MaskAiMessage,
   type MapAiMessage,
-  type MapGeoJsonDraft,
   type MapImageDraft,
   type MapImageGenerationDraft,
   type MaskBoardDrawingStyle,
@@ -217,7 +215,6 @@ import {
   createInitialScenePanoramaGenerationDraft,
   createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
-  createMapGeoJsonDraftFromMaterial,
   createMapImageDraftFromMaterial,
   createMapDraftFromMaterial,
   createMapEdge,
@@ -379,7 +376,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [mapDeriveRound, setMapDeriveRound] = useState(0);
   const [mapDeriveStatus, setMapDeriveStatus] = useState("");
   const [mapImageDraft, setMapImageDraft] = useState<MapImageDraft | null>(null);
-  const [mapGeoJsonDraft, setMapGeoJsonDraft] = useState<MapGeoJsonDraft | null>(null);
   const [mapImageGeneration, setMapImageGeneration] = useState<MapImageGenerationDraft>(() => createInitialMapImageGenerationDraft());
   const [mapImageNodeBatchSize, setMapImageNodeBatchSize] = useState(defaultMapImageNodeBatchSize);
   const [mapImageReferenceImages, setMapImageReferenceImages] = useState<SceneReferenceImageDraft[]>([]);
@@ -407,12 +403,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const optimisticIdRef = useRef(0);
   const mapCreateDraftRef = useRef(mapCreateDraft);
   const mapImageDraftRef = useRef<MapImageDraft | null>(mapImageDraft);
-  const mapGeoJsonDraftRef = useRef<MapGeoJsonDraft | null>(mapGeoJsonDraft);
   const mapImageGenerationRef = useRef(mapImageGeneration);
   const mapDeriveRunIdRef = useRef("");
   const mapImageRunIdRef = useRef("");
   const mapImageOutlineRunIdRef = useRef("");
-  const mapGeoJsonRunIdRef = useRef("");
   const pendingAuthActionRef = useRef<((viewer: AuthViewer) => void) | null>(null);
   const persistenceAvailable = data.persistenceAvailable;
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -489,7 +483,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const isCreatureActionPending = creatureAiPending || creatureBoardPending || creatureSavePending;
   const isItemActionPending = itemAiPending || itemBoardPending || itemModelInputPending || itemModelPending || itemSavePending;
   const isSceneActionPending = sceneAiPending || Boolean(scenePanoramaPendingBlockId) || sceneSavePending;
-  const isMapActionPending = mapAiPending || mapDerivePending || mapSavePending || mapImageGeneration.pending || Boolean(mapGeoJsonDraft?.pending);
+  const isMapActionPending = mapAiPending || mapDerivePending || mapSavePending || mapImageGeneration.pending;
   const isMaterialTransferDisabled = materialTransferPending;
   const isEditingMask = Boolean(maskEditingMaterialId);
   const isEditingCreature = Boolean(creatureEditingMaterialId);
@@ -674,10 +668,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   }, [mapImageDraft]);
 
   useEffect(() => {
-    mapGeoJsonDraftRef.current = mapGeoJsonDraft;
-  }, [mapGeoJsonDraft]);
-
-  useEffect(() => {
     mapImageGenerationRef.current = mapImageGeneration;
   }, [mapImageGeneration]);
 
@@ -699,20 +689,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       };
     });
 
-    setMapGeoJsonDraft((current) => {
-      if (!current) {
-        return current;
-      }
-
-      if (!current.graphSignature || current.graphSignature === graphSignature) {
-        return current.stale ? { ...current, stale: false } : current;
-      }
-
-      return {
-        ...current,
-        stale: true
-      };
-    });
   }, [mapCreateDraft]);
 
   useEffect(() => {
@@ -3400,13 +3376,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   function resetMapImageState() {
     mapImageRunIdRef.current = "";
     mapImageOutlineRunIdRef.current = "";
-    mapGeoJsonRunIdRef.current = "";
     revokeMapImagePreview(mapImageDraftRef.current);
     mapImageReferenceImages.forEach(revokeSceneReferenceImagePreview);
     mapImageDraftRef.current = null;
-    mapGeoJsonDraftRef.current = null;
     setMapImageDraft(null);
-    setMapGeoJsonDraft(null);
     setMapImageGeneration(createInitialMapImageGenerationDraft());
     setMapImageNodeBatchSize(defaultMapImageNodeBatchSize);
     setMapImageReferenceImages([]);
@@ -3453,16 +3426,13 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     const nextDraft = createMapDraftFromMaterial(material);
     const nextMapImage = createMapImageDraftFromMaterial(material);
-    const nextMapGeoJson = createMapGeoJsonDraftFromMaterial(material);
 
     setMaterialCreateMenuOpen(false);
     resetMapImageState();
     mapCreateDraftRef.current = nextDraft;
     setMapCreateDraft(nextDraft);
     mapImageDraftRef.current = nextMapImage;
-    mapGeoJsonDraftRef.current = nextMapGeoJson;
     setMapImageDraft(nextMapImage);
-    setMapGeoJsonDraft(nextMapGeoJson);
     setMapImageNodeBatchSize(nextMapImage?.nodeBatchSize ?? defaultMapImageNodeBatchSize);
     setMapSelectedNodeId("");
     setMapSelectedEdgeId("");
@@ -3493,16 +3463,13 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     const nextDraft = createMapDraftFromMaterial(material);
     const nextMapImage = createMapImageDraftFromMaterial(material);
-    const nextMapGeoJson = createMapGeoJsonDraftFromMaterial(material);
 
     setMaterialCreateMenuOpen(false);
     resetMapImageState();
     mapCreateDraftRef.current = nextDraft;
     setMapCreateDraft(nextDraft);
     mapImageDraftRef.current = nextMapImage;
-    mapGeoJsonDraftRef.current = nextMapGeoJson;
     setMapImageDraft(nextMapImage);
-    setMapGeoJsonDraft(nextMapGeoJson);
     setMapImageNodeBatchSize(nextMapImage?.nodeBatchSize ?? defaultMapImageNodeBatchSize);
     setMapSelectedNodeId(nextDraft.nodes[0]?.id ?? "");
     setMapSelectedEdgeId(nextDraft.edges[0]?.id ?? "");
@@ -3994,16 +3961,9 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setMapImageDraft(nextImage);
   }
 
-  function setMapGeoJsonDraftState(nextGeoJson: MapGeoJsonDraft | null) {
-    mapGeoJsonDraftRef.current = nextGeoJson;
-    setMapGeoJsonDraft(nextGeoJson);
-  }
-
   function clearMapImageDraft() {
     mapImageOutlineRunIdRef.current = "";
-    mapGeoJsonRunIdRef.current = "";
     setMapImageDraftState(null);
-    setMapGeoJsonDraftState(null);
     setMapImageGeneration(createInitialMapImageGenerationDraft());
     mapImageReferenceImages.forEach(revokeSceneReferenceImagePreview);
     setMapImageReferenceImages([]);
@@ -4124,9 +4084,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         outlinePending: false,
         outlinePreviewUrl: outline.dataUrl
       });
-      void dataUrlToFile(outline.dataUrl, outline.fileName, outline.contentType).then((outlineFile) => {
-        void generateMapGeoJsonDraft({ imageFile: outlineFile, silent: true });
-      });
     } catch (error) {
       if (mapImageOutlineRunIdRef.current !== runId) {
         return;
@@ -4143,114 +4100,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
         outlineError: error instanceof Error ? error.message : String(error),
         outlinePending: false
       });
-      void generateMapGeoJsonDraft({ imageFile: image.file, silent: true });
     }
-  }
-
-  async function generateMapGeoJsonDraft(options: { imageFile?: File | null; silent?: boolean } = {}) {
-    const snapshot = serializeMapDraft(mapCreateDraftRef.current);
-
-    if (snapshot.nodes.length === 0) {
-      if (!options.silent) {
-        toast.error(materialT("mapForm.geoJsonNodeRequired"));
-      }
-      return;
-    }
-
-    const graphSignature = buildMapGraphSignature(snapshot);
-    const runId = createClientId("map-geojson-run");
-
-    mapGeoJsonRunIdRef.current = runId;
-    setMapGeoJsonDraftState({
-      ...(mapGeoJsonDraftRef.current ?? {
-        data: {
-          bbox: [0, 0, 0, 0],
-          features: [],
-          type: "FeatureCollection" as const
-        },
-        edgeCount: snapshot.edges.length,
-        generatedAt: new Date().toISOString(),
-        graphSignature,
-        nodeCount: snapshot.nodes.length,
-        scale: {
-          heightKm: 1,
-          metersPerUnit: 1000,
-          unit: "km" as const,
-          widthKm: 1
-        },
-        source: "algorithm" as const
-      }),
-      error: null,
-      graphSignature,
-      pending: true,
-      stale: false
-    });
-
-    try {
-      const sourceImage = options.imageFile ?? await getMapGeoJsonSourceImageFile();
-      const result = await generateHomeMapGeoJson(snapshot, locale, sourceImage, mapImageDraftRef.current?.source ?? null);
-
-      if (mapGeoJsonRunIdRef.current !== runId) {
-        return;
-      }
-
-      setMapGeoJsonDraftState({
-        ...result,
-        error: null,
-        pending: false,
-        stale: false
-      });
-
-      if (!options.silent) {
-        toast.success(materialT("mapForm.geoJsonGenerated"));
-      }
-    } catch (error) {
-      if (mapGeoJsonRunIdRef.current !== runId) {
-        return;
-      }
-
-      setMapGeoJsonDraftState({
-        ...(mapGeoJsonDraftRef.current ?? {
-          data: {
-            bbox: [0, 0, 0, 0],
-            features: [],
-            type: "FeatureCollection" as const
-          },
-          edgeCount: snapshot.edges.length,
-          generatedAt: new Date().toISOString(),
-          graphSignature,
-          nodeCount: snapshot.nodes.length,
-          scale: {
-            heightKm: 1,
-            metersPerUnit: 1000,
-            unit: "km" as const,
-            widthKm: 1
-          },
-          source: "algorithm" as const
-        }),
-        error: error instanceof Error ? error.message : String(error),
-        pending: false,
-        stale: false
-      });
-
-      if (!options.silent) {
-        toast.error(materialT("mapForm.geoJsonGenerateFailed"));
-      }
-    }
-  }
-
-  async function getMapGeoJsonSourceImageFile() {
-    const image = mapImageDraftRef.current;
-
-    if (!image) {
-      return null;
-    }
-
-    if (image.outlinePreviewUrl?.startsWith("data:")) {
-      return dataUrlToFile(image.outlinePreviewUrl, "map-outline.png", "image/png");
-    }
-
-    return image.file;
   }
 
   async function generateMapImage(authenticatedViewer = viewer, continuePaused = false) {
@@ -4511,7 +4361,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     try {
       const isEditing = Boolean(mapEditingMaterialId);
-      const formData = buildMapMaterialFormData(mapCreateDraft, mapImageDraft, mapGeoJsonDraft, isEditing);
+      const formData = buildMapMaterialFormData(mapCreateDraft, mapImageDraft, isEditing);
       const material = isEditing
         ? await updateHomeMapMaterial(mapEditingMaterialId, formData, locale)
         : await createHomeMapMaterial(formData, locale);
@@ -4951,7 +4801,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             deriveRound={mapDeriveRound}
             deriveStatus={mapDeriveStatus}
             isPending={isPending || isMapActionPending}
-            mapGeoJsonDraft={mapGeoJsonDraft}
             mapImageDraft={mapImageDraft}
             mapImageGeneration={mapImageGeneration}
             mapImageNodeBatchSize={mapImageNodeBatchSize}
@@ -4975,7 +4824,6 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onEditBasicInfo={openMapBasicInfoFromGraphDialog}
             onEditNode={openMapNodeEditDialog}
             onGenerateMapImage={() => void generateMapImage(viewer, false)}
-            onGenerateMapGeoJson={() => void generateMapGeoJsonDraft()}
             onLayoutNodes={layoutMapNodes}
             onMoveNode={moveMapNode}
             onRemoveMapImageReferenceImage={removeMapImageReferenceImage}

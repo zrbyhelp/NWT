@@ -29,19 +29,19 @@ export const builtInScripts = [
     slug: baseScriptSlug,
     titleZh: "基础 AI 剧本",
     titleEn: "Base AI Script",
-    descriptionZh: "适合第一次进入新世界小说的通用互动剧本，AI 会围绕角色、地点和事件推进叙事。",
+    descriptionZh: "适合第一次进入工作台的通用互动剧本，AI 会围绕角色、地点和事件推进内容。",
     descriptionEn:
-      "A general interactive script for first-time New World Novel sessions, focused on characters, places, and events.",
+      "A general interactive script for first-time workspace sessions, focused on characters, places, and events.",
     welcomeZh: "已载入基础 AI 剧本。你可以输入角色、场景或冲突，我会把它推进为可交互剧情。",
     welcomeEn:
-      "Base AI Script is loaded. Send a character, scene, or conflict and I will turn it into interactive fiction."
+      "Base AI Script is loaded. Send a character, scene, or conflict and I will turn it into an interactive experience."
   },
   {
     slug: "world-architect",
     titleZh: "世界观架构师",
     titleEn: "World Architect",
     descriptionZh: "从文明、地理、规则和势力关系出发，搭建可长期演化的原创世界观。",
-    descriptionEn: "Build evolving fictional worlds from civilizations, geography, rules, and faction relationships.",
+    descriptionEn: "Build evolving original worlds from civilizations, geography, rules, and faction relationships.",
     welcomeZh: "告诉我一个世界的核心规则，我会帮你扩展文明、地点、势力和冲突。",
     welcomeEn: "Give me a core world rule and I will expand civilizations, places, factions, and conflicts."
   },
@@ -69,7 +69,7 @@ export const builtInScripts = [
     titleZh: "连载写作助手",
     titleEn: "Serial Writing Assistant",
     descriptionZh: "帮助规划章节节奏、钩子、人物弧光和下一章推进，适合长篇连载创作。",
-    descriptionEn: "Plan chapter pacing, hooks, character arcs, and next-episode beats for serial fiction.",
+    descriptionEn: "Plan chapter pacing, hooks, character arcs, and next-episode beats for serial writing.",
     welcomeZh: "发来当前章节梗概，我会帮你设计下一章冲突、钩子和人物推进。",
     welcomeEn: "Send the current chapter summary and I will design the next conflict, hook, and character movement."
   },

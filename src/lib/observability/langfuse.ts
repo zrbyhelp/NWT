@@ -7,7 +7,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import OpenAI from "openai";
 import { AiConfigError } from "@/lib/ai/config-types";
 
-const defaultTag = "new-world-novel";
+const defaultTag = "qijing-ai";
 
 export type AiObservationContext = {
   conversationId?: string | null;

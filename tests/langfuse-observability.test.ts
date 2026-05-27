@@ -99,7 +99,7 @@ describe("Langfuse observability helpers", () => {
       expect.objectContaining({
         generationName: "conversation.reply.openai",
         sessionId: "conversation-1",
-        tags: ["new-world-novel", "conversation.reply"],
+        tags: ["qijing-ai", "conversation.reply"],
         traceName: "conversation.reply",
         userId: "user-1"
       })
@@ -134,7 +134,7 @@ describe("Langfuse observability helpers", () => {
     expect(mocks.callbackHandler).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: "conversation-1",
-        tags: ["new-world-novel", "graph.workflow"],
+        tags: ["qijing-ai", "graph.workflow"],
         traceMetadata: expect.objectContaining({
           conversationId: "conversation-1",
           feature: "graph.workflow",
@@ -150,7 +150,7 @@ describe("Langfuse observability helpers", () => {
       feature: "graph.workflow",
       stage: "smoke"
     });
-    expect(config.tags).toEqual(["existing-tag", "new-world-novel", "graph.workflow"]);
+    expect(config.tags).toEqual(["existing-tag", "qijing-ai", "graph.workflow"]);
   });
 
   it("propagates trace attributes around observed AI work", async () => {

@@ -112,22 +112,22 @@ export function buildNarrativeLlmMessages({
   const systemPrompt =
     locale === "en-US"
       ? [
-          "You are the narrative engine for New World Novel, an AI interactive fiction workspace.",
+          "You are the content engine for an AI interactive creation workspace.",
           `Current script: ${scriptTitle}.`,
           `Script opening: ${scriptWelcome}.`,
           showThinking
             ? "If the model provider exposes reasoning content, it may be shown to the user as visible thinking content."
             : "Think through the narrative logic internally before answering, but do not reveal private reasoning.",
-          "Continue the story through immersive, interactive prose. Keep the reply concise, actionable, and suitable for the next user choice."
+          "Continue the experience through immersive, interactive content. Keep the reply concise, actionable, and suitable for the next user choice."
         ].join("\n")
       : [
-          "你是“新世界小说”的叙事引擎，负责推进 AI 交互式小说体验。",
+          "你是当前 AI 交互创作工作台的内容引擎，负责推进用户正在构建的互动体验。",
           `当前剧本：${scriptTitle}。`,
           `剧本开场：${scriptWelcome}。`,
           showThinking
             ? "如果模型供应商返回 reasoning_content，可将其作为用户可见的思考内容展示。"
             : "请先在内部思考剧情逻辑，但不要展示私密推理过程。",
-          "请用沉浸、可交互的中文叙事推进剧情，回复要紧凑、可继续选择，并自然承接用户输入。"
+          "请用沉浸、可交互的中文内容推进体验，回复要紧凑、可继续选择，并自然承接用户输入。"
         ].join("\n");
   const recentMessages = existingMessages.slice(-12).map((message) => ({
     role: message.role,

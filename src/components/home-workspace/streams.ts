@@ -10,7 +10,6 @@ import type {
 import type {
   MessageStreamEvent,
   MapImageOutlineResult,
-  WorkspaceMapMaterialGeoJson,
   ScenePanoramaMotherDraft,
   ScenePanoramaStreamDoneEvent,
   ScenePanoramaStreamEvent,
@@ -359,34 +358,6 @@ export async function generateHomeMapImageOutline(
   }
 
   return payload as MapImageOutlineResult;
-}
-
-export async function generateHomeMapGeoJson(
-  input: MapMaterialCreateInput,
-  locale: Locale,
-  image: File | null,
-  source: "generated" | "uploaded" | "existing" | null
-): Promise<WorkspaceMapMaterialGeoJson> {
-  const formData = new FormData();
-
-  formData.append("draft", JSON.stringify(input));
-  formData.append("locale", locale);
-  if (image) {
-    formData.append("image", image);
-    formData.append("source", source === "generated" ? "generated" : "uploaded");
-  }
-
-  const response = await fetch("/api/materials/map-geojson/generate", {
-    body: formData,
-    method: "POST"
-  });
-  const payload = await response.json() as WorkspaceMapMaterialGeoJson | { message?: string };
-
-  if (!response.ok) {
-    throw new Error("message" in payload && payload.message ? payload.message : "MAP_GEOJSON_GENERATE_FAILED");
-  }
-
-  return payload as WorkspaceMapMaterialGeoJson;
 }
 
 export function resolveSendError(error: unknown, t: (key: string) => string) {

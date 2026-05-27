@@ -1,10 +1,10 @@
 {
   "home": {
-    "kicker": "新世界小说",
-    "title": "AI 交互式小说工作台",
-    "signal": "不是传统阅读器，而是可对话、可演化的叙事系统",
-    "headline": "让角色、世界观和剧情在交互中生长",
-    "description": "围绕 AI 对话、剧情推进、知识图谱和长期记忆，构建新的小说体验形态。",
+    "kicker": "栖境AI",
+    "title": "AI 综合功能体",
+    "signal": "不是单一工具，而是可对话、可生成、可编排的综合 AI 系统",
+    "headline": "让对话、内容、世界和资产在交互中协同生长",
+    "description": "围绕 AI 对话、内容生成、知识图谱、长期记忆与多模态能力，构建面向多场景的 AI 综合功能体。",
     "metric": "当前上下文预算 {count} tokens",
     "actions": {
       "language": "语言切换"
@@ -16,7 +16,7 @@
       "close": "关闭登录窗口",
       "account": "账号",
       "password": "密码",
-      "loginTitle": "登录新世界小说",
+      "loginTitle": "登录栖境AI",
       "loginDescription": "登录后可继续创建会话、保存设置和进入个人剧本库。",
       "registerTitle": "注册账号",
       "registerDescription": "使用账号和密码创建普通用户，之后可保存自己的会话和剧本库。",
@@ -86,12 +86,12 @@
       "current": "当前：{mode}",
       "palette": "配色预设",
       "typography": "排版密度",
-      "aboutTitle": "关于新世界小说",
-      "aboutDescription": "新世界小说是围绕 AI 对话、剧情推进、知识图谱和长期记忆构建的交互式小说体验。",
+      "aboutTitle": "关于栖境AI",
+      "aboutDescription": "栖境AI 是围绕 AI 对话、内容生成、知识图谱、长期记忆与多模态能力构建的 AI 综合功能体。",
       "aboutItems": {
         "product": {
           "label": "软件名称",
-          "value": "新世界小说"
+          "value": "栖境AI"
         },
         "author": {
           "label": "作者",
@@ -119,11 +119,11 @@
         },
         "star": {
           "label": "点亮 Star",
-          "value": "如果你喜欢新世界小说，欢迎去 GitHub 点点 Star，支持项目继续打磨。"
+          "value": "如果你喜欢栖境AI，欢迎去 GitHub 点点 Star，支持项目继续打磨。"
         },
         "vision": {
           "label": "项目目标",
-          "value": "打造 AI 驱动的新体系交互式小说体验"
+          "value": "打造面向多场景的 AI 综合功能体"
         }
       },
       "account": {
@@ -366,11 +366,11 @@
       "subtitle": "查看当前可用 AI 剧本。",
       "kicker": "探索剧本",
       "heroTitle": "剧本",
-      "heroDescription": "探索并选择适合当前互动小说的 AI 剧本。剧本会定义开场方式、世界观组织和对话风格。",
+      "heroDescription": "探索并选择适合当前互动项目的 AI 剧本。剧本会定义开场方式、世界观组织和对话风格。",
       "mineTitle": "我的剧本",
       "mineDescription": "查看你已加入或自己创建的剧本。当前默认收纳基础 AI 剧本，后续创建功能开放后会显示更多个人剧本。",
       "communityTitle": "社区剧本",
-      "communityDescription": "探索并选择适合当前互动小说的社区 AI 剧本。剧本会定义开场方式、世界观组织和对话风格。",
+      "communityDescription": "探索并选择适合当前互动项目的社区 AI 剧本。剧本会定义开场方式、世界观组织和对话风格。",
       "search": "搜索剧本",
       "create": "创建",
       "createSoon": "剧本创建功能将在后续版本开放。",
@@ -523,22 +523,6 @@
         "imageOutlinePending": "正在生成边框图",
         "imageOutlineAlt": "地图纯边框图",
         "imageOutlineFailed": "边框图生成失败，最终图已保留。",
-        "geoJsonTitle": "地图数据 GeoJSON",
-        "geoJsonEmpty": "等待生成地图数据",
-        "geoJsonGenerate": "生成 GeoJSON",
-        "geoJsonRegenerate": "重新生成",
-        "geoJsonGenerating": "正在生成 GeoJSON",
-        "geoJsonGenerated": "GeoJSON 地图数据已生成。",
-        "geoJsonGenerateFailed": "GeoJSON 地图数据生成失败。",
-        "geoJsonNodeRequired": "至少有 1 个节点后才能生成 GeoJSON。",
-        "geoJsonStale": "图谱已变化",
-        "geoJsonFeatureCount": "{count} 个要素",
-        "geoJsonPreview": "GeoJSON 地图预览",
-        "geoJsonZoomIn": "放大 GeoJSON 地图",
-        "geoJsonZoomOut": "缩小 GeoJSON 地图",
-        "geoJsonResetView": "重置 GeoJSON 视图",
-        "geoJsonDrillDown": "下钻",
-        "geoJsonDrillUp": "返回",
         "imageReferenceImages": "AI 参考图片",
         "imageReferenceAdd": "添加",
         "imageReferenceRemove": "移除参考图",

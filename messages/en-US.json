@@ -1,10 +1,10 @@
 {
   "home": {
-    "kicker": "New World Novel",
-    "title": "AI Interactive Fiction Workspace",
-    "signal": "Not a traditional reader, but a conversational and evolving narrative system",
-    "headline": "Let characters, worlds, and plots grow through interaction",
-    "description": "A new fiction experience built around AI dialogue, plot progression, knowledge graphs, and persistent memory.",
+    "kicker": "Qijing AI",
+    "title": "AI Integrated Capability Platform",
+    "signal": "Not a single-purpose tool, but a conversational, generative, and orchestrated AI system",
+    "headline": "Let dialogue, content, worlds, and assets grow together through interaction",
+    "description": "An AI integrated capability platform built around dialogue, content generation, knowledge graphs, persistent memory, and multimodal ability.",
     "metric": "Current context budget {count} tokens",
     "actions": {
       "language": "Language"
@@ -16,7 +16,7 @@
       "close": "Close login dialog",
       "account": "Account",
       "password": "Password",
-      "loginTitle": "Log in to New World Novel",
+      "loginTitle": "Log in to Qijing AI",
       "loginDescription": "Log in to create conversations, save settings, and use your script library.",
       "registerTitle": "Create an account",
       "registerDescription": "Create a user with an account and password to keep your conversations and script library.",
@@ -86,12 +86,12 @@
       "current": "Current: {mode}",
       "palette": "Palette",
       "typography": "Typography",
-      "aboutTitle": "About New World Novel",
-      "aboutDescription": "New World Novel is an interactive fiction experience built around AI dialogue, plot progression, knowledge graphs, and long-term memory.",
+      "aboutTitle": "About Qijing AI",
+      "aboutDescription": "Qijing AI is an AI integrated capability platform built around dialogue, content generation, knowledge graphs, long-term memory, and multimodal ability.",
       "aboutItems": {
         "product": {
           "label": "Product",
-          "value": "New World Novel"
+          "value": "Qijing AI"
         },
         "author": {
           "label": "Author",
@@ -119,11 +119,11 @@
         },
         "star": {
           "label": "GitHub Star",
-          "value": "If New World Novel helps you, please star the GitHub repo to support continued work."
+          "value": "If Qijing AI helps you, please star the GitHub repo to support continued work."
         },
         "vision": {
           "label": "Goal",
-          "value": "Build an AI-driven new-system interactive fiction experience"
+          "value": "Build an AI integrated capability platform for multi-scenario use"
         }
       },
       "account": {
@@ -366,11 +366,11 @@
       "subtitle": "Review available AI scripts.",
       "kicker": "Explore Scripts",
       "heroTitle": "Scripts",
-      "heroDescription": "Explore AI scripts for interactive fiction. Scripts define openings, world structure, and dialogue style.",
+      "heroDescription": "Explore AI scripts for the current interactive project. Scripts define openings, world structure, and dialogue style.",
       "mineTitle": "My Scripts",
       "mineDescription": "Review scripts you have joined or created. The Base AI Script is included by default, with more personal scripts to follow when creation opens.",
       "communityTitle": "Community Scripts",
-      "communityDescription": "Explore community AI scripts for interactive fiction. Scripts define openings, world structure, and dialogue style.",
+      "communityDescription": "Explore community AI scripts for the current interactive project. Scripts define openings, world structure, and dialogue style.",
       "search": "Search scripts",
       "create": "Create",
       "createSoon": "Script creation will be available in a later version.",
@@ -523,22 +523,6 @@
         "imageOutlinePending": "Generating outline",
         "imageOutlineAlt": "Map outline image",
         "imageOutlineFailed": "Outline generation failed. The final image is preserved.",
-        "geoJsonTitle": "Map Data GeoJSON",
-        "geoJsonEmpty": "Waiting for map data",
-        "geoJsonGenerate": "Generate GeoJSON",
-        "geoJsonRegenerate": "Regenerate",
-        "geoJsonGenerating": "Generating GeoJSON",
-        "geoJsonGenerated": "GeoJSON map data generated.",
-        "geoJsonGenerateFailed": "GeoJSON map data generation failed.",
-        "geoJsonNodeRequired": "You need at least one node before generating GeoJSON.",
-        "geoJsonStale": "Graph Changed",
-        "geoJsonFeatureCount": "{count} features",
-        "geoJsonPreview": "GeoJSON map preview",
-        "geoJsonZoomIn": "Zoom in GeoJSON map",
-        "geoJsonZoomOut": "Zoom out GeoJSON map",
-        "geoJsonResetView": "Reset GeoJSON view",
-        "geoJsonDrillDown": "Drill Down",
-        "geoJsonDrillUp": "Back",
         "imageReferenceImages": "AI Reference Images",
         "imageReferenceAdd": "Add",
         "imageReferenceRemove": "Remove reference image",

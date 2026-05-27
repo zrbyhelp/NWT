@@ -1,6 +1,6 @@
 # 快速开始
 
-本页用于从空环境启动新世界小说。本地开发时，`pnpm dev` 会同时启动 Next.js 应用和 VitePress 文档站点。
+本页用于从空环境启动栖境AI。本地开发时，`pnpm dev` 会同时启动 Next.js 应用和 VitePress 文档站点。
 
 ## 版本要求
 

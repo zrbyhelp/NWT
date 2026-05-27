@@ -5,7 +5,6 @@ import type {
   MapDraftPatch,
   MapMaterialCreateInput,
   WorkspaceMapMaterialEdge,
-  WorkspaceMapMaterialGeoJson,
   WorkspaceMapMaterialImage,
   WorkspaceMapMaterialMetadata,
   WorkspaceMapMaterialNode,
@@ -432,8 +431,7 @@ export function validateMapMaterialInput(input: MapMaterialCreateInput) {
 
 export function buildMapMaterialMetadata(
   input: MapMaterialCreateInput,
-  image: WorkspaceMapMaterialImage | null = null,
-  geojson: WorkspaceMapMaterialGeoJson | null = null
+  image: WorkspaceMapMaterialImage | null = null
 ): WorkspaceMapMaterialMetadata {
   const normalized = validateMapMaterialInput(input);
 
@@ -445,8 +443,7 @@ export function buildMapMaterialMetadata(
     style: normalized.style,
     nodes: normalized.nodes,
     edges: normalized.edges,
-    image,
-    geojson
+    image
   };
 }
 

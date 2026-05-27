@@ -63,7 +63,6 @@ import {
   uploadScenePanoramaFace,
   uploadScenePanoramaMother,
   type ItemMaterialCreateInput,
-  type MapGeoJsonMetaInput,
   type MapImageMetaInput,
   type MapMaterialCreateInput,
   type MapMaterialImageMode,
@@ -334,9 +333,8 @@ export async function createHomeMapMaterial(formData: FormData, locale: Locale) 
   const mapImageFile = mapImageValue instanceof File && mapImageValue.size > 0 ? mapImageValue : null;
   const mapImageMode = isMapMaterialImageMode(mapImageModeValue) ? mapImageModeValue : mapImageFile ? "replace" : "clear";
   const mapImageMeta = getMapImageMetaInput(formData);
-  const mapGeoJsonMeta = getMapGeoJsonMetaInput(formData);
 
-  return createMapMaterial(draft, locale, mapImageFile, mapImageMode, mapImageMeta, mapGeoJsonMeta);
+  return createMapMaterial(draft, locale, mapImageFile, mapImageMode, mapImageMeta);
 }
 
 export async function updateHomeMaskMaterial(materialId: string, formData: FormData, locale: Locale) {
@@ -421,9 +419,8 @@ export async function updateHomeMapMaterial(materialId: string, formData: FormDa
   const mapImageFile = mapImageValue instanceof File && mapImageValue.size > 0 ? mapImageValue : null;
   const mapImageMode = isMapMaterialImageMode(mapImageModeValue) ? mapImageModeValue : mapImageFile ? "replace" : "keep";
   const mapImageMeta = getMapImageMetaInput(formData);
-  const mapGeoJsonMeta = getMapGeoJsonMetaInput(formData);
 
-  return updateMapMaterial(materialId, draft, locale, mapImageFile, mapImageMode, mapImageMeta, mapGeoJsonMeta);
+  return updateMapMaterial(materialId, draft, locale, mapImageFile, mapImageMode, mapImageMeta);
 }
 
 export async function cleanupHomeUploadedMaterialImages(urls: string[]) {
@@ -571,16 +568,6 @@ function getMapImageMetaInput(formData: FormData): MapImageMetaInput | null {
   }
 
   return JSON.parse(value) as MapImageMetaInput;
-}
-
-function getMapGeoJsonMetaInput(formData: FormData): MapGeoJsonMetaInput | null {
-  const value = formData.get("mapGeoJsonMeta");
-
-  if (typeof value !== "string" || !value.trim()) {
-    return null;
-  }
-
-  return JSON.parse(value) as MapGeoJsonMetaInput;
 }
 
 function getItemModelInputImageFile(formData: FormData) {

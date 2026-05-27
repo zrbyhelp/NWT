@@ -2,7 +2,7 @@
 
 ## 项目定位与语言要求
 
-软件名称：新世界小说。作者：zr（中文名：臧浩然）。软件目标：打造 AI 驱动的新体系交互式小说体验。
+软件名称：栖境AI。作者：zr（中文名：臧浩然）。软件目标：打造面向多场景的 AI 综合功能体。
 
 联系方式：QQ `778241343`；电话/微信 `15043201648`；邮箱 `q19946502@gmail.com`。
 
@@ -57,7 +57,7 @@ scripts/    # 本地开发或维护脚本
 - @qdrant/js-client-rest、Qdrant、neo4j-driver、Neo4j：向量检索与图数据存储。
 - Sigma.js：图谱可视化。
 - BullMQ、ioredis、Redis：AI 分析、向量化、图谱构建等后台异步任务队列。
-- @aws-sdk/client-s3、Cloudflare R2：小说文件、封面、导入原文等对象存储，按 S3-compatible 方式接入。
+- @aws-sdk/client-s3、Cloudflare R2：内容文件、封面、导入原文等对象存储，按 S3-compatible 方式接入。
 - Langfuse：AI 调用观测、追踪与评估。
 - Vitest、React Testing Library：单元测试与 React 组件测试；测试不包含打包测试。
 - Docker Compose：本地依赖服务编排，例如 MySQL、Redis、Qdrant、Neo4j、Langfuse。

@@ -1,8 +1,8 @@
 {
-  "name": "new-world-novel",
+  "name": "qijing-ai",
   "version": "0.1.0",
   "private": true,
-  "description": "新世界小说：AI 驱动的新体系交互式小说体验。",
+  "description": "栖境AI：面向多场景的 AI 综合功能体。",
   "license": "MIT",
   "author": "zr (臧浩然)",
   "engines": {

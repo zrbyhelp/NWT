@@ -6,11 +6,9 @@ import type { EdgeLabelDrawingFunction, NodeHoverDrawingFunction, NodeLabelDrawi
 import {
   Check,
   ChevronDown,
-  CornerUpLeft,
   Image as ImageIcon,
   Filter,
   Hand,
-  LocateFixed,
   Link2,
   Loader2,
   Maximize2,
@@ -25,20 +23,17 @@ import {
   Trash2,
   Upload,
   Wand2,
-  ZoomIn,
-  ZoomOut,
   X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   MapCreateDraft,
-  WorkspaceMapGeoJsonFeature,
   WorkspaceMapMaterialNodeType,
   WorkspaceMapMaterialRelationType
 } from "@/lib/home-workspace";
 import { getMapGraphNodeBaseSize, layoutMapGraphNodes, mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
 import { ReferenceImageStrip } from "./reference-image-strip";
-import type { MapGeoJsonDraft, MapImageDraft, MapImageGenerationDraft, SceneReferenceImageDraft } from "./shared";
+import type { MapImageDraft, MapImageGenerationDraft, SceneReferenceImageDraft } from "./shared";
 
 export function MapGraphEditor({
   deriveMaxRounds = 3,
@@ -47,7 +42,6 @@ export function MapGraphEditor({
   deriveStatus = "",
   draft,
   embedded = false,
-  mapGeoJsonDraft = null,
   mapImageDraft = null,
   mapImageGeneration,
   mapImageNodeBatchSize = 10,
@@ -65,7 +59,6 @@ export function MapGraphEditor({
   onContinueMapImage,
   onEditEdge,
   onEditNode,
-  onGenerateMapGeoJson,
   onGenerateMapImage,
   onLayoutNodes,
   onRemoveEdge,
@@ -90,7 +83,6 @@ export function MapGraphEditor({
   deriveStatus?: string;
   draft: MapCreateDraft;
   embedded?: boolean;
-  mapGeoJsonDraft?: MapGeoJsonDraft | null;
   mapImageDraft?: MapImageDraft | null;
   mapImageGeneration?: MapImageGenerationDraft;
   mapImageNodeBatchSize?: number;
@@ -108,7 +100,6 @@ export function MapGraphEditor({
   onContinueMapImage?: () => void;
   onEditEdge?: (edgeId: string) => void;
   onEditNode?: (nodeId: string) => void;
-  onGenerateMapGeoJson?: () => void;
   onGenerateMapImage?: () => void;
   onLayoutNodes?: (updates: Array<{ id: string; x: number; y: number }>) => void;
   onRemoveEdge?: (edgeId: string) => void;
@@ -845,8 +836,8 @@ export function MapGraphEditor({
           ) : null}
 
           {showMapImageControls ? (
-            <div className="absolute right-4 top-16 z-20 w-[min(22rem,calc(100%-2rem))] rounded-lg border border-border bg-background/96 shadow-xl shadow-foreground/12 backdrop-blur">
-              <div className="flex items-start justify-between gap-3 border-b border-border/70 px-3 py-2.5">
+            <div className="absolute right-4 top-16 z-20 flex max-h-[calc(100%-5rem)] w-[min(22rem,calc(100%-2rem))] flex-col overflow-hidden rounded-lg border border-border bg-background/96 shadow-xl shadow-foreground/12 backdrop-blur">
+              <div className="shrink-0 flex items-start justify-between gap-3 border-b border-border/70 px-3 py-2.5">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground/78">{t("mapForm.imageTitle")}</p>
                   <p className="mt-0.5 truncate text-xs text-foreground/46">{t("mapForm.imageSubtitle")}</p>
@@ -861,7 +852,7 @@ export function MapGraphEditor({
                   </span>
                 ) : null}
               </div>
-              <div className="space-y-3 p-3">
+              <div className="min-h-0 space-y-3 overflow-y-auto overscroll-contain p-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -919,42 +910,6 @@ export function MapGraphEditor({
                     </div>
                   </div>
                 ) : null}
-
-                <div className="space-y-2 rounded-md border border-border bg-background/70 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-medium text-foreground/68">{t("mapForm.geoJsonTitle")}</p>
-                      <p className="mt-0.5 truncate text-[11px] text-foreground/42">
-                        {mapGeoJsonDraft?.stale
-                          ? t("mapForm.geoJsonStale")
-                          : mapGeoJsonDraft?.data
-                            ? t("mapForm.geoJsonFeatureCount", { count: mapGeoJsonDraft.data.features.length })
-                            : t("mapForm.geoJsonEmpty")}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={onGenerateMapGeoJson}
-                      disabled={mapGeoJsonDraft?.pending || mapImageState.pending || !onGenerateMapGeoJson}
-                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground/68 transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
-                    >
-                      {mapGeoJsonDraft?.pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                      {mapGeoJsonDraft?.data ? t("mapForm.geoJsonRegenerate") : t("mapForm.geoJsonGenerate")}
-                    </button>
-                  </div>
-
-                  {mapGeoJsonDraft?.data ? (
-                    <MapGeoJsonPreview geojson={mapGeoJsonDraft} t={t} />
-                  ) : mapGeoJsonDraft?.pending ? (
-                    <div className="flex aspect-video items-center justify-center rounded-md border border-dashed border-border bg-muted/20 text-xs text-foreground/42">
-                      {t("mapForm.geoJsonGenerating")}
-                    </div>
-                  ) : mapGeoJsonDraft?.error ? (
-                    <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs leading-5 text-rose-700">
-                      {t("mapForm.geoJsonGenerateFailed")}
-                    </div>
-                  ) : null}
-                </div>
 
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                   <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground/60">
@@ -1338,247 +1293,6 @@ function MapImageProgressRing({ progress }: { progress: number }) {
         {normalizedProgress}%
       </span>
     </span>
-  );
-}
-
-function MapGeoJsonPreview({
-  geojson,
-  t
-}: {
-  geojson: MapGeoJsonDraft;
-  t: (key: string, values?: Record<string, string | number>) => string;
-}) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const dragRef = useRef<{ x: number; y: number } | null>(null);
-  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
-  const [selectedFeatureId, setSelectedFeatureId] = useState("");
-  const [drillStack, setDrillStack] = useState<string[]>([]);
-  const bbox = getGeoJsonSvgBbox(geojson.data.bbox);
-  const activeNodeId = drillStack.at(-1) ?? "";
-  const childNodeIds = useMemo(() => {
-    if (!activeNodeId) {
-      return new Set<string>();
-    }
-
-    return new Set(
-      geojson.data.features
-        .filter((feature) => feature.properties.parentId === activeNodeId && feature.properties.nodeId)
-        .map((feature) => feature.properties.nodeId as string)
-    );
-  }, [activeNodeId, geojson.data.features]);
-  const visibleFeatures = useMemo(() => {
-    if (!activeNodeId) {
-      return geojson.data.features;
-    }
-
-    return geojson.data.features.filter((feature) => {
-      const nodeId = feature.properties.nodeId;
-
-      if (nodeId === activeNodeId || feature.properties.parentId === activeNodeId) {
-        return true;
-      }
-
-      return Boolean(
-        feature.properties.sourceNodeId &&
-          feature.properties.targetNodeId &&
-          (childNodeIds.has(feature.properties.sourceNodeId) || childNodeIds.has(feature.properties.targetNodeId))
-      );
-    });
-  }, [activeNodeId, childNodeIds, geojson.data.features]);
-  const selectedFeature = geojson.data.features.find((feature) => feature.id === selectedFeatureId) ?? null;
-  const canDrill = Boolean(selectedFeature?.properties.nodeId && geojson.data.features.some((feature) => feature.properties.parentId === selectedFeature.properties.nodeId));
-  const scaleLabel = getGeoJsonScaleBarLabel(geojson, view.scale);
-
-  function updateScale(nextScale: number) {
-    setView((current) => ({
-      ...current,
-      scale: Math.min(8, Math.max(0.6, nextScale))
-    }));
-  }
-
-  return (
-    <div className="space-y-2">
-      <div className="relative aspect-video overflow-hidden rounded-md border border-border bg-[#f8faf7]">
-        <svg
-          ref={svgRef}
-          className="h-full w-full touch-none"
-          role="img"
-          aria-label={t("mapForm.geoJsonPreview")}
-          viewBox={`${bbox.x} ${bbox.y} ${bbox.width} ${bbox.height}`}
-          onPointerDown={(event) => {
-            dragRef.current = { x: event.clientX, y: event.clientY };
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            if (!dragRef.current || !svgRef.current) {
-              return;
-            }
-
-            const rect = svgRef.current.getBoundingClientRect();
-            const dx = ((event.clientX - dragRef.current.x) / Math.max(1, rect.width)) * bbox.width / view.scale;
-            const dy = ((event.clientY - dragRef.current.y) / Math.max(1, rect.height)) * bbox.height / view.scale;
-
-            dragRef.current = { x: event.clientX, y: event.clientY };
-            setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
-          }}
-          onPointerUp={(event) => {
-            dragRef.current = null;
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }}
-          onWheel={(event) => {
-            event.preventDefault();
-            updateScale(view.scale * (event.deltaY > 0 ? 0.9 : 1.12));
-          }}
-        >
-          <rect x={bbox.x} y={bbox.y} width={bbox.width} height={bbox.height} fill="#f8faf7" />
-          <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
-            {visibleFeatures.map((feature) => (
-              <GeoJsonFeatureShape
-                key={feature.id}
-                feature={feature}
-                isSelected={feature.id === selectedFeatureId}
-                onSelect={() => setSelectedFeatureId(feature.id)}
-              />
-            ))}
-          </g>
-        </svg>
-
-        <div className="absolute right-2 top-2 flex items-center gap-1">
-          <button type="button" className="grid h-7 w-7 place-items-center rounded-md bg-background/90 text-foreground/68 shadow-sm hover:bg-background" aria-label={t("mapForm.geoJsonZoomIn")} onClick={() => updateScale(view.scale * 1.18)}>
-            <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <button type="button" className="grid h-7 w-7 place-items-center rounded-md bg-background/90 text-foreground/68 shadow-sm hover:bg-background" aria-label={t("mapForm.geoJsonZoomOut")} onClick={() => updateScale(view.scale * 0.84)}>
-            <ZoomOut className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <button type="button" className="grid h-7 w-7 place-items-center rounded-md bg-background/90 text-foreground/68 shadow-sm hover:bg-background" aria-label={t("mapForm.geoJsonResetView")} onClick={() => setView({ scale: 1, x: 0, y: 0 })}>
-            <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium text-foreground/68 shadow-sm">
-          <div className="h-1 w-24 rounded-full bg-foreground/70" />
-          <div className="mt-1 flex justify-between gap-4">
-            <span>0</span>
-            <span>{scaleLabel}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <div className="min-w-0 text-foreground/54">
-          {selectedFeature ? (
-            <span className="block truncate">{selectedFeature.properties.name}</span>
-          ) : (
-            <span className="block truncate">{t("mapForm.geoJsonPreview")}</span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {drillStack.length > 0 ? (
-            <button
-              type="button"
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground/62 hover:bg-muted"
-              onClick={() => {
-                setDrillStack((current) => current.slice(0, -1));
-                setSelectedFeatureId("");
-              }}
-            >
-              <CornerUpLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              {t("mapForm.geoJsonDrillUp")}
-            </button>
-          ) : null}
-          {canDrill ? (
-            <button
-              type="button"
-              className="inline-flex h-7 items-center rounded-md bg-primary px-2 text-[11px] font-medium text-white hover:bg-primary/90"
-              onClick={() => {
-                if (selectedFeature?.properties.nodeId) {
-                  setDrillStack((current) => [...current, selectedFeature.properties.nodeId as string]);
-                  setSelectedFeatureId("");
-                  setView({ scale: 1.4, x: 0, y: 0 });
-                }
-              }}
-            >
-              {t("mapForm.geoJsonDrillDown")}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GeoJsonFeatureShape({
-  feature,
-  isSelected,
-  onSelect
-}: {
-  feature: WorkspaceMapGeoJsonFeature;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const color = getGeoJsonFeatureColor(feature);
-
-  if (feature.geometry.type === "Polygon") {
-    return (
-      <polygon
-        points={feature.geometry.coordinates[0].map(([x, y]) => `${x},${-y}`).join(" ")}
-        fill={color.fill}
-        stroke={isSelected ? "#0f172a" : color.stroke}
-        strokeWidth={isSelected ? 2.4 : 1.2}
-        vectorEffect="non-scaling-stroke"
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelect();
-        }}
-      />
-    );
-  }
-
-  if (feature.geometry.type === "LineString") {
-    return (
-      <polyline
-        points={feature.geometry.coordinates.map(([x, y]) => `${x},${-y}`).join(" ")}
-        fill="none"
-        stroke={isSelected ? "#0f172a" : color.stroke}
-        strokeDasharray={feature.properties.relationType === "connects" ? "4 3" : undefined}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={isSelected ? 2.8 : 1.5}
-        vectorEffect="non-scaling-stroke"
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelect();
-        }}
-      />
-    );
-  }
-
-  return (
-    <g
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelect();
-      }}
-    >
-      <circle
-        cx={feature.geometry.coordinates[0]}
-        cy={-feature.geometry.coordinates[1]}
-        r={isSelected ? 4.8 : 3.6}
-        fill={isSelected ? "#0f172a" : color.stroke}
-        vectorEffect="non-scaling-stroke"
-      />
-      <text
-        x={feature.geometry.coordinates[0] + 5}
-        y={-feature.geometry.coordinates[1] - 4}
-        className="fill-slate-700 text-[10px] font-medium"
-        paintOrder="stroke"
-        stroke="#f8faf7"
-        strokeWidth={3}
-        vectorEffect="non-scaling-stroke"
-      >
-        {feature.properties.name}
-      </text>
-    </g>
   );
 }
 
@@ -2045,52 +1759,3 @@ function clampMapImageNodeBatchSize(value: number) {
   return Math.min(100, Math.max(1, Math.round(value)));
 }
 
-function getGeoJsonSvgBbox(bbox: [number, number, number, number]) {
-  const [minX, minY, maxX, maxY] = bbox;
-  const width = Math.max(1, maxX - minX);
-  const height = Math.max(1, maxY - minY);
-  const padding = Math.max(width, height) * 0.03;
-
-  return {
-    height: height + padding * 2,
-    width: width + padding * 2,
-    x: minX - padding,
-    y: -maxY - padding
-  };
-}
-
-function getGeoJsonFeatureColor(feature: WorkspaceMapGeoJsonFeature) {
-  if (feature.properties.featureKind === "relation") {
-    return { fill: "none", stroke: "#64748b" };
-  }
-
-  if (feature.properties.featureKind === "place") {
-    return { fill: "#0f172a", stroke: "#334155" };
-  }
-
-  const colors: Partial<Record<WorkspaceMapMaterialNodeType, { fill: string; stroke: string }>> = {
-    city: { fill: "#dbeafe", stroke: "#2563eb" },
-    country: { fill: "#dcfce7", stroke: "#16a34a" },
-    landmark: { fill: "#fef3c7", stroke: "#d97706" },
-    region: { fill: "#f5e8ff", stroke: "#9333ea" },
-    village: { fill: "#ffe4e6", stroke: "#e11d48" }
-  };
-
-  return colors[feature.properties.nodeType ?? "landmark"] ?? { fill: "#e2e8f0", stroke: "#475569" };
-}
-
-function getGeoJsonScaleBarLabel(geojson: MapGeoJsonDraft, scale: number) {
-  const rawKm = Math.max(1, (geojson.scale.widthKm * 0.24) / Math.max(0.6, scale));
-  const niceKm = getNiceScaleDistance(rawKm);
-
-  return `${niceKm} km`;
-}
-
-function getNiceScaleDistance(value: number) {
-  const exponent = Math.floor(Math.log10(value));
-  const base = 10 ** exponent;
-  const normalized = value / base;
-  const multiplier = normalized >= 5 ? 5 : normalized >= 2 ? 2 : 1;
-
-  return Math.round(multiplier * base);
-}

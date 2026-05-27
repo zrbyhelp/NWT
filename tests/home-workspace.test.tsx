@@ -358,7 +358,6 @@ describe("HomeWorkspace script manager", () => {
     const onChangeMapImageReferencePrompt = vi.fn();
     const onClearMapImage = vi.fn();
     const onGenerateMapImage = vi.fn();
-    const onGenerateMapGeoJson = vi.fn();
     const onSelectMapFinalImage = vi.fn();
 
     render(
@@ -379,61 +378,6 @@ describe("HomeWorkspace script manager", () => {
             }
           ],
           edges: []
-        }}
-        mapGeoJsonDraft={{
-          data: {
-            bbox: [-100, -60, 100, 60],
-            features: [
-              {
-                type: "Feature",
-                id: "area-node-country",
-                geometry: {
-                  type: "Polygon",
-                  coordinates: [[[-80, -40], [80, -40], [80, 40], [-80, 40], [-80, -40]]]
-                },
-                properties: {
-                  featureKind: "area",
-                  id: "area-node-country",
-                  level: 0,
-                  name: "王国",
-                  nodeId: "node-country",
-                  nodeType: "country"
-                }
-              },
-              {
-                type: "Feature",
-                id: "place-node-city",
-                geometry: {
-                  type: "Point",
-                  coordinates: [0, 0]
-                },
-                properties: {
-                  featureKind: "place",
-                  id: "place-node-city",
-                  level: 3,
-                  name: "王城",
-                  nodeId: "node-city",
-                  nodeType: "city",
-                  parentId: "node-country"
-                }
-              }
-            ],
-            type: "FeatureCollection"
-          },
-          edgeCount: 0,
-          generatedAt: "2026-05-27T00:00:00.000Z",
-          graphSignature: "map-signature",
-          nodeCount: 1,
-          outlineBased: true,
-          pending: false,
-          scale: {
-            heightKm: 120,
-            metersPerUnit: 1000,
-            unit: "km",
-            widthKm: 200
-          },
-          source: "algorithm",
-          stale: false
         }}
         mapImageDraft={{
           edgeCount: 0,
@@ -470,7 +414,6 @@ describe("HomeWorkspace script manager", () => {
         onChangeMapImageNodeBatchSize={onChangeMapImageNodeBatchSize}
         onChangeMapImageReferencePrompt={onChangeMapImageReferencePrompt}
         onClearMapImage={onClearMapImage}
-        onGenerateMapGeoJson={onGenerateMapGeoJson}
         onGenerateMapImage={onGenerateMapImage}
         onSelectMapFinalImage={onSelectMapFinalImage}
         onSelectNode={vi.fn()}
@@ -486,11 +429,6 @@ describe("HomeWorkspace script manager", () => {
     expect(screen.getByText("AI 生成")).toBeInTheDocument();
     expect(screen.getByText("纯边框图")).toBeInTheDocument();
     expect(screen.getByAltText("地图纯边框图")).toBeInTheDocument();
-    expect(screen.getByText("地图数据 GeoJSON")).toBeInTheDocument();
-    expect(screen.getByText("2 个要素")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "GeoJSON 地图预览" })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "重新生成" })[0]);
-    expect(onGenerateMapGeoJson).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByRole("spinbutton", { name: "每轮节点" }), { target: { value: "120" } });
     expect(onChangeMapImageNodeBatchSize).toHaveBeenCalledWith(100);
     fireEvent.change(screen.getByPlaceholderText("描述参考图中需要沿用的地貌、风格、色彩或地图符号"), {
@@ -502,7 +440,7 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.change(screen.getByLabelText("上传最终图"), { target: { files: [uploadFile] } });
     expect(onSelectMapFinalImage).toHaveBeenCalledWith(uploadFile);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "重新生成" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
     expect(onGenerateMapImage).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "清除图像" }));
     expect(onClearMapImage).toHaveBeenCalledTimes(1);
@@ -1725,7 +1663,7 @@ describe("HomeWorkspace script manager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "使用 基础 AI 剧本 剧本" }));
 
-    expect(screen.getByRole("heading", { name: "登录新世界小说" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "登录栖境AI" })).toBeInTheDocument();
   });
 
   it("guides users to settings when no default LLM is configured", async () => {
@@ -1753,7 +1691,7 @@ const baseScript: WorkspaceScript = {
   slug: "base-ai-script",
   category: "featured",
   title: "基础 AI 剧本",
-  description: "适合第一次进入新世界小说的通用互动剧本。",
+  description: "适合第一次进入栖境AI的通用互动剧本。",
   welcome: "已载入基础 AI 剧本。",
   inLibrary: true,
   librarySource: "COMMUNITY_ADDED"

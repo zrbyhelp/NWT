@@ -43,12 +43,10 @@ export function appendMapImageTargetPrompt(prompt: string) {
   const target = hasCjkText(prompt)
     ? [
         `目标输出：4K 16:9 横版世界地图插画，${maskBoardTargetResolution}。`,
-        "画面应像可阅读的小说世界地图：地理层级清楚，区域、城市、村落、地标和路径关系可辨。",
         "可以使用简短地图标签辅助理解节点名称；不要水印，不要 UI 操作控件，不要生成进度环。"
       ]
     : [
         `Target output: 4K 16:9 world map illustration, ${maskBoardTargetResolution}.`,
-        "Make it readable as an interactive fiction world map, with clear hierarchy across regions, settlements, landmarks, and routes.",
         "Concise cartographic labels are allowed for node names. No watermark, UI controls, or progress ring in the image."
       ];
 
@@ -125,7 +123,7 @@ export function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInp
 
   if (input.locale === "en-US") {
     return [
-      "Create one seamless 360-degree equirectangular panorama master image for an interactive fiction scene.",
+      "Create one seamless 360-degree equirectangular panorama master image for an interactive scene.",
       `Target output: 4K equirectangular panorama, ${sizeProfile.motherSize}, 2:1 aspect ratio. Do not add text explaining the size.`,
       "If reference images are provided, use them for layout, materials, atmosphere, lighting, and spatial scale. Do not copy text, UI, frames, watermarks, or non-scene artifacts from the references.",
       "The image must represent a complete interior or exterior space that can wrap horizontally.",
@@ -156,7 +154,7 @@ export function buildScenePanoramaMotherPrompt(input: ScenePanoramaGenerationInp
   }
 
   return [
-    "生成一张用于交互小说场景的 360 度等距柱状全景母图。",
+    "生成一张用于交互场景的 360 度等距柱状全景母图。",
     `目标输出：4K 等距柱状全景母图，${sizeProfile.motherSize}，2:1 画幅；不要在画面中写尺寸说明文字。`,
     "如果提供了参考图，请参考其布局、材质、氛围、光照和空间尺度；不要复制参考图中的文字、UI、边框、水印或非场景杂物。",
     "画面必须表现一个可以水平环绕的完整室内或室外空间。",
@@ -358,7 +356,7 @@ function getSceneStylePrompt(style: string, locale: ScenePanoramaGenerationInput
 
 function getScenePanoramaDrawingStylePrompt(style: string, locale: ScenePanoramaGenerationInput["locale"]) {
   const zh: Record<string, string> = {
-    anime: "二次元插画空间，干净线条，色块清晰，适合轻小说式场景漫游",
+    anime: "二次元插画空间，干净线条，色块清晰，适合风格化场景漫游",
     cel: "赛璐璐动画空间，边缘利落，光影分层明确，适合动画感全景",
     comic: "漫画场景风，线条明确，黑白与色彩张力强，但保持空间透视准确",
     concept: "概念设定图空间，设计感强，结构清楚，适合世界观设定展示",
@@ -368,7 +366,7 @@ function getScenePanoramaDrawingStylePrompt(style: string, locale: ScenePanorama
     realistic: "写实空间渲染，比例自然，材质可信，适合沉浸式探索"
   };
   const en: Record<string, string> = {
-    anime: "anime environment illustration, clean linework, clear color blocks for light-novel scene exploration",
+    anime: "anime environment illustration, clean linework, clear color blocks for stylized scene exploration",
     cel: "cel-shaded animated environment, crisp edges and clearly layered lighting",
     comic: "comic environment style with clear ink lines and strong visual energy while preserving accurate perspective",
     concept: "environment concept art, design-forward, structurally clear, suitable for worldbuilding presentation",
