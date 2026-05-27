@@ -7,6 +7,7 @@ import type { Locale } from "@/i18n/routing";
 import {
   generateDefaultItemBoardImage,
   generateDefaultItemModelInputImage,
+  generateDefaultMapImage,
   generateDefaultMaskBoardImage,
   generateDefaultScenePanorama,
   generateDefaultScenePanoramaMother,
@@ -45,13 +46,23 @@ import {
   isValidScenePanoramaImageFile,
   uploadCreatureBoardImage,
   uploadMaskBoardImage,
+  uploadMapImage,
   uploadItemBoardImage,
   uploadItemModelInputImage,
   uploadScenePanoramaFaceImage,
   uploadScenePanoramaMotherImage
 } from "@/lib/storage/material";
 import { syncMapMaterialProjection } from "@/lib/graph/map-material";
-import { buildMapMaterialMetadata, isMapNodeType, isMapRelationType } from "./map";
+import {
+  buildMapGraphSignature,
+  buildMapImageNodeBatches,
+  buildMapMaterialMetadata,
+  getMapMaterialMetadata,
+  isMapNodeType,
+  isMapRelationType,
+  normalizeMapImageNodeBatchSize
+} from "./map";
+import { normalizeMapGeoJsonForSave } from "./map-geojson";
 
 export type {
   WorkspaceScript,
@@ -84,6 +95,14 @@ export type {
   WorkspaceMapMaterialRelationType,
   WorkspaceMapMaterialNode,
   WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialImage,
+  WorkspaceMapMaterialImageSource,
+  WorkspaceMapGeoJsonFeature,
+  WorkspaceMapGeoJsonFeatureCollection,
+  WorkspaceMapGeoJsonGeometry,
+  WorkspaceMapGeoJsonPosition,
+  WorkspaceMapGeoJsonScale,
+  WorkspaceMapMaterialGeoJson,
   ItemDraftPatch,
   ItemAiAssistResult,
   SceneMaterialBlockInput,
@@ -115,6 +134,13 @@ export type {
   WorkspaceItemMaterialMetadata,
   WorkspaceSceneMaterialMetadata,
   WorkspaceMapMaterialMetadata,
+  MapImageMetaInput,
+  MapGeoJsonMetaInput,
+  MapImageStreamImage,
+  MapImageStreamDoneEvent,
+  MapImageStreamEvent,
+  MapImageStreamHandler,
+  MapMaterialImageMode,
   WorkspaceMaterialMetadata,
   MaskMaterialBoardImageMode,
   ItemMaterialImageMode,
@@ -154,6 +180,14 @@ import type {
   WorkspaceMapMaterialRelationType,
   WorkspaceMapMaterialNode,
   WorkspaceMapMaterialEdge,
+  WorkspaceMapMaterialImage,
+  WorkspaceMapMaterialImageSource,
+  WorkspaceMapGeoJsonFeature,
+  WorkspaceMapGeoJsonFeatureCollection,
+  WorkspaceMapGeoJsonGeometry,
+  WorkspaceMapGeoJsonPosition,
+  WorkspaceMapGeoJsonScale,
+  WorkspaceMapMaterialGeoJson,
   ItemDraftPatch,
   ItemAiAssistResult,
   SceneMaterialBlockInput,
@@ -185,9 +219,16 @@ import type {
   WorkspaceItemMaterialMetadata,
   WorkspaceSceneMaterialMetadata,
   WorkspaceMapMaterialMetadata,
+  MapImageMetaInput,
+  MapGeoJsonMetaInput,
+  MapImageStreamImage,
+  MapImageStreamDoneEvent,
+  MapImageStreamEvent,
+  MapImageStreamHandler,
   WorkspaceMaterialMetadata,
   MaskMaterialBoardImageMode,
   ItemMaterialImageMode,
+  MapMaterialImageMode,
   WorkspaceMessage,
   WorkspaceTokenUsage,
   WorkspaceConversation,
@@ -1164,12 +1205,31 @@ export async function updateSceneMaterial(
   }
 }
 
-export async function createMapMaterial(input: MapMaterialCreateInput, locale: Locale) {
+export async function createMapMaterial(
+  input: MapMaterialCreateInput,
+  locale: Locale,
+  mapImageFile: File | null = null,
+  mapImageMode: MapMaterialImageMode = "clear",
+  mapImageMeta: MapImageMetaInput | null = null,
+  mapGeoJsonMeta: MapGeoJsonMetaInput | null = null
+) {
   const viewer = await requireAuth();
   let persistenceStage: MapMaterialPersistenceStage = "prepare";
+  const uploadedUrls: string[] = [];
 
   try {
-    const metadata = buildMapMaterialMetadata(input);
+    const graphSignature = buildMapGraphSignature(input);
+    const mapGeoJson = normalizeMapGeoJsonForSave(mapGeoJsonMeta, graphSignature);
+    const normalizedImageMeta = resolveMapMaterialImageMeta(mapImageMeta, graphSignature);
+    const mapImage = await resolveMapMaterialImageForSave(
+      viewer.id,
+      mapImageFile,
+      mapImageMode,
+      normalizedImageMeta,
+      null,
+      uploadedUrls
+    );
+    const metadata = buildMapMaterialMetadata(input, mapImage, mapGeoJson);
     const name = metadata.name;
     const description = metadata.description;
 
@@ -1186,7 +1246,7 @@ export async function createMapMaterial(input: MapMaterialCreateInput, locale: L
           titleEn: name,
           descriptionZh: description,
           descriptionEn: description,
-          previewUrl: null,
+          previewUrl: mapImage?.url ?? null,
           metadata,
           communityVisible: true,
           libraryEntries: {
@@ -1212,18 +1272,27 @@ export async function createMapMaterial(input: MapMaterialCreateInput, locale: L
       librarySource: "SELF_CREATED"
     });
   } catch (error) {
+    await cleanupUploadedMapImages(uploadedUrls);
     throw normalizeMapMaterialPersistenceError(error, persistenceStage);
   }
 }
 
-export async function updateMapMaterial(materialId: string, input: MapMaterialCreateInput, locale: Locale) {
+export async function updateMapMaterial(
+  materialId: string,
+  input: MapMaterialCreateInput,
+  locale: Locale,
+  mapImageFile: File | null = null,
+  mapImageMode: MapMaterialImageMode = "keep",
+  mapImageMeta: MapImageMetaInput | null = null,
+  mapGeoJsonMeta: MapGeoJsonMetaInput | null = null
+) {
   const viewer = await requireAuth();
   let persistenceStage: MapMaterialPersistenceStage = "prepare";
+  const uploadedUrls: string[] = [];
 
   try {
-    const metadata = buildMapMaterialMetadata(input);
-    const name = metadata.name;
-    const description = metadata.description;
+    const graphSignature = buildMapGraphSignature(input);
+    const mapGeoJson = normalizeMapGeoJsonForSave(mapGeoJsonMeta, graphSignature);
 
     persistenceStage = "record";
     const material = await prisma.$transaction(async (tx) => {
@@ -1242,6 +1311,20 @@ export async function updateMapMaterial(materialId: string, input: MapMaterialCr
         throw new Error("MATERIAL_NOT_EDITABLE");
       }
 
+      const existingMetadata = getMapMaterialMetadata(entry.material.metadata);
+      const normalizedImageMeta = resolveMapMaterialImageMeta(mapImageMeta, graphSignature);
+      const mapImage = await resolveMapMaterialImageForSave(
+        viewer.id,
+        mapImageFile,
+        mapImageMode,
+        normalizedImageMeta,
+        existingMetadata?.image ?? null,
+        uploadedUrls
+      );
+      const metadata = buildMapMaterialMetadata(input, mapImage, mapGeoJson);
+      const name = metadata.name;
+      const description = metadata.description;
+
       const updatedMaterial = await tx.storyMaterial.update({
         where: {
           id: entry.material.id
@@ -1253,7 +1336,7 @@ export async function updateMapMaterial(materialId: string, input: MapMaterialCr
           titleEn: name,
           descriptionZh: description,
           descriptionEn: description,
-          previewUrl: null,
+          previewUrl: mapImage?.url ?? null,
           metadata,
           communityVisible: true
         }
@@ -1273,7 +1356,100 @@ export async function updateMapMaterial(materialId: string, input: MapMaterialCr
       librarySource: "SELF_CREATED"
     });
   } catch (error) {
+    await cleanupUploadedMapImages(uploadedUrls);
     throw normalizeMapMaterialPersistenceError(error, persistenceStage);
+  }
+}
+
+async function resolveMapMaterialImageForSave(
+  userId: string,
+  mapImageFile: File | null,
+  mapImageMode: MapMaterialImageMode,
+  mapImageMeta: Partial<WorkspaceMapMaterialImage>,
+  existingImage: WorkspaceMapMaterialImage | null,
+  uploadedUrls: string[]
+) {
+  if (mapImageMode === "clear") {
+    return null;
+  }
+
+  if (mapImageMode === "keep") {
+    if (!existingImage) {
+      return null;
+    }
+
+    if (
+      mapImageMeta.graphSignature &&
+      existingImage.graphSignature &&
+      mapImageMeta.graphSignature !== existingImage.graphSignature
+    ) {
+      return null;
+    }
+
+    return existingImage;
+  }
+
+  if (!mapImageFile || mapImageFile.size <= 0) {
+    throw new Error("INVALID_MAP_IMAGE_FILE");
+  }
+
+  const source = mapImageMeta.source === "generated" ? "generated" : "uploaded";
+  const url = await uploadMapImage(userId, mapImageFile, { allowOversize: source === "generated" });
+
+  uploadedUrls.push(url);
+
+  return {
+    edgeCount: mapImageMeta.edgeCount,
+    generatedAt: mapImageMeta.generatedAt ?? new Date().toISOString(),
+    graphSignature: mapImageMeta.graphSignature,
+    iterationCount: mapImageMeta.iterationCount,
+    nodeBatchSize: normalizeMapImageNodeBatchSize(mapImageMeta.nodeBatchSize),
+    nodeCount: mapImageMeta.nodeCount,
+    referencePrompt: mapImageMeta.referencePrompt,
+    source,
+    url
+  } satisfies WorkspaceMapMaterialImage;
+}
+
+function resolveMapMaterialImageMeta(meta: MapImageMetaInput | null, graphSignature: string): Partial<WorkspaceMapMaterialImage> {
+  if (!meta) {
+    return {
+      generatedAt: new Date().toISOString(),
+      graphSignature,
+      nodeBatchSize: normalizeMapImageNodeBatchSize(undefined),
+      source: "uploaded"
+    };
+  }
+
+  return {
+    edgeCount: normalizeMapMaterialImageCount(meta.edgeCount),
+    generatedAt: typeof meta.generatedAt === "string" && meta.generatedAt.trim() ? meta.generatedAt.trim() : new Date().toISOString(),
+    graphSignature: typeof meta.graphSignature === "string" && meta.graphSignature.trim() ? meta.graphSignature.trim() : graphSignature,
+    iterationCount: normalizeMapMaterialImageCount(meta.iterationCount),
+    nodeBatchSize: normalizeMapImageNodeBatchSize(meta.nodeBatchSize),
+    nodeCount: normalizeMapMaterialImageCount(meta.nodeCount),
+    referencePrompt: typeof meta.referencePrompt === "string" ? meta.referencePrompt.trim().slice(0, 2000) : "",
+    source: meta.source === "generated" ? "generated" : "uploaded"
+  };
+}
+
+function normalizeMapMaterialImageCount(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.max(0, Math.round(value));
+}
+
+async function cleanupUploadedMapImages(urls: string[]) {
+  if (urls.length === 0) {
+    return;
+  }
+
+  try {
+    await deleteMaterialImagesByUrls(urls);
+  } catch {
+    // Best-effort cleanup: preserve the original persistence failure for the UI.
   }
 }
 
@@ -1293,6 +1469,7 @@ function normalizeMapMaterialPersistenceError(error: unknown, stage: MapMaterial
     message.includes("MAP_EDGE_INVALID") ||
     message.includes("MAP_EDGE_RELATION_INVALID") ||
     message.includes("MAP_EDGE_DUPLICATE") ||
+    message.includes("INVALID_MAP_IMAGE_FILE") ||
     message.includes("MATERIAL_NOT_EDITABLE")
   ) {
     return error instanceof Error ? error : new Error(message);
@@ -1444,6 +1621,474 @@ export async function deriveMapGraphRound(
     message,
     patch
   };
+}
+
+export async function streamMapImage(
+  input: MapMaterialCreateInput,
+  locale: Locale,
+  onEvent: MapImageStreamHandler,
+  options: {
+    completedNodeIds?: string[];
+    nodeBatchSize?: unknown;
+    previousImage?: ScenePanoramaReferenceImage | null;
+    referenceImages?: ScenePanoramaReferenceImage[];
+    referencePrompt?: string;
+    resumeRound?: unknown;
+  } = {}
+) {
+  const viewer = await requireAuth();
+  const normalizedInput = buildMapMaterialMetadata(input);
+  const nodeBatchSize = normalizeMapImageNodeBatchSize(options.nodeBatchSize);
+  const batches = buildMapImageNodeBatches(normalizedInput, nodeBatchSize);
+  const totalRounds = batches.length;
+  const completedNodeIds = new Set((options.completedNodeIds ?? []).filter(Boolean));
+  const referenceImages = options.referenceImages ?? [];
+  const referencePrompt = typeof options.referencePrompt === "string" ? options.referencePrompt.trim().slice(0, 2000) : "";
+  const graphSignature = buildMapGraphSignature(normalizedInput);
+  let previousImage = options.previousImage ?? null;
+  let currentImage = previousImage ? mapImageReferenceToStreamImage(previousImage) : null;
+
+  if (normalizedInput.nodes.length === 0) {
+    throw new Error("MAP_IMAGE_NODE_REQUIRED");
+  }
+
+  const pendingIndex = getMapImagePendingBatchIndex(batches, completedNodeIds, options.resumeRound);
+
+  if (pendingIndex === -1) {
+    if (!currentImage) {
+      throw new Error("MAP_IMAGE_EMPTY");
+    }
+
+    const doneEvent = buildMapImageDoneEvent(currentImage, normalizedInput, graphSignature, nodeBatchSize, totalRounds, referencePrompt);
+    await onEvent(doneEvent);
+
+    return doneEvent;
+  }
+
+  for (let batchIndex = pendingIndex; batchIndex < batches.length; batchIndex += 1) {
+    const batch = batches[batchIndex];
+    const round = batch.index + 1;
+    const currentNodeIds = new Set(batch.nodes.map((node) => node.id));
+    const previousNodeIds = new Set(batch.completedNodeIds.filter((nodeId) => !currentNodeIds.has(nodeId)));
+    const relationSummary = buildMapImageRelationSummary(normalizedInput, batch, previousNodeIds, locale);
+    const prompt = buildMapImageRoundPrompt(
+      normalizedInput,
+      batch,
+      round,
+      totalRounds,
+      relationSummary,
+      referencePrompt,
+      Boolean(previousImage),
+      locale
+    );
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await onEvent({
+        type: "progress",
+        attempt,
+        messageKey: attempt === 1 ? "mapForm.imageProgressGenerating" : "mapForm.imageProgressRetrying",
+        progress: getMapImageRoundProgress(batchIndex, totalRounds, attempt),
+        relationSummary,
+        round,
+        stage: attempt === 1 ? "generating" : "retrying",
+        totalRounds
+      });
+
+      try {
+        const image = await generateDefaultMapImage(
+          prompt,
+          viewer.id,
+          {
+            feature: "map.image.generate",
+            input: {
+              batchIndex,
+              currentNodeIds: batch.nodes.map((node) => node.id),
+              draft: normalizedInput,
+              locale,
+              nodeBatchSize,
+              referenceImageCount: referenceImages.length,
+              referencePrompt,
+              round,
+              totalRounds
+            },
+            locale
+          },
+          {
+            referenceImages: previousImage ? [previousImage, ...referenceImages] : referenceImages
+          }
+        );
+
+        currentImage = image;
+        previousImage = mapImageStreamImageToReference(image);
+        batch.nodes.forEach((node) => completedNodeIds.add(node.id));
+
+        await onEvent({
+          type: "image",
+          completedNodeIds: Array.from(completedNodeIds),
+          image,
+          progress: getMapImageCompletedProgress(batchIndex, totalRounds),
+          relationSummary,
+          round,
+          totalRounds
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError) {
+      const pausedEvent: Extract<MapImageStreamEvent, { type: "paused" }> = {
+        type: "paused",
+        completedNodeIds: Array.from(completedNodeIds),
+        failedRound: round,
+        image: currentImage ?? undefined,
+        message: getErrorMessage(lastError),
+        progress: getMapImageRoundProgress(batchIndex, totalRounds, 3),
+        relationSummary,
+        round,
+        totalRounds
+      };
+
+      await onEvent(pausedEvent);
+
+      return pausedEvent;
+    }
+  }
+
+  if (!currentImage) {
+    throw new Error("MAP_IMAGE_EMPTY");
+  }
+
+  const doneEvent = buildMapImageDoneEvent(currentImage, normalizedInput, graphSignature, nodeBatchSize, totalRounds, referencePrompt);
+  await onEvent(doneEvent);
+
+  return doneEvent;
+}
+
+export async function prepareMapImageReferenceImages(files: File[]): Promise<ScenePanoramaReferenceImage[]> {
+  if (files.length > 3) {
+    throw new Error("INVALID_MAP_REFERENCE_IMAGE_FILE");
+  }
+
+  return Promise.all(
+    files.map(async (file) => {
+      if (!isValidMaterialImageFile(file)) {
+        throw new Error("INVALID_MAP_REFERENCE_IMAGE_FILE");
+      }
+
+      return {
+        bytes: Buffer.from(await file.arrayBuffer()),
+        contentType: file.type.toLowerCase(),
+        fileName: file.name || "map-reference.png"
+      };
+    })
+  );
+}
+
+export async function prepareMapImagePreviousImage(
+  file: File | null,
+  url: string | null,
+  origin: string,
+  options: { allowOversizeFile?: boolean } = {}
+): Promise<ScenePanoramaReferenceImage | null> {
+  if (file && file.size > 0) {
+    if (!isValidMaterialImageFile(file, { allowOversize: options.allowOversizeFile })) {
+      throw new Error("INVALID_MAP_IMAGE_FILE");
+    }
+
+    return {
+      bytes: Buffer.from(await file.arrayBuffer()),
+      contentType: file.type.toLowerCase(),
+      fileName: file.name || "map-image.png"
+    };
+  }
+
+  if (!url) {
+    return null;
+  }
+
+  await configureServerOutboundProxy();
+  const response = await fetch(resolveMaterialImageUrl(url, origin));
+
+  if (!response.ok) {
+    throw new Error("MAP_IMAGE_DOWNLOAD_FAILED");
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase().split(";")[0]?.trim() ?? "";
+  const bytes = Buffer.from(await response.arrayBuffer());
+
+  if (!contentType || !isValidMaterialImageBytesForPanorama(bytes, contentType)) {
+    throw new Error("INVALID_MAP_IMAGE_FILE");
+  }
+
+  return {
+    bytes,
+    contentType,
+    fileName: "map-image.png"
+  };
+}
+
+function getMapImagePendingBatchIndex(
+  batches: ReturnType<typeof buildMapImageNodeBatches>,
+  completedNodeIds: Set<string>,
+  resumeRound: unknown
+) {
+  const firstIncompleteIndex = batches.findIndex((batch) => batch.nodes.some((node) => !completedNodeIds.has(node.id)));
+
+  if (firstIncompleteIndex === -1) {
+    return -1;
+  }
+
+  const parsedResumeRound = typeof resumeRound === "number"
+    ? resumeRound
+    : typeof resumeRound === "string"
+      ? Number.parseInt(resumeRound, 10)
+      : NaN;
+
+  if (Number.isFinite(parsedResumeRound)) {
+    return Math.max(firstIncompleteIndex, Math.min(batches.length - 1, Math.max(0, Math.round(parsedResumeRound) - 1)));
+  }
+
+  return firstIncompleteIndex;
+}
+
+function buildMapImageDoneEvent(
+  image: MapImageStreamImage,
+  input: MapMaterialCreateInput,
+  graphSignature: string,
+  nodeBatchSize: number,
+  iterationCount: number,
+  referencePrompt: string
+): Extract<MapImageStreamEvent, { type: "done" }> {
+  return {
+    type: "done",
+    edgeCount: input.edges.length,
+    graphSignature,
+    image,
+    iterationCount,
+    nodeBatchSize,
+    nodeCount: input.nodes.length,
+    referencePrompt
+  };
+}
+
+function getMapImageRoundProgress(batchIndex: number, totalRounds: number, attempt: number) {
+  if (totalRounds <= 0) {
+    return 4;
+  }
+
+  const base = 4 + (batchIndex / totalRounds) * 90;
+  const attemptProgress = Math.min(6, Math.max(0, attempt - 1) * 2);
+
+  return Math.min(97, Math.round(base + attemptProgress));
+}
+
+function getMapImageCompletedProgress(batchIndex: number, totalRounds: number) {
+  if (totalRounds <= 0) {
+    return 100;
+  }
+
+  return Math.min(99, Math.round(4 + ((batchIndex + 1) / totalRounds) * 94));
+}
+
+function mapImageStreamImageToReference(image: MapImageStreamImage): ScenePanoramaReferenceImage {
+  const match = image.dataUrl.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+
+  if (!match) {
+    throw new Error("MAP_IMAGE_DATA_URL_INVALID");
+  }
+
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] ?? "";
+  const binary = isBase64 ? Buffer.from(payload, "base64") : Buffer.from(decodeURIComponent(payload));
+
+  return {
+    bytes: binary,
+    contentType: image.contentType || match[1] || "image/png",
+    fileName: image.fileName || "map-image.png"
+  };
+}
+
+function mapImageReferenceToStreamImage(image: ScenePanoramaReferenceImage): MapImageStreamImage {
+  return {
+    contentType: image.contentType,
+    dataUrl: `data:${image.contentType};base64,${image.bytes.toString("base64")}`,
+    fileName: image.fileName || "map-image.png"
+  };
+}
+
+function buildMapImageRoundPrompt(
+  input: MapMaterialCreateInput,
+  batch: ReturnType<typeof buildMapImageNodeBatches>[number],
+  round: number,
+  totalRounds: number,
+  relationSummary: string,
+  referencePrompt: string,
+  hasPreviousImage: boolean,
+  locale: Locale
+) {
+  const isEnglish = locale === "en-US";
+  const currentNodeIds = new Set(batch.nodes.map((node) => node.id));
+  const previousNodeIds = new Set(batch.completedNodeIds.filter((nodeId) => !currentNodeIds.has(nodeId)));
+  const previousInstruction = hasPreviousImage
+    ? isEnglish
+      ? "Use the previous round image as the main layout reference. Preserve its geography, coastline/terrain logic, style, labels, and composition, then add only the new nodes and relations from this round."
+      : "以上一轮成功图片作为主要布局参考。保留上一张图的地理结构、海岸/地形逻辑、风格、标签和构图，只增补本轮新增节点与关系。"
+    : isEnglish
+      ? "This is the first round. Establish the base map layout from the current batch."
+      : "这是第 1 轮，请根据本轮节点建立地图底图。";
+  const referenceInstruction = referencePrompt
+    ? isEnglish
+      ? `Reference image notes: ${referencePrompt}`
+      : `参考图片说明词：${referencePrompt}`
+    : isEnglish
+      ? "If reference images are provided, borrow their mood, palette, landform language, and map rendering style without copying UI, frames, watermarks, or unrelated artifacts."
+      : "如果提供了参考图，请参考其氛围、色彩、地貌语言和地图绘制风格，不要复制 UI、边框、水印或无关杂物。";
+
+  if (isEnglish) {
+    return [
+      `Create round ${round}/${totalRounds} of an iterative world map illustration for an interactive fiction map graph.`,
+      previousInstruction,
+      referenceInstruction,
+      "The image must stay readable as a map, not as a dashboard or graph UI. Draw geography, regions, routes, landmarks, and settlement symbols.",
+      "Keep node names as concise cartographic labels when useful, and show relation types through geography: containment, adjacency, routes, directional placement, and through-paths.",
+      "Do not add a progress ring, UI buttons, node graph circles, debug text, watermark, or generation notes into the image.",
+      `Map name: ${input.name || "Untitled map"}.`,
+      `Map description: ${input.description || "Unspecified"}.`,
+      `Visual style: ${getMapImageStylePrompt(input.style, locale)}.`,
+      `Round relation to previous image: ${relationSummary}`,
+      `Current batch nodes:\n${formatMapImageNodes(batch.nodes, locale)}`,
+      `Current batch relations:\n${formatMapImageEdges(batch.edges, input.nodes, locale)}`,
+      `Previously placed node ids: ${Array.from(previousNodeIds).join(", ") || "none"}.`
+    ].join("\n");
+  }
+
+  return [
+    `为交互小说地图图谱生成第 ${round}/${totalRounds} 轮世界地图插画。`,
+    previousInstruction,
+    referenceInstruction,
+    "画面必须像地图，而不是后台仪表盘或节点图 UI。请绘制地理、区域、路线、地标和聚落符号。",
+    "需要时可以把节点名称做成简短地图标签，并用地理方式表达包含、相邻、连通、方位和穿过等关系。",
+    "不要把进度环、UI 按钮、节点图圆点、调试文字、水印或生成说明画进图片。",
+    `地图名称：${input.name || "未命名地图"}。`,
+    `地图说明：${input.description || "未指定"}。`,
+    `视觉风格：${getMapImageStylePrompt(input.style, locale)}。`,
+    `本轮与上一张图的关系：${relationSummary}`,
+    `本轮节点：\n${formatMapImageNodes(batch.nodes, locale)}`,
+    `本轮关系：\n${formatMapImageEdges(batch.edges, input.nodes, locale)}`,
+    `上一轮已放入的节点 ID：${Array.from(previousNodeIds).join("、") || "无"}。`
+  ].join("\n");
+}
+
+function buildMapImageRelationSummary(
+  input: MapMaterialCreateInput,
+  batch: ReturnType<typeof buildMapImageNodeBatches>[number],
+  previousNodeIds: Set<string>,
+  locale: Locale
+) {
+  const isEnglish = locale === "en-US";
+  const nodeNameById = new Map(input.nodes.map((node) => [node.id, node.name || node.id]));
+  const currentNodeIds = new Set(batch.nodes.map((node) => node.id));
+  const bridgeEdges = batch.edges.filter((edge) =>
+    (currentNodeIds.has(edge.source) && previousNodeIds.has(edge.target)) ||
+    (currentNodeIds.has(edge.target) && previousNodeIds.has(edge.source))
+  );
+
+  if (bridgeEdges.length > 0) {
+    return bridgeEdges
+      .slice(0, 12)
+      .map((edge) => {
+        const source = nodeNameById.get(edge.source) ?? edge.source;
+        const target = nodeNameById.get(edge.target) ?? edge.target;
+        const relation = getMapImageRelationLabel(edge.relation, locale);
+        const note = edge.description ? (isEnglish ? `, note: ${edge.description}` : `，说明：${edge.description}`) : "";
+
+        return isEnglish
+          ? `${source} ${relation} ${target}${note}`
+          : `${source} ${relation} ${target}${note}`;
+      })
+      .join(isEnglish ? "; " : "；");
+  }
+
+  const nodeNames = batch.nodes.map((node) => node.name || node.id).join(isEnglish ? ", " : "、");
+
+  return isEnglish
+    ? `Add ${nodeNames || "this batch"} as a coherent new map area around the previous image while preserving the existing geography and visual language.`
+    : `将${nodeNames || "本轮节点"}作为上一张图周边或内部的连贯新增区域加入，并保持已有地理结构与视觉语言。`;
+}
+
+function formatMapImageNodes(nodes: WorkspaceMapMaterialNode[], locale: Locale) {
+  return nodes.length > 0
+    ? nodes.map((node) => {
+        const type = getMapImageNodeTypeLabel(node.type, locale);
+        const description = node.description ? ` - ${node.description}` : "";
+
+        return `- ${node.name || node.id} (${type}, id: ${node.id}, x: ${node.x}, y: ${node.y})${description}`;
+      }).join("\n")
+    : "- none";
+}
+
+function formatMapImageEdges(edges: WorkspaceMapMaterialEdge[], nodes: WorkspaceMapMaterialNode[], locale: Locale) {
+  const nodeNameById = new Map(nodes.map((node) => [node.id, node.name || node.id]));
+
+  return edges.length > 0
+    ? edges.map((edge) => {
+        const relation = getMapImageRelationLabel(edge.relation, locale);
+        const description = edge.description ? ` - ${edge.description}` : "";
+
+        return `- ${nodeNameById.get(edge.source) ?? edge.source} ${relation} ${nodeNameById.get(edge.target) ?? edge.target}${description}`;
+      }).join("\n")
+    : "- none";
+}
+
+function getMapImageNodeTypeLabel(type: WorkspaceMapMaterialNodeType, locale: Locale) {
+  const labels: Record<WorkspaceMapMaterialNodeType, { en: string; zh: string }> = {
+    city: { en: "city", zh: "城市" },
+    country: { en: "country", zh: "国家" },
+    landmark: { en: "landmark", zh: "地标" },
+    path: { en: "path or route", zh: "路径" },
+    region: { en: "region", zh: "区域" },
+    village: { en: "village", zh: "村落" }
+  };
+
+  return locale === "en-US" ? labels[type].en : labels[type].zh;
+}
+
+function getMapImageRelationLabel(relation: WorkspaceMapMaterialRelationType, locale: Locale) {
+  const labels: Record<WorkspaceMapMaterialRelationType, { en: string; zh: string }> = {
+    adjacent: { en: "is adjacent to", zh: "相邻" },
+    belongs_to: { en: "belongs to", zh: "归属" },
+    connects: { en: "connects to", zh: "连通" },
+    contains: { en: "contains", zh: "包含" },
+    east_of: { en: "is east of", zh: "在东侧" },
+    north_of: { en: "is north of", zh: "在北侧" },
+    south_of: { en: "is south of", zh: "在南侧" },
+    through: { en: "passes through", zh: "穿过" },
+    west_of: { en: "is west of", zh: "在西侧" }
+  };
+
+  return locale === "en-US" ? labels[relation].en : labels[relation].zh;
+}
+
+function getMapImageStylePrompt(style: WorkspaceMaterialStyle, locale: Locale) {
+  const labels: Record<WorkspaceMaterialStyle, { en: string; zh: string }> = {
+    apocalyptic: { en: "apocalyptic survival map, scarred terrain and weathered markings", zh: "末世废土地图，破败地貌与风化标记" },
+    classical: { en: "classical atlas engraving, restrained ink and parchment texture", zh: "古典地图雕版风，克制墨线与纸张质感" },
+    cyberpunk: { en: "cyberpunk cartography, neon infrastructure and dense urban zones", zh: "赛博朋克地图，霓虹基础设施与密集都市区" },
+    fantasy: { en: "fantasy atlas illustration with readable terrain and landmarks", zh: "奇幻地图册插画，地形与地标清晰可读" },
+    mystery: { en: "mysterious investigative map, subtle symbols and atmospheric terrain", zh: "神秘调查地图，符号克制、氛围地形明显" },
+    realistic: { en: "realistic illustrated atlas with plausible terrain", zh: "写实插画地图，地形可信" },
+    sciFi: { en: "science fiction atlas, layered districts and technical routes", zh: "科幻地图册，分层区域与技术路线清晰" }
+  };
+
+  return locale === "en-US" ? labels[style].en : labels[style].zh;
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function generateSceneBlockPanorama(

@@ -6,27 +6,39 @@ import type { EdgeLabelDrawingFunction, NodeHoverDrawingFunction, NodeLabelDrawi
 import {
   Check,
   ChevronDown,
+  CornerUpLeft,
+  Image as ImageIcon,
   Filter,
   Hand,
+  LocateFixed,
   Link2,
   Loader2,
+  Maximize2,
   Move,
   Network,
   Pencil,
   Plus,
+  RotateCcw,
   Sparkles,
   SquareDashedMousePointer,
   StopCircle,
   Trash2,
-  Wand2
+  Upload,
+  Wand2,
+  ZoomIn,
+  ZoomOut,
+  X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   MapCreateDraft,
+  WorkspaceMapGeoJsonFeature,
   WorkspaceMapMaterialNodeType,
   WorkspaceMapMaterialRelationType
 } from "@/lib/home-workspace";
 import { getMapGraphNodeBaseSize, layoutMapGraphNodes, mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
+import { ReferenceImageStrip } from "./reference-image-strip";
+import type { MapGeoJsonDraft, MapImageDraft, MapImageGenerationDraft, SceneReferenceImageDraft } from "./shared";
 
 export function MapGraphEditor({
   deriveMaxRounds = 3,
@@ -35,16 +47,31 @@ export function MapGraphEditor({
   deriveStatus = "",
   draft,
   embedded = false,
+  mapGeoJsonDraft = null,
+  mapImageDraft = null,
+  mapImageGeneration,
+  mapImageNodeBatchSize = 10,
+  mapImageReferenceImages = [],
+  mapImageReferencePrompt = "",
   connectSourceNodeId = "",
   readOnly = false,
   onAddNode,
+  onAddMapImageReferenceImages,
   onChangeDeriveMaxRounds,
+  onChangeMapImageNodeBatchSize,
+  onChangeMapImageReferencePrompt,
+  onClearMapImage,
   onConnectNode,
+  onContinueMapImage,
   onEditEdge,
   onEditNode,
+  onGenerateMapGeoJson,
+  onGenerateMapImage,
   onLayoutNodes,
   onRemoveEdge,
+  onRemoveMapImageReferenceImage,
   onRemoveNode,
+  onSelectMapFinalImage,
   selectedEdgeId,
   selectedNodeId,
   onStartDerive,
@@ -63,16 +90,31 @@ export function MapGraphEditor({
   deriveStatus?: string;
   draft: MapCreateDraft;
   embedded?: boolean;
+  mapGeoJsonDraft?: MapGeoJsonDraft | null;
+  mapImageDraft?: MapImageDraft | null;
+  mapImageGeneration?: MapImageGenerationDraft;
+  mapImageNodeBatchSize?: number;
+  mapImageReferenceImages?: SceneReferenceImageDraft[];
+  mapImageReferencePrompt?: string;
   connectSourceNodeId?: string;
   readOnly?: boolean;
   onAddNode?: () => void;
+  onAddMapImageReferenceImages?: (files: FileList | File[]) => void;
   onChangeDeriveMaxRounds?: (value: number) => void;
+  onChangeMapImageNodeBatchSize?: (value: number) => void;
+  onChangeMapImageReferencePrompt?: (value: string) => void;
+  onClearMapImage?: () => void;
   onConnectNode?: (nodeId: string) => void;
+  onContinueMapImage?: () => void;
   onEditEdge?: (edgeId: string) => void;
   onEditNode?: (nodeId: string) => void;
+  onGenerateMapGeoJson?: () => void;
+  onGenerateMapImage?: () => void;
   onLayoutNodes?: (updates: Array<{ id: string; x: number; y: number }>) => void;
   onRemoveEdge?: (edgeId: string) => void;
+  onRemoveMapImageReferenceImage?: (imageId: string) => void;
   onRemoveNode?: (nodeId: string) => void;
+  onSelectMapFinalImage?: (file: File | null) => void;
   selectedEdgeId: string;
   selectedNodeId: string;
   onStartDerive?: () => void;
@@ -96,6 +138,7 @@ export function MapGraphEditor({
   const [failureReason, setFailureReason] = useState<"webgl" | "init" | null>(null);
   const [canvasDragMode, setCanvasDragMode] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [visibleNodeTypes, setVisibleNodeTypes] = useState<WorkspaceMapMaterialNodeType[]>(() => [...mapNodeTypes]);
   const [visibleRelationTypes, setVisibleRelationTypes] = useState<WorkspaceMapMaterialRelationType[]>(() => [...mapRelationTypes]);
   const [graphTheme, setGraphTheme] = useState<"light" | "dark">(() => getMapGraphThemeMode());
@@ -108,6 +151,7 @@ export function MapGraphEditor({
   });
   const toolbarRef = useRef<HTMLDivElement>(null);
   const filterPanelRef = useRef<HTMLDivElement>(null);
+  const finalImageInputRef = useRef<HTMLInputElement>(null);
   const formatFrameRef = useRef(0);
 
   useEffect(() => {
@@ -502,6 +546,8 @@ export function MapGraphEditor({
   const showDeriveControls = draft.nodes.length >= 1 && Boolean(onStartDerive || onStopDerive || onChangeDeriveMaxRounds);
   const showLeftToolbar = showEditControls || showDeriveControls;
   const showToolbar = !readOnly && (showEditControls || showDeriveControls || Boolean(onLayoutNodes) || draft.nodes.length > 0 || draft.edges.length > 0);
+  const mapImageState = mapImageGeneration ?? createEmptyMapImageGenerationDraft();
+  const showMapImageControls = Boolean(onGenerateMapImage || onSelectMapFinalImage);
 
   useEffect(() => {
     return () => {
@@ -798,6 +844,234 @@ export function MapGraphEditor({
             </div>
           ) : null}
 
+          {showMapImageControls ? (
+            <div className="absolute right-4 top-16 z-20 w-[min(22rem,calc(100%-2rem))] rounded-lg border border-border bg-background/96 shadow-xl shadow-foreground/12 backdrop-blur">
+              <div className="flex items-start justify-between gap-3 border-b border-border/70 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-foreground/78">{t("mapForm.imageTitle")}</p>
+                  <p className="mt-0.5 truncate text-xs text-foreground/46">{t("mapForm.imageSubtitle")}</p>
+                </div>
+                {mapImageDraft?.stale ? (
+                  <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                    {t("mapForm.imageStale")}
+                  </span>
+                ) : mapImageDraft?.source ? (
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground/52">
+                    {t(`mapForm.imageSource.${mapImageDraft.source}`)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="space-y-3 p-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (mapImageDraft?.previewUrl) {
+                      setImagePreviewOpen(true);
+                    }
+                  }}
+                  disabled={!mapImageDraft?.previewUrl}
+                  className="group relative aspect-video w-full overflow-hidden rounded-md border border-border bg-muted/25 text-left transition hover:border-primary/45 disabled:cursor-default disabled:hover:border-border"
+                  aria-label={mapImageDraft?.previewUrl ? t("mapForm.imagePreviewOpen") : t("mapForm.imageEmpty")}
+                >
+                  {mapImageDraft?.previewUrl ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={mapImageDraft.previewUrl} alt={t("mapForm.imagePreviewAlt")} className="h-full w-full object-cover" />
+                      <span className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-background/86 text-foreground/70 opacity-0 shadow-sm transition group-hover:opacity-100">
+                        <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                    </>
+                  ) : (
+                    <span className="flex h-full flex-col items-center justify-center px-5 text-center text-xs leading-5 text-foreground/42">
+                      <ImageIcon className="mb-2 h-6 w-6 text-foreground/32" aria-hidden="true" />
+                      {t("mapForm.imageEmpty")}
+                    </span>
+                  )}
+                  {(mapImageState.pending || mapImageState.progress > 0) ? (
+                    <span className="absolute left-2 top-2">
+                      <MapImageProgressRing progress={mapImageState.pending ? mapImageState.progress : mapImageState.progress || 100} />
+                    </span>
+                  ) : null}
+                </button>
+
+                {mapImageDraft?.outlinePreviewUrl || mapImageDraft?.outlinePending || mapImageDraft?.outlineError ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs text-foreground/55">
+                      <span>{t("mapForm.imageOutlineTitle")}</span>
+                      {mapImageDraft.outlinePending ? (
+                        <span className="inline-flex items-center gap-1 text-foreground/42">
+                          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          {t("mapForm.imageOutlinePending")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="aspect-video w-full overflow-hidden rounded-md border border-border bg-white">
+                      {mapImageDraft.outlinePreviewUrl ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={mapImageDraft.outlinePreviewUrl} alt={t("mapForm.imageOutlineAlt")} className="h-full w-full object-cover" />
+                        </>
+                      ) : (
+                        <div className="flex h-full items-center justify-center px-4 text-center text-xs leading-5 text-foreground/42">
+                          {mapImageDraft.outlineError ? t("mapForm.imageOutlineFailed") : t("mapForm.imageOutlinePending")}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="space-y-2 rounded-md border border-border bg-background/70 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-foreground/68">{t("mapForm.geoJsonTitle")}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-foreground/42">
+                        {mapGeoJsonDraft?.stale
+                          ? t("mapForm.geoJsonStale")
+                          : mapGeoJsonDraft?.data
+                            ? t("mapForm.geoJsonFeatureCount", { count: mapGeoJsonDraft.data.features.length })
+                            : t("mapForm.geoJsonEmpty")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onGenerateMapGeoJson}
+                      disabled={mapGeoJsonDraft?.pending || mapImageState.pending || !onGenerateMapGeoJson}
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground/68 transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {mapGeoJsonDraft?.pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                      {mapGeoJsonDraft?.data ? t("mapForm.geoJsonRegenerate") : t("mapForm.geoJsonGenerate")}
+                    </button>
+                  </div>
+
+                  {mapGeoJsonDraft?.data ? (
+                    <MapGeoJsonPreview geojson={mapGeoJsonDraft} t={t} />
+                  ) : mapGeoJsonDraft?.pending ? (
+                    <div className="flex aspect-video items-center justify-center rounded-md border border-dashed border-border bg-muted/20 text-xs text-foreground/42">
+                      {t("mapForm.geoJsonGenerating")}
+                    </div>
+                  ) : mapGeoJsonDraft?.error ? (
+                    <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs leading-5 text-rose-700">
+                      {t("mapForm.geoJsonGenerateFailed")}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground/60">
+                    <span className="shrink-0">{t("mapForm.imageBatchSize")}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={mapImageNodeBatchSize}
+                      disabled={mapImageState.pending}
+                      onChange={(event) => onChangeMapImageNodeBatchSize?.(clampMapImageNodeBatchSize(Number.parseInt(event.target.value, 10)))}
+                      aria-label={t("mapForm.imageBatchSize")}
+                      className="h-6 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-center text-sm font-semibold text-foreground outline-none transition focus:border-primary disabled:bg-muted/50 disabled:text-foreground/44"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => finalImageInputRef.current?.click()}
+                    disabled={mapImageState.pending || !onSelectMapFinalImage}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-foreground/70 transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t("mapForm.imageUploadFinal")}
+                  </button>
+                  <input
+                    ref={finalImageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    aria-label={t("mapForm.imageUploadFinal")}
+                    onChange={(event) => {
+                      onSelectMapFinalImage?.(event.target.files?.[0] ?? null);
+                      event.target.value = "";
+                    }}
+                  />
+                </div>
+
+                <ReferenceImageStrip
+                  addLabel={t("mapForm.imageReferenceAdd")}
+                  emptyLabel={t("mapForm.imageReferenceEmpty")}
+                  images={mapImageReferenceImages}
+                  isDisabled={mapImageState.pending}
+                  removeLabel={t("mapForm.imageReferenceRemove")}
+                  title={t("mapForm.imageReferenceImages")}
+                  onAddImages={(files) => onAddMapImageReferenceImages?.(files)}
+                  onRemoveImage={(imageId) => onRemoveMapImageReferenceImage?.(imageId)}
+                />
+
+                <label className="block space-y-1.5 text-xs text-foreground/60">
+                  <span>{t("mapForm.imageReferencePrompt")}</span>
+                  <textarea
+                    value={mapImageReferencePrompt}
+                    onChange={(event) => onChangeMapImageReferencePrompt?.(event.target.value)}
+                    disabled={mapImageState.pending}
+                    rows={2}
+                    placeholder={t("mapForm.imageReferencePromptPlaceholder")}
+                    className="min-h-16 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-xs leading-5 text-foreground outline-none transition placeholder:text-foreground/36 focus:border-primary disabled:bg-muted/50"
+                  />
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={mapImageState.paused && !mapImageDraft?.stale ? onContinueMapImage : onGenerateMapImage}
+                    disabled={mapImageState.pending || (!onGenerateMapImage && !onContinueMapImage)}
+                    className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/42"
+                  >
+                    {mapImageState.pending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : mapImageState.paused && !mapImageDraft?.stale ? (
+                      <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    {mapImageState.paused && !mapImageDraft?.stale
+                      ? t("mapForm.imageContinue")
+                      : mapImageDraft?.previewUrl
+                        ? t("mapForm.imageRegenerate")
+                        : t("mapForm.imageGenerate")}
+                  </button>
+                  {mapImageDraft?.previewUrl ? (
+                    <button
+                      type="button"
+                      onClick={onClearMapImage}
+                      disabled={mapImageState.pending || !onClearMapImage}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-foreground/64 transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t("mapForm.imageRemove")}
+                    </button>
+                  ) : null}
+                </div>
+                {mapImageState.paused ? (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-5 text-amber-700">
+                    {t("mapForm.imagePausedHint", { round: mapImageState.failedRound || mapImageState.round || 1 })}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {imagePreviewOpen && mapImageDraft?.previewUrl ? (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-black/72 p-4" role="dialog" aria-modal="true" aria-label={t("mapForm.imagePreviewAlt")}>
+              <button
+                type="button"
+                onClick={() => setImagePreviewOpen(false)}
+                className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-background/90 text-foreground shadow-lg transition hover:bg-background"
+                aria-label={t("mapForm.imagePreviewClose")}
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={mapImageDraft.previewUrl} alt={t("mapForm.imagePreviewAlt")} className="max-h-[86vh] max-w-[92vw] rounded-lg object-contain shadow-2xl" />
+            </div>
+          ) : null}
+
           {!readOnly && showSelectionPanel && (selectedNode || selectedEdge) ? (
             <div className="absolute bottom-4 left-4 z-20 max-h-[26rem] max-w-[22rem] overflow-hidden rounded-2xl bg-background/96 p-3 shadow-lg shadow-foreground/12 ring-1 ring-border/55 backdrop-blur">
               {selectedNode ? (
@@ -1029,6 +1303,282 @@ export function MapGraphEditor({
         </div>
       </div>
     </section>
+  );
+}
+
+function createEmptyMapImageGenerationDraft(): MapImageGenerationDraft {
+  return {
+    completedNodeIds: [],
+    error: null,
+    failedRound: 0,
+    paused: false,
+    pending: false,
+    progress: 0,
+    relationSummary: "",
+    round: 0,
+    totalRounds: 0
+  };
+}
+
+function MapImageProgressRing({ progress }: { progress: number }) {
+  const normalizedProgress = Math.min(100, Math.max(0, Math.round(Number.isFinite(progress) ? progress : 0)));
+
+  return (
+    <span
+      className="grid h-12 w-12 place-items-center rounded-full p-1 shadow-lg shadow-foreground/12"
+      style={{
+        background: `conic-gradient(hsl(var(--primary)) ${normalizedProgress * 3.6}deg, hsl(var(--muted)) 0deg)`
+      }}
+      role="progressbar"
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={normalizedProgress}
+    >
+      <span className="grid h-full w-full place-items-center rounded-full bg-background/92 text-[0.65rem] font-semibold text-foreground">
+        {normalizedProgress}%
+      </span>
+    </span>
+  );
+}
+
+function MapGeoJsonPreview({
+  geojson,
+  t
+}: {
+  geojson: MapGeoJsonDraft;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  const [selectedFeatureId, setSelectedFeatureId] = useState("");
+  const [drillStack, setDrillStack] = useState<string[]>([]);
+  const bbox = getGeoJsonSvgBbox(geojson.data.bbox);
+  const activeNodeId = drillStack.at(-1) ?? "";
+  const childNodeIds = useMemo(() => {
+    if (!activeNodeId) {
+      return new Set<string>();
+    }
+
+    return new Set(
+      geojson.data.features
+        .filter((feature) => feature.properties.parentId === activeNodeId && feature.properties.nodeId)
+        .map((feature) => feature.properties.nodeId as string)
+    );
+  }, [activeNodeId, geojson.data.features]);
+  const visibleFeatures = useMemo(() => {
+    if (!activeNodeId) {
+      return geojson.data.features;
+    }
+
+    return geojson.data.features.filter((feature) => {
+      const nodeId = feature.properties.nodeId;
+
+      if (nodeId === activeNodeId || feature.properties.parentId === activeNodeId) {
+        return true;
+      }
+
+      return Boolean(
+        feature.properties.sourceNodeId &&
+          feature.properties.targetNodeId &&
+          (childNodeIds.has(feature.properties.sourceNodeId) || childNodeIds.has(feature.properties.targetNodeId))
+      );
+    });
+  }, [activeNodeId, childNodeIds, geojson.data.features]);
+  const selectedFeature = geojson.data.features.find((feature) => feature.id === selectedFeatureId) ?? null;
+  const canDrill = Boolean(selectedFeature?.properties.nodeId && geojson.data.features.some((feature) => feature.properties.parentId === selectedFeature.properties.nodeId));
+  const scaleLabel = getGeoJsonScaleBarLabel(geojson, view.scale);
+
+  function updateScale(nextScale: number) {
+    setView((current) => ({
+      ...current,
+      scale: Math.min(8, Math.max(0.6, nextScale))
+    }));
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="relative aspect-video overflow-hidden rounded-md border border-border bg-[#f8faf7]">
+        <svg
+          ref={svgRef}
+          className="h-full w-full touch-none"
+          role="img"
+          aria-label={t("mapForm.geoJsonPreview")}
+          viewBox={`${bbox.x} ${bbox.y} ${bbox.width} ${bbox.height}`}
+          onPointerDown={(event) => {
+            dragRef.current = { x: event.clientX, y: event.clientY };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!dragRef.current || !svgRef.current) {
+              return;
+            }
+
+            const rect = svgRef.current.getBoundingClientRect();
+            const dx = ((event.clientX - dragRef.current.x) / Math.max(1, rect.width)) * bbox.width / view.scale;
+            const dy = ((event.clientY - dragRef.current.y) / Math.max(1, rect.height)) * bbox.height / view.scale;
+
+            dragRef.current = { x: event.clientX, y: event.clientY };
+            setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
+          }}
+          onPointerUp={(event) => {
+            dragRef.current = null;
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onWheel={(event) => {
+            event.preventDefault();
+            updateScale(view.scale * (event.deltaY > 0 ? 0.9 : 1.12));
+          }}
+        >
+          <rect x={bbox.x} y={bbox.y} width={bbox.width} height={bbox.height} fill="#f8faf7" />
+          <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
+            {visibleFeatures.map((feature) => (
+              <GeoJsonFeatureShape
+                key={feature.id}
+                feature={feature}
+                isSelected={feature.id === selectedFeatureId}
+                onSelect={() => setSelectedFeatureId(feature.id)}
+              />
+            ))}
+          </g>
+        </svg>
+
+        <div className="absolute right-2 top-2 flex items-center gap-1">
+          <button type="button" className="grid h-7 w-7 place-items-center rounded-md bg-background/90 text-foreground/68 shadow-sm hover:bg-background" aria-label={t("mapForm.geoJsonZoomIn")} onClick={() => updateScale(view.scale * 1.18)}>
+            <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+          <button type="button" className="grid h-7 w-7 place-items-center rounded-md bg-background/90 text-foreground/68 shadow-sm hover:bg-background" aria-label={t("mapForm.geoJsonZoomOut")} onClick={() => updateScale(view.scale * 0.84)}>
+            <ZoomOut className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+          <button type="button" className="grid h-7 w-7 place-items-center rounded-md bg-background/90 text-foreground/68 shadow-sm hover:bg-background" aria-label={t("mapForm.geoJsonResetView")} onClick={() => setView({ scale: 1, x: 0, y: 0 })}>
+            <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="absolute bottom-2 left-2 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium text-foreground/68 shadow-sm">
+          <div className="h-1 w-24 rounded-full bg-foreground/70" />
+          <div className="mt-1 flex justify-between gap-4">
+            <span>0</span>
+            <span>{scaleLabel}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <div className="min-w-0 text-foreground/54">
+          {selectedFeature ? (
+            <span className="block truncate">{selectedFeature.properties.name}</span>
+          ) : (
+            <span className="block truncate">{t("mapForm.geoJsonPreview")}</span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {drillStack.length > 0 ? (
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground/62 hover:bg-muted"
+              onClick={() => {
+                setDrillStack((current) => current.slice(0, -1));
+                setSelectedFeatureId("");
+              }}
+            >
+              <CornerUpLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("mapForm.geoJsonDrillUp")}
+            </button>
+          ) : null}
+          {canDrill ? (
+            <button
+              type="button"
+              className="inline-flex h-7 items-center rounded-md bg-primary px-2 text-[11px] font-medium text-white hover:bg-primary/90"
+              onClick={() => {
+                if (selectedFeature?.properties.nodeId) {
+                  setDrillStack((current) => [...current, selectedFeature.properties.nodeId as string]);
+                  setSelectedFeatureId("");
+                  setView({ scale: 1.4, x: 0, y: 0 });
+                }
+              }}
+            >
+              {t("mapForm.geoJsonDrillDown")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeoJsonFeatureShape({
+  feature,
+  isSelected,
+  onSelect
+}: {
+  feature: WorkspaceMapGeoJsonFeature;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const color = getGeoJsonFeatureColor(feature);
+
+  if (feature.geometry.type === "Polygon") {
+    return (
+      <polygon
+        points={feature.geometry.coordinates[0].map(([x, y]) => `${x},${-y}`).join(" ")}
+        fill={color.fill}
+        stroke={isSelected ? "#0f172a" : color.stroke}
+        strokeWidth={isSelected ? 2.4 : 1.2}
+        vectorEffect="non-scaling-stroke"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+      />
+    );
+  }
+
+  if (feature.geometry.type === "LineString") {
+    return (
+      <polyline
+        points={feature.geometry.coordinates.map(([x, y]) => `${x},${-y}`).join(" ")}
+        fill="none"
+        stroke={isSelected ? "#0f172a" : color.stroke}
+        strokeDasharray={feature.properties.relationType === "connects" ? "4 3" : undefined}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={isSelected ? 2.8 : 1.5}
+        vectorEffect="non-scaling-stroke"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+      />
+    );
+  }
+
+  return (
+    <g
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <circle
+        cx={feature.geometry.coordinates[0]}
+        cy={-feature.geometry.coordinates[1]}
+        r={isSelected ? 4.8 : 3.6}
+        fill={isSelected ? "#0f172a" : color.stroke}
+        vectorEffect="non-scaling-stroke"
+      />
+      <text
+        x={feature.geometry.coordinates[0] + 5}
+        y={-feature.geometry.coordinates[1] - 4}
+        className="fill-slate-700 text-[10px] font-medium"
+        paintOrder="stroke"
+        stroke="#f8faf7"
+        strokeWidth={3}
+        vectorEffect="non-scaling-stroke"
+      >
+        {feature.properties.name}
+      </text>
+    </g>
   );
 }
 
@@ -1385,11 +1935,14 @@ function createMapNodeLabelDrawer(theme: "light" | "dark"): NodeLabelDrawingFunc
     const highlighted = Boolean((data as { highlighted?: boolean }).highlighted);
     const fontSize = Math.max(12, settings.labelSize + (highlighted ? 1 : 0));
     const labelColors = getReadableGraphLabelColors(theme);
+    const labelGap = Math.max(7, fontSize * 0.45);
+    const labelY = data.y - data.size - labelGap - fontSize / 2;
 
-    drawMapGraphLabel(context, label, data.x, data.y, {
+    drawMapGraphLabel(context, label, data.x, labelY, {
       align: "center",
       fill: labelColors.fill,
       font: settings.labelFont,
+      halo: labelColors.halo,
       size: fontSize,
       weight: highlighted ? "700" : settings.labelWeight
     });
@@ -1416,6 +1969,7 @@ function createMapEdgeLabelDrawer(theme: "light" | "dark"): EdgeLabelDrawingFunc
       align: "center",
       fill: labelColors.fill,
       font: settings.edgeLabelFont,
+      halo: labelColors.halo,
       size: fontSize,
       weight: highlighted ? "700" : settings.edgeLabelWeight
     });
@@ -1431,6 +1985,7 @@ function drawMapGraphLabel(
     align: CanvasTextAlign;
     fill: string;
     font: string;
+    halo: string;
     size: number;
     weight: string;
   }
@@ -1439,6 +1994,11 @@ function drawMapGraphLabel(
   context.font = `${options.weight} ${options.size}px ${options.font}`;
   context.textAlign = options.align;
   context.textBaseline = "middle";
+  context.lineJoin = "round";
+  context.miterLimit = 2;
+  context.lineWidth = Math.max(3, options.size * 0.34);
+  context.strokeStyle = options.halo;
+  context.strokeText(label, x, y);
   context.fillStyle = options.fill;
   context.fillText(label, x, y);
   context.restore();
@@ -1446,7 +2006,8 @@ function drawMapGraphLabel(
 
 function getReadableGraphLabelColors(theme: "light" | "dark") {
   return {
-    fill: theme === "dark" ? "#F8FAFC" : "#0F172A"
+    fill: theme === "dark" ? "#F8FAFC" : "#0F172A",
+    halo: theme === "dark" ? "rgba(2, 6, 23, 0.78)" : "rgba(255, 255, 255, 0.82)"
   };
 }
 
@@ -1474,4 +2035,62 @@ function clampMapDeriveMaxRounds(value: number) {
   }
 
   return Math.min(20, Math.max(1, Math.round(value)));
+}
+
+function clampMapImageNodeBatchSize(value: number) {
+  if (!Number.isFinite(value)) {
+    return 10;
+  }
+
+  return Math.min(100, Math.max(1, Math.round(value)));
+}
+
+function getGeoJsonSvgBbox(bbox: [number, number, number, number]) {
+  const [minX, minY, maxX, maxY] = bbox;
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const padding = Math.max(width, height) * 0.03;
+
+  return {
+    height: height + padding * 2,
+    width: width + padding * 2,
+    x: minX - padding,
+    y: -maxY - padding
+  };
+}
+
+function getGeoJsonFeatureColor(feature: WorkspaceMapGeoJsonFeature) {
+  if (feature.properties.featureKind === "relation") {
+    return { fill: "none", stroke: "#64748b" };
+  }
+
+  if (feature.properties.featureKind === "place") {
+    return { fill: "#0f172a", stroke: "#334155" };
+  }
+
+  const colors: Partial<Record<WorkspaceMapMaterialNodeType, { fill: string; stroke: string }>> = {
+    city: { fill: "#dbeafe", stroke: "#2563eb" },
+    country: { fill: "#dcfce7", stroke: "#16a34a" },
+    landmark: { fill: "#fef3c7", stroke: "#d97706" },
+    region: { fill: "#f5e8ff", stroke: "#9333ea" },
+    village: { fill: "#ffe4e6", stroke: "#e11d48" }
+  };
+
+  return colors[feature.properties.nodeType ?? "landmark"] ?? { fill: "#e2e8f0", stroke: "#475569" };
+}
+
+function getGeoJsonScaleBarLabel(geojson: MapGeoJsonDraft, scale: number) {
+  const rawKm = Math.max(1, (geojson.scale.widthKm * 0.24) / Math.max(0.6, scale));
+  const niceKm = getNiceScaleDistance(rawKm);
+
+  return `${niceKm} km`;
+}
+
+function getNiceScaleDistance(value: number) {
+  const exponent = Math.floor(Math.log10(value));
+  const base = 10 ** exponent;
+  const normalized = value / base;
+  const multiplier = normalized >= 5 ? 5 : normalized >= 2 ? 2 : 1;
+
+  return Math.round(multiplier * base);
 }

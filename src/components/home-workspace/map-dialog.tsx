@@ -7,7 +7,7 @@ import type { MapCreateDraft, WorkspaceMapMaterialNodeType, WorkspaceMapMaterial
 import { mapNodeTypes, mapRelationTypes } from "@/lib/home-workspace/map";
 import { MaterialVisibilityField } from "./form-fields";
 import { MapGraphEditor } from "./map-graph-editor";
-import type { MapAiMessage } from "./shared";
+import type { MapAiMessage, MapGeoJsonDraft, MapImageDraft, MapImageGenerationDraft, SceneReferenceImageDraft } from "./shared";
 
 type MapNodeFormValue = {
   type: WorkspaceMapMaterialNodeType;
@@ -153,6 +153,12 @@ export function MapGraphDialog({
   deriveRound,
   deriveStatus,
   isPending,
+  mapGeoJsonDraft,
+  mapImageDraft,
+  mapImageGeneration,
+  mapImageNodeBatchSize,
+  mapImageReferenceImages,
+  mapImageReferencePrompt,
   saveLabel,
   selectedEdgeId,
   selectedNodeId,
@@ -161,6 +167,9 @@ export function MapGraphDialog({
   onCancel,
   onChangeAiInput,
   onChangeDeriveMaxRounds,
+  onChangeMapImageNodeBatchSize,
+  onChangeMapImageReferencePrompt,
+  onClearMapImage,
   onConnectNode,
   onEditEdge,
   onEditBasicInfo,
@@ -172,6 +181,12 @@ export function MapGraphDialog({
   onSelectEdge,
   onSelectNode,
   onSendAiMessage,
+  onAddMapImageReferenceImages,
+  onGenerateMapGeoJson,
+  onGenerateMapImage,
+  onContinueMapImage,
+  onRemoveMapImageReferenceImage,
+  onSelectMapFinalImage,
   onStartDerive,
   onStopDerive,
   onSubmit,
@@ -188,6 +203,12 @@ export function MapGraphDialog({
   deriveRound: number;
   deriveStatus: string;
   isPending: boolean;
+  mapGeoJsonDraft: MapGeoJsonDraft | null;
+  mapImageDraft: MapImageDraft | null;
+  mapImageGeneration: MapImageGenerationDraft;
+  mapImageNodeBatchSize: number;
+  mapImageReferenceImages: SceneReferenceImageDraft[];
+  mapImageReferencePrompt: string;
   saveLabel: string;
   selectedEdgeId: string;
   selectedNodeId: string;
@@ -196,6 +217,9 @@ export function MapGraphDialog({
   onCancel: () => void;
   onChangeAiInput: (value: string) => void;
   onChangeDeriveMaxRounds: (value: number) => void;
+  onChangeMapImageNodeBatchSize: (value: number) => void;
+  onChangeMapImageReferencePrompt: (value: string) => void;
+  onClearMapImage: () => void;
   onConnectNode: (nodeId: string) => void;
   onEditEdge: (edgeId: string) => void;
   onEditBasicInfo: () => void;
@@ -207,6 +231,12 @@ export function MapGraphDialog({
   onSelectEdge: (edgeId: string) => void;
   onSelectNode: (nodeId: string) => void;
   onSendAiMessage: () => void;
+  onAddMapImageReferenceImages: (files: FileList | File[]) => void;
+  onGenerateMapGeoJson: () => void;
+  onGenerateMapImage: () => void;
+  onContinueMapImage: () => void;
+  onRemoveMapImageReferenceImage: (imageId: string) => void;
+  onSelectMapFinalImage: (file: File | null) => void;
   onStartDerive: () => void;
   onStopDerive: () => void;
   onSubmit: () => void;
@@ -234,15 +264,30 @@ export function MapGraphDialog({
             deriveStatus={deriveStatus}
             draft={draft}
             embedded
+            mapGeoJsonDraft={mapGeoJsonDraft}
+            mapImageDraft={mapImageDraft}
+            mapImageGeneration={mapImageGeneration}
+            mapImageNodeBatchSize={mapImageNodeBatchSize}
+            mapImageReferenceImages={mapImageReferenceImages}
+            mapImageReferencePrompt={mapImageReferencePrompt}
             onAddNode={onAddNode}
+            onAddMapImageReferenceImages={onAddMapImageReferenceImages}
             onChangeDeriveMaxRounds={onChangeDeriveMaxRounds}
+            onChangeMapImageNodeBatchSize={onChangeMapImageNodeBatchSize}
+            onChangeMapImageReferencePrompt={onChangeMapImageReferencePrompt}
+            onClearMapImage={onClearMapImage}
             onConnectNode={onConnectNode}
+            onContinueMapImage={onContinueMapImage}
             onEditEdge={onEditEdge}
             onEditNode={onEditNode}
+            onGenerateMapGeoJson={onGenerateMapGeoJson}
+            onGenerateMapImage={onGenerateMapImage}
             onLayoutNodes={onLayoutNodes}
             onMoveNode={onMoveNode}
+            onRemoveMapImageReferenceImage={onRemoveMapImageReferenceImage}
             onRemoveEdge={onRemoveEdge}
             onRemoveNode={onRemoveNode}
+            onSelectMapFinalImage={onSelectMapFinalImage}
             onSelectEdge={onSelectEdge}
             onSelectNode={onSelectNode}
             onStartDerive={onStartDerive}

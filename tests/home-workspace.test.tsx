@@ -353,6 +353,163 @@ describe("HomeWorkspace script manager", () => {
     expect(onStopDerive).not.toHaveBeenCalled();
   });
 
+  it("shows map image controls for generated and manual final images", () => {
+    const onChangeMapImageNodeBatchSize = vi.fn();
+    const onChangeMapImageReferencePrompt = vi.fn();
+    const onClearMapImage = vi.fn();
+    const onGenerateMapImage = vi.fn();
+    const onGenerateMapGeoJson = vi.fn();
+    const onSelectMapFinalImage = vi.fn();
+
+    render(
+      <MapGraphEditor
+        draft={{
+          name: "图像地图",
+          description: "用于测试最终地图图像入口",
+          communityVisible: true,
+          style: "realistic",
+          nodes: [
+            {
+              id: "node-country",
+              name: "王国",
+              description: "",
+              type: "country",
+              x: 0,
+              y: 0
+            }
+          ],
+          edges: []
+        }}
+        mapGeoJsonDraft={{
+          data: {
+            bbox: [-100, -60, 100, 60],
+            features: [
+              {
+                type: "Feature",
+                id: "area-node-country",
+                geometry: {
+                  type: "Polygon",
+                  coordinates: [[[-80, -40], [80, -40], [80, 40], [-80, 40], [-80, -40]]]
+                },
+                properties: {
+                  featureKind: "area",
+                  id: "area-node-country",
+                  level: 0,
+                  name: "王国",
+                  nodeId: "node-country",
+                  nodeType: "country"
+                }
+              },
+              {
+                type: "Feature",
+                id: "place-node-city",
+                geometry: {
+                  type: "Point",
+                  coordinates: [0, 0]
+                },
+                properties: {
+                  featureKind: "place",
+                  id: "place-node-city",
+                  level: 3,
+                  name: "王城",
+                  nodeId: "node-city",
+                  nodeType: "city",
+                  parentId: "node-country"
+                }
+              }
+            ],
+            type: "FeatureCollection"
+          },
+          edgeCount: 0,
+          generatedAt: "2026-05-27T00:00:00.000Z",
+          graphSignature: "map-signature",
+          nodeCount: 1,
+          outlineBased: true,
+          pending: false,
+          scale: {
+            heightKm: 120,
+            metersPerUnit: 1000,
+            unit: "km",
+            widthKm: 200
+          },
+          source: "algorithm",
+          stale: false
+        }}
+        mapImageDraft={{
+          edgeCount: 0,
+          file: null,
+          generatedAt: "2026-05-27T00:00:00.000Z",
+          graphSignature: "map-signature",
+          iterationCount: 1,
+          nodeBatchSize: 10,
+          nodeCount: 1,
+          outlineError: null,
+          outlinePending: false,
+          outlinePreviewUrl: "data:image/png;base64,b3V0bGluZQ==",
+          previewUrl: "data:image/png;base64,bWFw",
+          referencePrompt: "保留蓝色海岸线",
+          source: "generated",
+          stale: false,
+          storedUrl: null
+        }}
+        mapImageGeneration={{
+          completedNodeIds: [],
+          error: null,
+          failedRound: 0,
+          paused: false,
+          pending: false,
+          progress: 0,
+          relationSummary: "",
+          round: 0,
+          totalRounds: 0
+        }}
+        mapImageNodeBatchSize={10}
+        mapImageReferenceImages={[]}
+        mapImageReferencePrompt="保留蓝色海岸线"
+        onAddNode={vi.fn()}
+        onChangeMapImageNodeBatchSize={onChangeMapImageNodeBatchSize}
+        onChangeMapImageReferencePrompt={onChangeMapImageReferencePrompt}
+        onClearMapImage={onClearMapImage}
+        onGenerateMapGeoJson={onGenerateMapGeoJson}
+        onGenerateMapImage={onGenerateMapImage}
+        onSelectMapFinalImage={onSelectMapFinalImage}
+        onSelectNode={vi.fn()}
+        onSelectEdge={vi.fn()}
+        relationLabel={(relation) => readMaterialMessage(`mapForm.relationTypes.${relation}`)}
+        selectedNodeId=""
+        selectedEdgeId=""
+        t={(key, values) => readMaterialMessage(key, values)}
+      />
+    );
+
+    expect(screen.getByText("最终地图图像")).toBeInTheDocument();
+    expect(screen.getByText("AI 生成")).toBeInTheDocument();
+    expect(screen.getByText("纯边框图")).toBeInTheDocument();
+    expect(screen.getByAltText("地图纯边框图")).toBeInTheDocument();
+    expect(screen.getByText("地图数据 GeoJSON")).toBeInTheDocument();
+    expect(screen.getByText("2 个要素")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "GeoJSON 地图预览" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "重新生成" })[0]);
+    expect(onGenerateMapGeoJson).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "每轮节点" }), { target: { value: "120" } });
+    expect(onChangeMapImageNodeBatchSize).toHaveBeenCalledWith(100);
+    fireEvent.change(screen.getByPlaceholderText("描述参考图中需要沿用的地貌、风格、色彩或地图符号"), {
+      target: { value: "保留山脉色彩" }
+    });
+    expect(onChangeMapImageReferencePrompt).toHaveBeenCalledWith("保留山脉色彩");
+
+    const uploadFile = new File(["map"], "map.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("上传最终图"), { target: { files: [uploadFile] } });
+    expect(onSelectMapFinalImage).toHaveBeenCalledWith(uploadFile);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "重新生成" })[1]);
+    expect(onGenerateMapImage).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "清除图像" }));
+    expect(onClearMapImage).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "放大地图图像" }));
+    expect(screen.getByRole("dialog", { name: "地图图像预览" })).toBeInTheDocument();
+  });
+
   it("allows oversized generated item images when building the save payload", () => {
     const draft = createDefaultItemDraft();
     const boardImageFile = new File(["board"], "item-board.png", { type: "image/png" });

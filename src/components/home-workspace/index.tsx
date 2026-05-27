@@ -83,7 +83,10 @@ import { SceneCreateDialog } from "./scene-dialog";
 import { Metric } from "./form-fields";
 import { groupConversations, mergeMaterials, mergeScripts, upsertMaterialList } from "./lists";
 import {
+  generateHomeMapImageOutline,
+  generateHomeMapGeoJson,
   resolveSendError,
+  streamHomeMapImage,
   streamHomeMessage,
   streamHomeScenePanorama,
   streamHomeScenePanoramaMother
@@ -135,6 +138,8 @@ import {
   maxMaskBoardImageBytes,
   maxScenePanoramaFaceBytes,
   maxScenePanoramaMaxRedrawAttempts,
+  maxMapReferenceImages,
+  defaultMapImageNodeBatchSize,
   maxSceneReferenceImages,
   minScenePanoramaMaxRedrawAttempts,
   scenePanoramaAcceptedTypes,
@@ -165,6 +170,9 @@ import {
   type CreatureVocalizationFieldId,
   type MaskAiMessage,
   type MapAiMessage,
+  type MapGeoJsonDraft,
+  type MapImageDraft,
+  type MapImageGenerationDraft,
   type MaskBoardDrawingStyle,
   type MaskBoardImageSource,
   type MaskBodyFieldId,
@@ -209,6 +217,8 @@ import {
   createInitialScenePanoramaGenerationDraft,
   createCreatureDraftFromMaterial,
   createItemDraftFromMaterial,
+  createMapGeoJsonDraftFromMaterial,
+  createMapImageDraftFromMaterial,
   createMapDraftFromMaterial,
   createMapEdge,
   createMapNode,
@@ -236,6 +246,7 @@ import {
   revokeCreatureBoardPreview,
   revokeItemDraftPreviews,
   revokeItemModelInputImagePreview,
+  revokeMapImagePreview,
   revokeMaskBoardPreview,
   revokeSceneBlockPreviews,
   revokeSceneDraftPreviews,
@@ -243,6 +254,8 @@ import {
   revokeScenePanoramaMotherPreview,
   revokeSceneReferenceImagePreview,
   buildMapMaterialFormData,
+  buildMapGraphSignature,
+  normalizeMapImageNodeBatchSize,
   serializeCreatureDraft,
   serializeItemDraft,
   serializeMaskDraft,
@@ -275,6 +288,7 @@ import {
   resolveMaskSaveError,
   resolveMapAiError,
   resolveMapDeriveError,
+  resolveMapImageError,
   resolveMapSaveError,
   resolveMaterialExportError,
   resolveMaterialImportError,
@@ -364,6 +378,12 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [mapDeriveMaxRounds, setMapDeriveMaxRounds] = useState(3);
   const [mapDeriveRound, setMapDeriveRound] = useState(0);
   const [mapDeriveStatus, setMapDeriveStatus] = useState("");
+  const [mapImageDraft, setMapImageDraft] = useState<MapImageDraft | null>(null);
+  const [mapGeoJsonDraft, setMapGeoJsonDraft] = useState<MapGeoJsonDraft | null>(null);
+  const [mapImageGeneration, setMapImageGeneration] = useState<MapImageGenerationDraft>(() => createInitialMapImageGenerationDraft());
+  const [mapImageNodeBatchSize, setMapImageNodeBatchSize] = useState(defaultMapImageNodeBatchSize);
+  const [mapImageReferenceImages, setMapImageReferenceImages] = useState<SceneReferenceImageDraft[]>([]);
+  const [mapImageReferencePrompt, setMapImageReferencePrompt] = useState("");
   const [mapSelectedNodeId, setMapSelectedNodeId] = useState("");
   const [mapSelectedEdgeId, setMapSelectedEdgeId] = useState("");
   const [mapNodeDialogOpen, setMapNodeDialogOpen] = useState(false);
@@ -386,7 +406,13 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const materialSectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const optimisticIdRef = useRef(0);
   const mapCreateDraftRef = useRef(mapCreateDraft);
+  const mapImageDraftRef = useRef<MapImageDraft | null>(mapImageDraft);
+  const mapGeoJsonDraftRef = useRef<MapGeoJsonDraft | null>(mapGeoJsonDraft);
+  const mapImageGenerationRef = useRef(mapImageGeneration);
   const mapDeriveRunIdRef = useRef("");
+  const mapImageRunIdRef = useRef("");
+  const mapImageOutlineRunIdRef = useRef("");
+  const mapGeoJsonRunIdRef = useRef("");
   const pendingAuthActionRef = useRef<((viewer: AuthViewer) => void) | null>(null);
   const persistenceAvailable = data.persistenceAvailable;
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -463,7 +489,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const isCreatureActionPending = creatureAiPending || creatureBoardPending || creatureSavePending;
   const isItemActionPending = itemAiPending || itemBoardPending || itemModelInputPending || itemModelPending || itemSavePending;
   const isSceneActionPending = sceneAiPending || Boolean(scenePanoramaPendingBlockId) || sceneSavePending;
-  const isMapActionPending = mapAiPending || mapDerivePending || mapSavePending;
+  const isMapActionPending = mapAiPending || mapDerivePending || mapSavePending || mapImageGeneration.pending || Boolean(mapGeoJsonDraft?.pending);
   const isMaterialTransferDisabled = materialTransferPending;
   const isEditingMask = Boolean(maskEditingMaterialId);
   const isEditingCreature = Boolean(creatureEditingMaterialId);
@@ -641,6 +667,52 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
   useEffect(() => {
     mapCreateDraftRef.current = mapCreateDraft;
+  }, [mapCreateDraft]);
+
+  useEffect(() => {
+    mapImageDraftRef.current = mapImageDraft;
+  }, [mapImageDraft]);
+
+  useEffect(() => {
+    mapGeoJsonDraftRef.current = mapGeoJsonDraft;
+  }, [mapGeoJsonDraft]);
+
+  useEffect(() => {
+    mapImageGenerationRef.current = mapImageGeneration;
+  }, [mapImageGeneration]);
+
+  useEffect(() => {
+    const graphSignature = buildMapGraphSignature(mapCreateDraft);
+
+    setMapImageDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (!current.graphSignature || current.graphSignature === graphSignature) {
+        return current.stale ? { ...current, stale: false } : current;
+      }
+
+      return {
+        ...current,
+        stale: true
+      };
+    });
+
+    setMapGeoJsonDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (!current.graphSignature || current.graphSignature === graphSignature) {
+        return current.stale ? { ...current, stale: false } : current;
+      }
+
+      return {
+        ...current,
+        stale: true
+      };
+    });
   }, [mapCreateDraft]);
 
   useEffect(() => {
@@ -3293,6 +3365,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   function resetMapCreateDraft() {
     const nextDraft = createDefaultMapDraft();
 
+    resetMapImageState();
     mapCreateDraftRef.current = nextDraft;
     setMapCreateDraft(nextDraft);
     setMapSelectedNodeId("");
@@ -3322,6 +3395,22 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     setMapDeriveMaxRounds(3);
     setMapDeriveRound(0);
     setMapDeriveStatus("");
+  }
+
+  function resetMapImageState() {
+    mapImageRunIdRef.current = "";
+    mapImageOutlineRunIdRef.current = "";
+    mapGeoJsonRunIdRef.current = "";
+    revokeMapImagePreview(mapImageDraftRef.current);
+    mapImageReferenceImages.forEach(revokeSceneReferenceImagePreview);
+    mapImageDraftRef.current = null;
+    mapGeoJsonDraftRef.current = null;
+    setMapImageDraft(null);
+    setMapGeoJsonDraft(null);
+    setMapImageGeneration(createInitialMapImageGenerationDraft());
+    setMapImageNodeBatchSize(defaultMapImageNodeBatchSize);
+    setMapImageReferenceImages([]);
+    setMapImageReferencePrompt("");
   }
 
   function closeMapCreateDialog() {
@@ -3363,10 +3452,18 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
 
     const nextDraft = createMapDraftFromMaterial(material);
+    const nextMapImage = createMapImageDraftFromMaterial(material);
+    const nextMapGeoJson = createMapGeoJsonDraftFromMaterial(material);
 
     setMaterialCreateMenuOpen(false);
+    resetMapImageState();
     mapCreateDraftRef.current = nextDraft;
     setMapCreateDraft(nextDraft);
+    mapImageDraftRef.current = nextMapImage;
+    mapGeoJsonDraftRef.current = nextMapGeoJson;
+    setMapImageDraft(nextMapImage);
+    setMapGeoJsonDraft(nextMapGeoJson);
+    setMapImageNodeBatchSize(nextMapImage?.nodeBatchSize ?? defaultMapImageNodeBatchSize);
     setMapSelectedNodeId("");
     setMapSelectedEdgeId("");
     setMapEditingMaterialId(material.id);
@@ -3395,10 +3492,18 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
 
     const nextDraft = createMapDraftFromMaterial(material);
+    const nextMapImage = createMapImageDraftFromMaterial(material);
+    const nextMapGeoJson = createMapGeoJsonDraftFromMaterial(material);
 
     setMaterialCreateMenuOpen(false);
+    resetMapImageState();
     mapCreateDraftRef.current = nextDraft;
     setMapCreateDraft(nextDraft);
+    mapImageDraftRef.current = nextMapImage;
+    mapGeoJsonDraftRef.current = nextMapGeoJson;
+    setMapImageDraft(nextMapImage);
+    setMapGeoJsonDraft(nextMapGeoJson);
+    setMapImageNodeBatchSize(nextMapImage?.nodeBatchSize ?? defaultMapImageNodeBatchSize);
     setMapSelectedNodeId(nextDraft.nodes[0]?.id ?? "");
     setMapSelectedEdgeId(nextDraft.edges[0]?.id ?? "");
     setMapEditingMaterialId(material.id);
@@ -3883,6 +3988,503 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     updateMapCreateDraft((current) => applyMapLayoutUpdatesToDraft(current, updates));
   }
 
+  function setMapImageDraftState(nextImage: MapImageDraft | null) {
+    revokeMapImagePreview(mapImageDraftRef.current, nextImage);
+    mapImageDraftRef.current = nextImage;
+    setMapImageDraft(nextImage);
+  }
+
+  function setMapGeoJsonDraftState(nextGeoJson: MapGeoJsonDraft | null) {
+    mapGeoJsonDraftRef.current = nextGeoJson;
+    setMapGeoJsonDraft(nextGeoJson);
+  }
+
+  function clearMapImageDraft() {
+    mapImageOutlineRunIdRef.current = "";
+    mapGeoJsonRunIdRef.current = "";
+    setMapImageDraftState(null);
+    setMapGeoJsonDraftState(null);
+    setMapImageGeneration(createInitialMapImageGenerationDraft());
+    mapImageReferenceImages.forEach(revokeSceneReferenceImagePreview);
+    setMapImageReferenceImages([]);
+    setMapImageReferencePrompt("");
+  }
+
+  function updateMapImageNodeBatchSize(value: number) {
+    setMapImageNodeBatchSize(normalizeMapImageNodeBatchSize(value));
+  }
+
+  function updateMapImageReferencePrompt(value: string) {
+    setMapImageReferencePrompt(value);
+  }
+
+  function addMapImageReferenceImages(files: FileList | File[]) {
+    const fileList = Array.from(files).slice(0, maxMapReferenceImages);
+    const selected = createSceneReferenceImageDrafts(fileList);
+
+    if (selected.invalidCount > 0) {
+      toast.error(materialT("mapForm.invalidReferenceImage"));
+    }
+
+    if (selected.images.length === 0) {
+      return;
+    }
+
+    const allImages = [...mapImageReferenceImages, ...selected.images];
+    const nextImages = allImages.slice(0, maxMapReferenceImages);
+    const droppedImages = allImages.slice(maxMapReferenceImages);
+
+    droppedImages.forEach(revokeSceneReferenceImagePreview);
+
+    if (allImages.length > maxMapReferenceImages) {
+      toast.error(materialT("mapForm.referenceImageLimit"));
+    }
+
+    setMapImageReferenceImages(nextImages);
+  }
+
+  function removeMapImageReferenceImage(imageId: string) {
+    const nextImages = mapImageReferenceImages.filter((image) => image.id !== imageId);
+    const removed = mapImageReferenceImages.find((image) => image.id === imageId);
+
+    if (removed) {
+      revokeSceneReferenceImagePreview(removed);
+    }
+
+    setMapImageReferenceImages(nextImages);
+  }
+
+  function selectMapFinalImage(file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    if (!isValidMaskBoardImage(file, { allowOversize: false })) {
+      toast.error(materialT("mapForm.invalidFinalImage"));
+      return;
+    }
+
+    const previewUrl = createPreviewUrl(file);
+    const graphSignature = buildMapGraphSignature(mapCreateDraftRef.current);
+    const nextImage: MapImageDraft = {
+      edgeCount: mapCreateDraftRef.current.edges.length,
+      file,
+      generatedAt: new Date().toISOString(),
+      graphSignature,
+      iterationCount: mapImageGenerationRef.current.totalRounds || 1,
+      nodeBatchSize: mapImageNodeBatchSize,
+      nodeCount: mapCreateDraftRef.current.nodes.length,
+      outlineError: null,
+      outlinePending: true,
+      outlinePreviewUrl: null,
+      previewUrl,
+      referencePrompt: mapImageReferencePrompt,
+      source: "uploaded",
+      stale: false,
+      storedUrl: null
+    };
+
+    setMapImageGeneration(createInitialMapImageGenerationDraft());
+    setMapImageDraftState(nextImage);
+    void requestMapImageOutline(nextImage);
+    toast.success(materialT("mapForm.finalImageUploaded"));
+  }
+
+  async function requestMapImageOutline(image: MapImageDraft) {
+    if (!image.file) {
+      return;
+    }
+
+    const runId = createClientId("map-image-outline");
+
+    mapImageOutlineRunIdRef.current = runId;
+    setMapImageDraftState({
+      ...image,
+      outlineError: null,
+      outlinePending: true,
+      outlinePreviewUrl: null
+    });
+
+    try {
+      const outline = await generateHomeMapImageOutline(image.file, image.source);
+
+      if (mapImageOutlineRunIdRef.current !== runId) {
+        return;
+      }
+
+      const current = mapImageDraftRef.current;
+
+      if (!current || current.file !== image.file || current.previewUrl !== image.previewUrl) {
+        return;
+      }
+
+      setMapImageDraftState({
+        ...current,
+        outlineError: null,
+        outlinePending: false,
+        outlinePreviewUrl: outline.dataUrl
+      });
+      void dataUrlToFile(outline.dataUrl, outline.fileName, outline.contentType).then((outlineFile) => {
+        void generateMapGeoJsonDraft({ imageFile: outlineFile, silent: true });
+      });
+    } catch (error) {
+      if (mapImageOutlineRunIdRef.current !== runId) {
+        return;
+      }
+
+      const current = mapImageDraftRef.current;
+
+      if (!current || current.file !== image.file || current.previewUrl !== image.previewUrl) {
+        return;
+      }
+
+      setMapImageDraftState({
+        ...current,
+        outlineError: error instanceof Error ? error.message : String(error),
+        outlinePending: false
+      });
+      void generateMapGeoJsonDraft({ imageFile: image.file, silent: true });
+    }
+  }
+
+  async function generateMapGeoJsonDraft(options: { imageFile?: File | null; silent?: boolean } = {}) {
+    const snapshot = serializeMapDraft(mapCreateDraftRef.current);
+
+    if (snapshot.nodes.length === 0) {
+      if (!options.silent) {
+        toast.error(materialT("mapForm.geoJsonNodeRequired"));
+      }
+      return;
+    }
+
+    const graphSignature = buildMapGraphSignature(snapshot);
+    const runId = createClientId("map-geojson-run");
+
+    mapGeoJsonRunIdRef.current = runId;
+    setMapGeoJsonDraftState({
+      ...(mapGeoJsonDraftRef.current ?? {
+        data: {
+          bbox: [0, 0, 0, 0],
+          features: [],
+          type: "FeatureCollection" as const
+        },
+        edgeCount: snapshot.edges.length,
+        generatedAt: new Date().toISOString(),
+        graphSignature,
+        nodeCount: snapshot.nodes.length,
+        scale: {
+          heightKm: 1,
+          metersPerUnit: 1000,
+          unit: "km" as const,
+          widthKm: 1
+        },
+        source: "algorithm" as const
+      }),
+      error: null,
+      graphSignature,
+      pending: true,
+      stale: false
+    });
+
+    try {
+      const sourceImage = options.imageFile ?? await getMapGeoJsonSourceImageFile();
+      const result = await generateHomeMapGeoJson(snapshot, locale, sourceImage, mapImageDraftRef.current?.source ?? null);
+
+      if (mapGeoJsonRunIdRef.current !== runId) {
+        return;
+      }
+
+      setMapGeoJsonDraftState({
+        ...result,
+        error: null,
+        pending: false,
+        stale: false
+      });
+
+      if (!options.silent) {
+        toast.success(materialT("mapForm.geoJsonGenerated"));
+      }
+    } catch (error) {
+      if (mapGeoJsonRunIdRef.current !== runId) {
+        return;
+      }
+
+      setMapGeoJsonDraftState({
+        ...(mapGeoJsonDraftRef.current ?? {
+          data: {
+            bbox: [0, 0, 0, 0],
+            features: [],
+            type: "FeatureCollection" as const
+          },
+          edgeCount: snapshot.edges.length,
+          generatedAt: new Date().toISOString(),
+          graphSignature,
+          nodeCount: snapshot.nodes.length,
+          scale: {
+            heightKm: 1,
+            metersPerUnit: 1000,
+            unit: "km" as const,
+            widthKm: 1
+          },
+          source: "algorithm" as const
+        }),
+        error: error instanceof Error ? error.message : String(error),
+        pending: false,
+        stale: false
+      });
+
+      if (!options.silent) {
+        toast.error(materialT("mapForm.geoJsonGenerateFailed"));
+      }
+    }
+  }
+
+  async function getMapGeoJsonSourceImageFile() {
+    const image = mapImageDraftRef.current;
+
+    if (!image) {
+      return null;
+    }
+
+    if (image.outlinePreviewUrl?.startsWith("data:")) {
+      return dataUrlToFile(image.outlinePreviewUrl, "map-outline.png", "image/png");
+    }
+
+    return image.file;
+  }
+
+  async function generateMapImage(authenticatedViewer = viewer, continuePaused = false) {
+    if (mapImageGeneration.pending) {
+      return;
+    }
+
+    const snapshot = serializeMapDraft(mapCreateDraftRef.current);
+
+    if (snapshot.nodes.length === 0) {
+      toast.error(materialT("mapForm.imageNodeRequired"));
+      return;
+    }
+
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        setViewer(nextViewer);
+        void generateMapImage(nextViewer, continuePaused);
+      });
+      return;
+    }
+
+    const currentImage = mapImageDraftRef.current;
+    const canContinue = continuePaused && currentImage && !currentImage.stale && Boolean(currentImage.file);
+    const runId = createClientId("map-image-run");
+    const initialCompletedNodeIds = canContinue ? mapImageGeneration.completedNodeIds : [];
+
+    mapImageRunIdRef.current = runId;
+    setMapImageGeneration({
+      completedNodeIds: initialCompletedNodeIds,
+      error: null,
+      failedRound: 0,
+      paused: false,
+      pending: true,
+      progress: 4,
+      relationSummary: "",
+      round: 0,
+      totalRounds: 0
+    });
+
+    try {
+      const result = await streamHomeMapImage(
+        snapshot,
+        locale,
+        mapImageNodeBatchSize,
+        mapImageReferenceImages,
+        mapImageReferencePrompt,
+        (event) => {
+          if (mapImageRunIdRef.current !== runId) {
+            return;
+          }
+
+          if (event.type === "progress") {
+            setMapImageGeneration((current) => ({
+              ...current,
+              error: null,
+              failedRound: 0,
+              paused: false,
+              pending: true,
+              progress: event.progress,
+              relationSummary: event.relationSummary ?? current.relationSummary,
+              round: event.round,
+              totalRounds: event.totalRounds
+            }));
+            return;
+          }
+
+          if (event.type === "image") {
+            void dataUrlToFile(event.image.dataUrl, event.image.fileName, event.image.contentType).then((file) => {
+              if (mapImageRunIdRef.current && mapImageRunIdRef.current !== runId) {
+                return;
+              }
+
+              const nextImage: MapImageDraft = {
+                edgeCount: snapshot.edges.length,
+                file,
+                generatedAt: new Date().toISOString(),
+                graphSignature: buildMapGraphSignature(snapshot),
+                iterationCount: event.round,
+                nodeBatchSize: mapImageNodeBatchSize,
+                nodeCount: snapshot.nodes.length,
+                previewUrl: event.image.dataUrl,
+                referencePrompt: mapImageReferencePrompt,
+                source: "generated",
+                stale: false,
+                storedUrl: null
+              };
+
+              setMapImageDraftState(nextImage);
+              setMapImageGeneration((current) => ({
+                ...current,
+                completedNodeIds: event.completedNodeIds,
+                error: null,
+                failedRound: 0,
+                paused: false,
+                pending: true,
+                progress: event.progress,
+                relationSummary: event.relationSummary,
+                round: event.round,
+                totalRounds: event.totalRounds
+              }));
+            });
+            return;
+          }
+
+          if (event.type === "paused") {
+            const pausedImage = event.image;
+            if (pausedImage) {
+              void dataUrlToFile(pausedImage.dataUrl, pausedImage.fileName, pausedImage.contentType).then((file) => {
+                if (mapImageRunIdRef.current && mapImageRunIdRef.current !== runId) {
+                  return;
+                }
+
+                const nextImage: MapImageDraft = {
+                  edgeCount: snapshot.edges.length,
+                  file,
+                  generatedAt: new Date().toISOString(),
+                  graphSignature: buildMapGraphSignature(snapshot),
+                  iterationCount: event.round,
+                  nodeBatchSize: mapImageNodeBatchSize,
+                  nodeCount: snapshot.nodes.length,
+                  previewUrl: pausedImage.dataUrl,
+                  referencePrompt: mapImageReferencePrompt,
+                  source: "generated",
+                  stale: false,
+                  storedUrl: null
+                };
+
+                setMapImageDraftState(nextImage);
+              });
+            }
+
+            setMapImageGeneration((current) => ({
+              ...current,
+              completedNodeIds: event.completedNodeIds,
+              error: event.message,
+              failedRound: event.failedRound,
+              paused: true,
+              pending: false,
+              progress: event.progress,
+              relationSummary: event.relationSummary ?? current.relationSummary,
+              round: event.round,
+              totalRounds: event.totalRounds
+            }));
+          }
+
+          if (event.type === "done") {
+            void dataUrlToFile(event.image.dataUrl, event.image.fileName, event.image.contentType).then((file) => {
+              if (mapImageRunIdRef.current && mapImageRunIdRef.current !== runId) {
+                return;
+              }
+
+              const nextImage: MapImageDraft = {
+                edgeCount: event.edgeCount,
+                file,
+                generatedAt: new Date().toISOString(),
+                graphSignature: event.graphSignature,
+                iterationCount: event.iterationCount,
+                nodeBatchSize: event.nodeBatchSize,
+                nodeCount: event.nodeCount,
+                outlineError: null,
+                outlinePending: true,
+                outlinePreviewUrl: null,
+                previewUrl: event.image.dataUrl,
+                referencePrompt: event.referencePrompt ?? "",
+                source: "generated",
+                stale: false,
+                storedUrl: null
+              };
+
+              setMapImageDraftState(nextImage);
+              void requestMapImageOutline(nextImage);
+              setMapImageGeneration((current) => ({
+                ...current,
+                completedNodeIds: snapshot.nodes.map((node) => node.id),
+                error: null,
+                failedRound: 0,
+                paused: false,
+                pending: false,
+                progress: 100,
+                relationSummary: "",
+                round: event.iterationCount,
+                totalRounds: event.iterationCount
+              }));
+            });
+          }
+        },
+        {
+          completedNodeIds: initialCompletedNodeIds,
+          previousImageFile: canContinue ? currentImage?.file ?? null : null,
+          previousImageSource: canContinue ? currentImage?.source ?? "generated" : undefined,
+          previousImageUrl: canContinue ? currentImage?.storedUrl ?? undefined : undefined,
+          resumeRound: canContinue ? mapImageGeneration.failedRound : undefined
+        }
+      );
+
+      if (mapImageRunIdRef.current !== runId) {
+        return;
+      }
+
+      if (result.type === "paused") {
+        toast.error(materialT("mapForm.imagePaused"));
+        return;
+      }
+
+      toast.success(materialT("mapForm.imageGenerated"));
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        requestAuth((nextViewer) => {
+          setViewer(nextViewer);
+          void generateMapImage(nextViewer, continuePaused);
+        });
+        return;
+      }
+
+      setMapImageGeneration((current) => ({
+        ...current,
+        error: error instanceof Error ? error.message : String(error),
+        failedRound: 0,
+        paused: false,
+        pending: false
+      }));
+      toast.error(resolveMapImageError(error, materialT));
+    } finally {
+      if (mapImageRunIdRef.current === runId) {
+        mapImageRunIdRef.current = "";
+        setMapImageGeneration((current) => ({
+          ...current,
+          pending: false
+        }));
+      }
+    }
+  }
+
   async function submitMapDraft(mode: "basic" | "graph", authenticatedViewer = viewer) {
     const validationError =
       mode === "basic" ? validateMapDraftForSave(mapCreateDraft) : validateMapDraftForGraphSave(mapCreateDraft);
@@ -3909,7 +4511,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
     try {
       const isEditing = Boolean(mapEditingMaterialId);
-      const formData = buildMapMaterialFormData(mapCreateDraft);
+      const formData = buildMapMaterialFormData(mapCreateDraft, mapImageDraft, mapGeoJsonDraft, isEditing);
       const material = isEditing
         ? await updateHomeMapMaterial(mapEditingMaterialId, formData, locale)
         : await createHomeMapMaterial(formData, locale);
@@ -4349,22 +4951,37 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             deriveRound={mapDeriveRound}
             deriveStatus={mapDeriveStatus}
             isPending={isPending || isMapActionPending}
+            mapGeoJsonDraft={mapGeoJsonDraft}
+            mapImageDraft={mapImageDraft}
+            mapImageGeneration={mapImageGeneration}
+            mapImageNodeBatchSize={mapImageNodeBatchSize}
+            mapImageReferenceImages={mapImageReferenceImages}
+            mapImageReferencePrompt={mapImageReferencePrompt}
             saveLabel={materialT("mapForm.saveGraph")}
             selectedEdgeId={mapSelectedEdgeId}
             selectedNodeId={mapSelectedNodeId}
             title={materialT("mapForm.graphTitle")}
             onAddNode={openMapNodeCreateDialog}
             onCancel={closeMapGraphDialog}
+            onAddMapImageReferenceImages={addMapImageReferenceImages}
             onChangeAiInput={setMapAiInput}
             onChangeDeriveMaxRounds={(value) => setMapDeriveMaxRounds(value)}
+            onChangeMapImageNodeBatchSize={updateMapImageNodeBatchSize}
+            onChangeMapImageReferencePrompt={updateMapImageReferencePrompt}
+            onClearMapImage={clearMapImageDraft}
             onConnectNode={startMapNodeConnect}
+            onContinueMapImage={() => void generateMapImage(viewer, true)}
             onEditEdge={openMapEdgeEditDialog}
             onEditBasicInfo={openMapBasicInfoFromGraphDialog}
             onEditNode={openMapNodeEditDialog}
+            onGenerateMapImage={() => void generateMapImage(viewer, false)}
+            onGenerateMapGeoJson={() => void generateMapGeoJsonDraft()}
             onLayoutNodes={layoutMapNodes}
             onMoveNode={moveMapNode}
+            onRemoveMapImageReferenceImage={removeMapImageReferenceImage}
             onRemoveEdge={removeMapEdge}
             onRemoveNode={removeMapNode}
+            onSelectMapFinalImage={selectMapFinalImage}
             onSelectEdge={selectMapEdge}
             onSelectNode={selectMapNode}
             onSendAiMessage={() => void sendMapAiMessage()}
@@ -5108,6 +5725,20 @@ function applyMapLayoutUpdatesToDraft(
 
       return update ? { ...node, x: update.x, y: update.y } : node;
     })
+  };
+}
+
+function createInitialMapImageGenerationDraft(): MapImageGenerationDraft {
+  return {
+    completedNodeIds: [],
+    error: null,
+    failedRound: 0,
+    paused: false,
+    pending: false,
+    progress: 0,
+    relationSummary: "",
+    round: 0,
+    totalRounds: 0
   };
 }
 

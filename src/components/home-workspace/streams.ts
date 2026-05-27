@@ -1,11 +1,16 @@
 import type { Locale } from "@/i18n/routing";
 import { authRequiredCode } from "@/lib/auth-types";
 import type {
+  MapImageStreamDoneEvent,
+  MapImageStreamEvent,
+  MapMaterialCreateInput,
   SceneMaterialCreateInput,
   WorkspaceConversation
 } from "@/lib/home-workspace";
 import type {
   MessageStreamEvent,
+  MapImageOutlineResult,
+  WorkspaceMapMaterialGeoJson,
   ScenePanoramaMotherDraft,
   ScenePanoramaStreamDoneEvent,
   ScenePanoramaStreamEvent,
@@ -233,6 +238,157 @@ export async function streamHomeScenePanoramaMother(
   return doneEvent;
 }
 
+export async function streamHomeMapImage(
+  input: MapMaterialCreateInput,
+  locale: Locale,
+  nodeBatchSize: number,
+  referenceImages: SceneReferenceImageDraft[],
+  referencePrompt: string,
+  onEvent: (event: MapImageStreamEvent) => void,
+  options: {
+    completedNodeIds?: string[];
+    previousImageFile?: File | null;
+    previousImageSource?: "generated" | "uploaded" | "existing";
+    previousImageUrl?: string;
+    resumeRound?: number;
+  } = {}
+) {
+  const formData = new FormData();
+
+  formData.append("draft", JSON.stringify(input));
+  formData.append("locale", locale);
+  formData.append("nodeBatchSize", String(nodeBatchSize));
+  formData.append("referencePrompt", referencePrompt);
+  formData.append("completedNodeIds", JSON.stringify(options.completedNodeIds ?? []));
+  if (typeof options.resumeRound === "number") {
+    formData.append("resumeRound", String(options.resumeRound));
+  }
+  if (options.previousImageFile) {
+    formData.append("previousImage", options.previousImageFile);
+    formData.append("previousImageSource", options.previousImageSource ?? "generated");
+  } else if (options.previousImageUrl) {
+    formData.append("previousImageUrl", options.previousImageUrl);
+  }
+  referenceImages.forEach((image) => {
+    formData.append("referenceImages", image.file);
+  });
+
+  const response = await fetch("/api/materials/map-image/stream", {
+    body: formData,
+    method: "POST"
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error("MAP_IMAGE_STREAM_FAILED");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let terminalEvent: MapImageStreamDoneEvent | Extract<MapImageStreamEvent, { type: "paused" }> | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+
+    for (const chunk of chunks) {
+      const event = parseMapImageStreamEvent(chunk);
+
+      if (!event) {
+        continue;
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+      }
+
+      onEvent(event);
+
+      if (event.type === "done" || event.type === "paused") {
+        terminalEvent = event;
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    const event = parseMapImageStreamEvent(buffer);
+
+    if (event?.type === "error") {
+      throw new Error(event.message === authRequiredCode ? authRequiredCode : event.message);
+    }
+
+    if (event) {
+      onEvent(event);
+    }
+
+    if (event?.type === "done" || event?.type === "paused") {
+      terminalEvent = event;
+    }
+  }
+
+  if (!terminalEvent) {
+    throw new Error("MAP_IMAGE_STREAM_INCOMPLETE");
+  }
+
+  return terminalEvent;
+}
+
+export async function generateHomeMapImageOutline(
+  image: File,
+  source: "generated" | "uploaded" | "existing" | null
+): Promise<MapImageOutlineResult> {
+  const formData = new FormData();
+
+  formData.append("image", image);
+  formData.append("source", source === "generated" ? "generated" : "uploaded");
+
+  const response = await fetch("/api/materials/map-image/outline", {
+    body: formData,
+    method: "POST"
+  });
+  const payload = await response.json() as MapImageOutlineResult | { message?: string };
+
+  if (!response.ok) {
+    throw new Error("message" in payload && payload.message ? payload.message : "MAP_IMAGE_OUTLINE_FAILED");
+  }
+
+  return payload as MapImageOutlineResult;
+}
+
+export async function generateHomeMapGeoJson(
+  input: MapMaterialCreateInput,
+  locale: Locale,
+  image: File | null,
+  source: "generated" | "uploaded" | "existing" | null
+): Promise<WorkspaceMapMaterialGeoJson> {
+  const formData = new FormData();
+
+  formData.append("draft", JSON.stringify(input));
+  formData.append("locale", locale);
+  if (image) {
+    formData.append("image", image);
+    formData.append("source", source === "generated" ? "generated" : "uploaded");
+  }
+
+  const response = await fetch("/api/materials/map-geojson/generate", {
+    body: formData,
+    method: "POST"
+  });
+  const payload = await response.json() as WorkspaceMapMaterialGeoJson | { message?: string };
+
+  if (!response.ok) {
+    throw new Error("message" in payload && payload.message ? payload.message : "MAP_GEOJSON_GENERATE_FAILED");
+  }
+
+  return payload as WorkspaceMapMaterialGeoJson;
+}
+
 export function resolveSendError(error: unknown, t: (key: string) => string) {
   const message = error instanceof Error ? error.message : "";
 
@@ -255,4 +411,14 @@ function parseScenePanoramaStreamEvent(chunk: string): ScenePanoramaStreamEvent 
     .join("\n");
 
   return data ? JSON.parse(data) as ScenePanoramaStreamEvent : null;
+}
+
+function parseMapImageStreamEvent(chunk: string): MapImageStreamEvent | null {
+  const data = chunk
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+
+  return data ? JSON.parse(data) as MapImageStreamEvent : null;
 }

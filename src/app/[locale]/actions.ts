@@ -63,7 +63,10 @@ import {
   uploadScenePanoramaFace,
   uploadScenePanoramaMother,
   type ItemMaterialCreateInput,
+  type MapGeoJsonMetaInput,
+  type MapImageMetaInput,
   type MapMaterialCreateInput,
+  type MapMaterialImageMode,
   type ItemMaterialImageMode,
   type CreatureMaterialCreateInput,
   type MaskMaterialBoardImageMode,
@@ -320,14 +323,20 @@ export async function createHomeSceneMaterial(formData: FormData, locale: Locale
 
 export async function createHomeMapMaterial(formData: FormData, locale: Locale) {
   const draftValue = formData.get("draft");
+  const mapImageValue = formData.get("mapImage");
+  const mapImageModeValue = formData.get("mapImageMode");
 
   if (typeof draftValue !== "string") {
     throw new Error("MAP_DRAFT_REQUIRED");
   }
 
   const draft = JSON.parse(draftValue) as MapMaterialCreateInput;
+  const mapImageFile = mapImageValue instanceof File && mapImageValue.size > 0 ? mapImageValue : null;
+  const mapImageMode = isMapMaterialImageMode(mapImageModeValue) ? mapImageModeValue : mapImageFile ? "replace" : "clear";
+  const mapImageMeta = getMapImageMetaInput(formData);
+  const mapGeoJsonMeta = getMapGeoJsonMetaInput(formData);
 
-  return createMapMaterial(draft, locale);
+  return createMapMaterial(draft, locale, mapImageFile, mapImageMode, mapImageMeta, mapGeoJsonMeta);
 }
 
 export async function updateHomeMaskMaterial(materialId: string, formData: FormData, locale: Locale) {
@@ -401,14 +410,20 @@ export async function updateHomeSceneMaterial(materialId: string, formData: Form
 
 export async function updateHomeMapMaterial(materialId: string, formData: FormData, locale: Locale) {
   const draftValue = formData.get("draft");
+  const mapImageValue = formData.get("mapImage");
+  const mapImageModeValue = formData.get("mapImageMode");
 
   if (typeof draftValue !== "string") {
     throw new Error("MAP_DRAFT_REQUIRED");
   }
 
   const draft = JSON.parse(draftValue) as MapMaterialCreateInput;
+  const mapImageFile = mapImageValue instanceof File && mapImageValue.size > 0 ? mapImageValue : null;
+  const mapImageMode = isMapMaterialImageMode(mapImageModeValue) ? mapImageModeValue : mapImageFile ? "replace" : "keep";
+  const mapImageMeta = getMapImageMetaInput(formData);
+  const mapGeoJsonMeta = getMapGeoJsonMetaInput(formData);
 
-  return updateMapMaterial(materialId, draft, locale);
+  return updateMapMaterial(materialId, draft, locale, mapImageFile, mapImageMode, mapImageMeta, mapGeoJsonMeta);
 }
 
 export async function cleanupHomeUploadedMaterialImages(urls: string[]) {
@@ -542,6 +557,30 @@ function isMaskMaterialBoardImageMode(value: FormDataEntryValue | null): value i
 
 function isItemMaterialImageMode(value: FormDataEntryValue | null): value is ItemMaterialImageMode {
   return value === "keep" || value === "replace" || value === "clear";
+}
+
+function isMapMaterialImageMode(value: FormDataEntryValue | null): value is MapMaterialImageMode {
+  return value === "keep" || value === "replace" || value === "clear";
+}
+
+function getMapImageMetaInput(formData: FormData): MapImageMetaInput | null {
+  const value = formData.get("mapImageMeta");
+
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  return JSON.parse(value) as MapImageMetaInput;
+}
+
+function getMapGeoJsonMetaInput(formData: FormData): MapGeoJsonMetaInput | null {
+  const value = formData.get("mapGeoJsonMeta");
+
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  return JSON.parse(value) as MapGeoJsonMetaInput;
 }
 
 function getItemModelInputImageFile(formData: FormData) {

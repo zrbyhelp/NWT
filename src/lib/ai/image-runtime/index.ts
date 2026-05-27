@@ -20,6 +20,7 @@ import { type AiObservationContext, updateAiObservation, withAiObservation } fro
 import { configureServerOutboundProxy } from "@/lib/network/proxy";
 import {
   appendItemBoardTargetPrompt,
+  appendMapImageTargetPrompt,
   appendMaskBoardTargetPrompt,
   buildItemModelInputPrompt,
   buildItemViewPrompt,
@@ -275,6 +276,70 @@ export async function generateDefaultMaskBoardImage(prompt: string, userId: stri
       fileName: "mask-board.png",
       kind: "maskBoard",
       prompt: promptWithTarget,
+      size: callPreset.maskBoardSize
+    });
+    const normalized = await normalizeMaskBoardImageResult(result);
+
+    updateAiObservation(span, {
+      metadata: {
+        modelId: config.modelId,
+        outputKind: result.outputKind,
+        providerName: config.providerName
+      },
+      output: {
+        contentType: normalized.contentType,
+        fileName: normalized.fileName,
+        hasImage: true
+      }
+    });
+
+    return normalized;
+  });
+}
+
+export async function generateDefaultMapImage(
+  prompt: string,
+  userId: string,
+  observationContext?: AiObservationContext,
+  options: { referenceImages?: ScenePanoramaReferenceImage[] } = {}
+) {
+  const config = await getDefaultImageRuntimeConfig(userId);
+  const callPreset = getImageModelCallPreset(config);
+  const promptWithTarget = appendMapImageTargetPrompt(prompt);
+  const referenceImages = options.referenceImages ?? [];
+  const context: AiObservationContext = {
+    ...observationContext,
+    feature: observationContext?.feature ?? "image.map",
+    input: { prompt: promptWithTarget, referenceImageCount: referenceImages.length, targetResolution: maskBoardTargetResolution },
+    modelId: config.modelId,
+    providerName: config.providerName,
+    userId: observationContext?.userId ?? userId
+  };
+
+  return withAiObservation(context.traceName ?? context.feature, context, async (span) => {
+    const client = await createImageOpenAiClient(config);
+
+    updateAiObservation(span, {
+      input: { prompt: promptWithTarget, referenceImageCount: referenceImages.length, targetResolution: maskBoardTargetResolution },
+      metadata: {
+        baseUrl: config.baseUrl,
+        imageCallPreset: callPreset.id,
+        modelId: config.modelId,
+        providerName: config.providerName,
+        referenceImageCount: referenceImages.length,
+        referenceImages: summarizeReferenceImages(referenceImages),
+        requestSize: callPreset.maskBoardSize,
+        targetResolution: maskBoardTargetResolution
+      }
+    });
+
+    const result = await requestGeneratedImage(client, config, callPreset, {
+      emptyError: "MAP_IMAGE_EMPTY",
+      fetchFailedError: "MAP_IMAGE_FETCH_FAILED",
+      fileName: "map-image.png",
+      kind: "maskBoard",
+      prompt: promptWithTarget,
+      referenceImages,
       size: callPreset.maskBoardSize
     });
     const normalized = await normalizeMaskBoardImageResult(result);
