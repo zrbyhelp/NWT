@@ -5,6 +5,7 @@ import {
   Box,
   Bot,
   BookOpen,
+  Bell,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -29,6 +30,7 @@ import {
   Plus,
   Search,
   SendHorizontal,
+  Settings,
   Sparkles,
   Star,
   Trash2,
@@ -63,6 +65,9 @@ import {
   generateHomeItemModelInputImage,
   generateHomeMaskBoard,
   joinHomeMaterial,
+  markHomeDirectMessageThreadRead,
+  openHomeDirectMessageThread,
+  sendHomeDirectMessage,
   updateHomeCreatureMaterial,
   updateHomeItemMaterial,
   updateHomeMapMaterial,
@@ -76,6 +81,8 @@ import { HeaderActions } from "@/components/header-actions";
 import { UserAvatar } from "@/components/user-avatar";
 import { ItemCreateDialog } from "./item-dialog";
 import { CreatureCreateDialog } from "./creature-dialog";
+import { DirectMessagePanel } from "./direct-message-panel";
+import { NotificationPanel } from "./notification-panel";
 import { MapBasicInfoDialog, MapEdgeDialog, MapGraphDialog, MapNodeDialog } from "./map-dialog";
 import { MaskCreateDialog } from "./mask-dialog";
 import { MaterialDetailModal, MaterialExploreCard, ScriptExploreCard } from "./material-detail";
@@ -95,6 +102,8 @@ import { authRequiredEventName } from "@/lib/auth-client";
 import { isAuthRequiredError, type AuthViewer } from "@/lib/auth-types";
 import type {
   WorkspaceConversation,
+  WorkspaceAnnouncement,
+  WorkspaceDirectMessageThread,
   WorkspaceData,
   MapCreateDraft,
   MapDraftPatch,
@@ -306,11 +315,18 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const authT = useTranslations("home.auth");
   const myScripts = data.myScripts;
   const communityScripts = data.communityScripts;
+  const initialDirectMessageThreads = data.directMessageThreads ?? [];
+  const initialAnnouncements = data.announcements ?? [];
   const [myMaterials, setMyMaterials] = useState(data.myMaterials);
   const [communityMaterials, setCommunityMaterials] = useState(data.communityMaterials);
   const [viewer, setViewer] = useState(data.viewer);
   const [conversations, setConversations] = useState(data.conversations);
+  const [directMessageThreads, setDirectMessageThreads] = useState(initialDirectMessageThreads);
+  const [announcements, setAnnouncements] = useState<WorkspaceAnnouncement[]>(initialAnnouncements);
+  const [seenAnnouncementIds, setSeenAnnouncementIds] = useState<string[]>([]);
+  const [settingsOpenSignal, setSettingsOpenSignal] = useState(0);
   const [activeConversationId, setActiveConversationId] = useState(data.conversations[0]?.id ?? "");
+  const [activeDirectMessageThreadId, setActiveDirectMessageThreadId] = useState(initialDirectMessageThreads[0]?.id ?? "");
   const [viewMode, setViewMode] = useState<ViewMode>(data.conversations.length > 0 ? "chat" : "scriptPicker");
   const [scriptManagerView, setScriptManagerView] = useState<ScriptManagerView>("mine");
   const [materialManagerView, setMaterialManagerView] = useState<MaterialManagerView>("mine");
@@ -391,9 +407,14 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const [mapSavePending, setMapSavePending] = useState(false);
   const [materialTransferPending, setMaterialTransferPending] = useState(false);
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
+  const [directMessageMenuOpen, setDirectMessageMenuOpen] = useState(false);
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
+  const [directMessagePanelOpen, setDirectMessagePanelOpen] = useState(false);
+  const [directMessagePending, setDirectMessagePending] = useState(false);
   const [isPending, startTransition] = useTransition();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleMenuRef = useRef<HTMLDivElement>(null);
+  const directMessageMenuRef = useRef<HTMLDivElement>(null);
   const materialCreateMenuRef = useRef<HTMLDivElement>(null);
   const materialImportInputRef = useRef<HTMLInputElement>(null);
   const scriptScrollRef = useRef<HTMLDivElement>(null);
@@ -470,6 +491,17 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
   const shouldShowScriptPager = scriptPickerScripts.length > scriptPickerPageSize;
   const activeTokenUsage = activeConversation?.tokenUsage ?? { upstream: 0, downstream: 0, estimated: false };
   const activeStreamingReply = streamingReply?.conversationId === activeConversation?.id ? streamingReply : null;
+  const directMessageNotificationCount = useMemo(
+    () => directMessageThreads.reduce((count, thread) => count + thread.unreadCount, 0),
+    [directMessageThreads]
+  );
+  const seenAnnouncementIdSet = useMemo(() => new Set(seenAnnouncementIds), [seenAnnouncementIds]);
+  const unreadAnnouncementCount = useMemo(
+    () => announcements.filter((announcement) => !seenAnnouncementIdSet.has(announcement.id)).length,
+    [announcements, seenAnnouncementIdSet]
+  );
+  const notificationCount = directMessageNotificationCount + unreadAnnouncementCount;
+  const seenAnnouncementStorageKey = viewer ? `qijing-ai:seen-announcements:${viewer.id}` : "";
   const isBusy = isPending || Boolean(streamingReply);
   const tokenStatsKey = activeTokenUsage.estimated ? "tokenStatsEstimated" : "tokenStats";
   const tokenUsageLabel = t(tokenStatsKey, {
@@ -518,6 +550,13 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       setMaterialSearch("");
       setMaterialStyle("realistic");
       setDetailMaterialId("");
+      setDirectMessageThreads([]);
+      setAnnouncements([]);
+      setSeenAnnouncementIds([]);
+      setActiveDirectMessageThreadId("");
+      setDirectMessageMenuOpen(false);
+      setNotificationPanelOpen(false);
+      setDirectMessagePanelOpen(false);
       setMaterialCreateMenuOpen(false);
       setMaskCreateOpen(false);
       resetMaskCreateDraft();
@@ -539,6 +578,166 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     }
   }
 
+  function upsertDirectMessageThread(nextThread: WorkspaceDirectMessageThread) {
+    setDirectMessageThreads((current) => {
+      const nextThreads = current.filter((thread) => thread.id !== nextThread.id);
+      nextThreads.push(nextThread);
+      nextThreads.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+      return nextThreads;
+    });
+    setActiveDirectMessageThreadId(nextThread.id);
+  }
+
+  function openDirectMessages() {
+    if (!viewer) {
+      requestAuth();
+      return;
+    }
+
+    setDirectMessageMenuOpen(false);
+    setDirectMessagePanelOpen(true);
+    const threadId = activeDirectMessageThreadId || directMessageThreads[0]?.id || "";
+
+    if (threadId) {
+      void handleSelectDirectMessageThread(threadId);
+    }
+  }
+
+  function openNotifications() {
+    if (!viewer) {
+      requestAuth();
+      return;
+    }
+
+    setDirectMessageMenuOpen(false);
+    setNotificationPanelOpen(true);
+    markAnnouncementsSeen();
+  }
+
+  function markAnnouncementsSeen() {
+    const announcementIds = announcements.map((announcement) => announcement.id).filter(Boolean);
+
+    if (announcementIds.length === 0) {
+      return;
+    }
+
+    setSeenAnnouncementIds((current) => {
+      const next = Array.from(new Set([...current, ...announcementIds]));
+
+      if (typeof window !== "undefined" && seenAnnouncementStorageKey) {
+        try {
+          window.localStorage.setItem(seenAnnouncementStorageKey, JSON.stringify(next));
+        } catch {
+          // Ignore storage failures; the in-memory state still clears the current badge.
+        }
+      }
+
+      return next;
+    });
+  }
+
+  async function openFeedback() {
+    if (!viewer) {
+      requestAuth();
+      return;
+    }
+
+    setDirectMessageMenuOpen(false);
+    const popup = window.open("", "zr-feedback", "width=680,height=720");
+
+    try {
+      const response = await fetch(`/api/feedback/url?sourceUrl=${encodeURIComponent(window.location.href)}`, {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = await response.json() as { url?: string };
+
+      if (!payload.url) {
+        throw new Error(t("feedback.invalidUrl"));
+      }
+
+      if (popup) {
+        popup.location.href = payload.url;
+      } else {
+        window.location.assign(payload.url);
+      }
+    } catch (error) {
+      popup?.close();
+      toast.error(t("feedback.openFailed", { message: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+
+  function openSettingsFromAccountMenu() {
+    setDirectMessageMenuOpen(false);
+    setSettingsOpenSignal((signal) => signal + 1);
+  }
+
+  async function handleMessageOwner(ownerId: string, authenticatedViewer = viewer) {
+    if (!authenticatedViewer) {
+      requestAuth((nextViewer) => {
+        void handleMessageOwner(ownerId, nextViewer);
+      });
+      return;
+    }
+
+    setDirectMessageMenuOpen(false);
+    setDirectMessagePanelOpen(true);
+    setDirectMessagePending(true);
+
+    try {
+      const thread = await openHomeDirectMessageThread(ownerId, locale);
+      upsertDirectMessageThread(thread);
+    } catch (error) {
+      toast.error(resolveDirectMessageError(error, t));
+    } finally {
+      setDirectMessagePending(false);
+    }
+  }
+
+  async function handleSendDirectMessage(recipientId: string, content: string) {
+    if (!viewer) {
+      requestAuth();
+      return;
+    }
+
+    setDirectMessagePending(true);
+
+    try {
+      const thread = await sendHomeDirectMessage(recipientId, content, locale);
+      upsertDirectMessageThread(thread);
+    } catch (error) {
+      toast.error(resolveDirectMessageError(error, t));
+    } finally {
+      setDirectMessagePending(false);
+    }
+  }
+
+  async function handleSelectDirectMessageThread(threadId: string) {
+    setDirectMessagePanelOpen(true);
+    setActiveDirectMessageThreadId(threadId);
+
+    const thread = directMessageThreads.find((item) => item.id === threadId);
+
+    if (!thread || thread.unreadCount === 0 || !viewer) {
+      return;
+    }
+
+    setDirectMessagePending(true);
+
+    try {
+      const updatedThread = await markHomeDirectMessageThreadRead(threadId, locale);
+      upsertDirectMessageThread(updatedThread);
+    } catch (error) {
+      toast.error(resolveDirectMessageError(error, t));
+    } finally {
+      setDirectMessagePending(false);
+    }
+  }
+
   useEffect(() => {
     const textarea = textareaRef.current;
 
@@ -549,6 +748,33 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
   }, [draft]);
+
+  useEffect(() => {
+    if (directMessageThreads.length === 0) {
+      setActiveDirectMessageThreadId("");
+      return;
+    }
+
+    if (!directMessageThreads.some((thread) => thread.id === activeDirectMessageThreadId)) {
+      setActiveDirectMessageThreadId(directMessageThreads[0].id);
+    }
+  }, [activeDirectMessageThreadId, directMessageThreads]);
+
+  useEffect(() => {
+    if (!seenAnnouncementStorageKey || typeof window === "undefined") {
+      setSeenAnnouncementIds([]);
+      return;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(seenAnnouncementStorageKey);
+      const parsed = stored ? JSON.parse(stored) : [];
+
+      setSeenAnnouncementIds(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []);
+    } catch {
+      setSeenAnnouncementIds([]);
+    }
+  }, [seenAnnouncementStorageKey]);
 
   useEffect(() => {
     if (!titleMenuOpen) {
@@ -601,6 +827,32 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [materialCreateMenuOpen]);
+
+  useEffect(() => {
+    if (!directMessageMenuOpen) {
+      return;
+    }
+
+    function closeOnOutsidePointer(event: MouseEvent) {
+      if (!directMessageMenuRef.current?.contains(event.target as Node)) {
+        setDirectMessageMenuOpen(false);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setDirectMessageMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [directMessageMenuOpen]);
 
   useEffect(() => {
     if (!maskCreateOpen) {
@@ -4640,7 +4892,10 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             isPending={isPending || materialTransferPending}
             joinedLabel={materialT("joined")}
             joinLabel={materialT("join")}
+            messageOwnerLabel={materialT("messageOwner")}
             material={detailMaterial}
+            onMessageOwner={handleMessageOwner}
+            ownerLabel={materialT("owner")}
             previewAlt={materialT("previewAlt")}
             previewCloseLabel={materialT("previewClose")}
             previewOpenLabel={materialT("previewOpen")}
@@ -4662,6 +4917,7 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
             onEdit={openMaterialEditDialog}
             onExport={(material) => void exportMaterialArchive(material.id)}
             onJoin={handleJoinMaterial}
+            viewerId={viewer?.id ?? null}
           />
         ) : null}
         {maskCreateOpen ? (
@@ -5061,19 +5317,149 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
 
         <div className={cn("border-t border-border/70 p-3", sidebarCollapsed && "hidden lg:hidden")}>
           <div className="flex items-center gap-3 px-1 py-1">
-            <UserAvatar
-              avatarUrl={viewer?.avatarUrl}
-              name={viewer?.displayName ?? viewer?.account ?? t("account.anonymous")}
-              className="h-10 w-10"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground/82">
-                {viewer?.displayName ?? t("account.anonymous")}
-              </p>
-              <p className="truncate text-xs text-foreground/46">
-                {viewer?.account ?? t("account.loginHint")}
-              </p>
-            </div>
+            {viewer ? (
+              <div ref={directMessageMenuRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setDirectMessageMenuOpen((open) => !open)}
+                  className="relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+                  aria-haspopup="menu"
+                  aria-expanded={directMessageMenuOpen}
+                  title={t("account.menu")}
+                >
+                  <UserAvatar
+                    avatarUrl={viewer.avatarUrl}
+                    name={viewer.displayName ?? viewer.account ?? t("account.anonymous")}
+                    className="h-10 w-10"
+                  />
+                  {notificationCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white shadow-sm">
+                      {notificationCount > 99 ? "99+" : notificationCount}
+                    </span>
+                  ) : null}
+                </button>
+                {directMessageMenuOpen ? (
+                  <div
+                    className="absolute bottom-full left-0 z-40 mb-2 w-56 rounded-xl border border-border bg-background p-1 shadow-xl shadow-foreground/10"
+                    role="menu"
+                  >
+                    <button
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openDirectMessages();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-muted"
+                      role="menuitem"
+                    >
+                      <MessagesSquare className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{t("directMessages.title")}</span>
+                        <span className="block truncate text-xs text-foreground/42">
+                          {t("notifications.total", { count: directMessageNotificationCount })}
+                        </span>
+                      </span>
+                      {directMessageNotificationCount > 0 ? (
+                        <Bell className="h-4 w-4 shrink-0 text-rose-500" aria-hidden="true" />
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openNotifications();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-muted"
+                      role="menuitem"
+                    >
+                      <Bell className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{t("notifications.title")}</span>
+                        <span className="block truncate text-xs text-foreground/42">
+                          {t("notifications.total", { count: unreadAnnouncementCount })}
+                        </span>
+                      </span>
+                      {unreadAnnouncementCount > 0 ? (
+                        <Bell className="h-4 w-4 shrink-0 text-rose-500" aria-hidden="true" />
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openSettingsFromAccountMenu();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-muted"
+                      role="menuitem"
+                    >
+                      <Settings className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{homeT("settings.title")}</span>
+                        <span className="block truncate text-xs text-foreground/42">
+                          {homeT("settings.subtitle")}
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void openFeedback();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-muted"
+                      role="menuitem"
+                    >
+                      <ClipboardList className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{t("feedback.title")}</span>
+                        <span className="block truncate text-xs text-foreground/42">
+                          {t("feedback.description")}
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <UserAvatar
+                avatarUrl={viewer?.avatarUrl}
+                name={viewer?.displayName ?? viewer?.account ?? t("account.anonymous")}
+                className="h-10 w-10"
+              />
+            )}
+            {viewer ? (
+              <button
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setDirectMessageMenuOpen((open) => !open);
+                }}
+                className="min-w-0 flex-1 rounded-md px-1 py-1 text-left transition hover:bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+                aria-haspopup="menu"
+                aria-expanded={directMessageMenuOpen}
+              >
+                <span className="block truncate text-sm font-medium text-foreground/82">
+                  {viewer.displayName ?? t("account.anonymous")}
+                </span>
+                <span className="block truncate text-xs text-foreground/46">
+                  {viewer.account ?? t("account.loginHint")}
+                </span>
+              </button>
+            ) : (
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground/82">
+                  {t("account.anonymous")}
+                </p>
+                <p className="truncate text-xs text-foreground/46">
+                  {t("account.loginHint")}
+                </p>
+              </div>
+            )}
             {!viewer ? (
               <button
                 type="button"
@@ -5146,7 +5532,12 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
               >
                 {tokenUsageLabel}
               </span>
-              <HeaderActions viewer={viewer} onLoginClick={() => requestAuth()} onViewerChange={handleViewerChange} />
+              <HeaderActions
+                settingsOpenSignal={settingsOpenSignal}
+                viewer={viewer}
+                onLoginClick={() => requestAuth()}
+                onViewerChange={handleViewerChange}
+              />
             </div>
           </header>
         ) : null}
@@ -5548,6 +5939,42 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
           </>
         )}
       </section>
+      <DirectMessagePanel
+        activeThreadId={activeDirectMessageThreadId}
+        isPending={directMessagePending}
+        labels={{
+          close: t("directMessages.close"),
+          empty: t("directMessages.empty"),
+          emptyBody: t("directMessages.emptyBody"),
+          messageTime: t("directMessages.sendHint"),
+          noMessages: t("directMessages.noMessages"),
+          replyPlaceholder: t("directMessages.replyPlaceholder"),
+          send: t("directMessages.send"),
+          threadList: t("directMessages.threadList"),
+          title: t("directMessages.title"),
+          unread: t("directMessages.unread")
+        }}
+        onClose={() => setDirectMessagePanelOpen(false)}
+        onSelectThread={(threadId) => void handleSelectDirectMessageThread(threadId)}
+        onSend={handleSendDirectMessage}
+        open={directMessagePanelOpen}
+        threads={directMessageThreads}
+      />
+      <NotificationPanel
+        announcements={announcements}
+        labels={{
+          announcementFallbackTitle: t("notifications.announcementFallbackTitle"),
+          announcementsTitle: t("notifications.announcementsTitle"),
+          close: t("notifications.close"),
+          empty: t("notifications.empty"),
+          title: t("notifications.title")
+        }}
+        onClose={() => {
+          markAnnouncementsSeen();
+          setNotificationPanelOpen(false);
+        }}
+        open={notificationPanelOpen}
+      />
       <AuthDialog
         open={authDialogOpen}
         onClose={() => {
@@ -5558,6 +5985,28 @@ export function HomeWorkspace({ data }: { data: WorkspaceData }) {
       />
     </div>
   );
+}
+
+function resolveDirectMessageError(error: unknown, t: (key: string, values?: Record<string, string | number>) => string) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.includes("DIRECT_MESSAGE_RECIPIENT_NOT_FOUND")) {
+    return t("directMessages.errors.recipientNotFound");
+  }
+
+  if (message.includes("DIRECT_MESSAGE_SELF_NOT_ALLOWED")) {
+    return t("directMessages.errors.self");
+  }
+
+  if (message.includes("DIRECT_MESSAGE_CONTENT_REQUIRED")) {
+    return t("directMessages.errors.contentRequired");
+  }
+
+  if (message.includes("DIRECT_MESSAGE_CONTENT_TOO_LONG")) {
+    return t("directMessages.errors.contentTooLong");
+  }
+
+  return t("directMessages.errors.generic");
 }
 
 function applyMapLayoutUpdatesToDraft(

@@ -35,6 +35,7 @@ export type WorkspaceMaterialLibrarySource = WorkspaceScriptLibrarySource;
 export type WorkspaceMaterial = {
   id: string;
   slug: string;
+  owner?: WorkspaceUserSummary | null;
   category: WorkspaceMaterialCategory;
   style: WorkspaceMaterialStyle;
   title: string;
@@ -44,6 +45,13 @@ export type WorkspaceMaterial = {
   communityVisible: boolean;
   inLibrary: boolean;
   librarySource?: WorkspaceMaterialLibrarySource;
+};
+
+export type WorkspaceUserSummary = {
+  id: string;
+  account: string | null;
+  avatarUrl: string | null;
+  displayName: string;
 };
 
 export type MaskDraftPatch = {
@@ -682,6 +690,42 @@ export type WorkspaceConversation = {
   messages: WorkspaceMessage[];
 };
 
+export type WorkspaceDirectMessage = {
+  id: string;
+  content: string;
+  createdAt: string;
+  isMine: boolean;
+  readAt: string | null;
+  recipientId: string;
+  senderId: string;
+};
+
+export type WorkspaceDirectMessageThread = {
+  id: string;
+  otherUser: WorkspaceUserSummary;
+  unreadCount: number;
+  updatedAt: string;
+  lastMessage: WorkspaceDirectMessage | null;
+  messages: WorkspaceDirectMessage[];
+};
+
+export type WorkspaceNotifications = {
+  total: number;
+  unreadDirectMessages: number;
+  unifiedAnnouncements: number;
+};
+
+export type WorkspaceAnnouncement = {
+  content: string;
+  createdAt: string | null;
+  id: string;
+  scope: "global" | "service";
+  serviceId: string | null;
+  sortOrder: number;
+  title: string;
+  updatedAt: string | null;
+};
+
 export type WorkspaceData = {
   viewer: AuthViewer | null;
   myScripts: WorkspaceScript[];
@@ -689,5 +733,8 @@ export type WorkspaceData = {
   myMaterials: WorkspaceMaterial[];
   communityMaterials: WorkspaceMaterial[];
   conversations: WorkspaceConversation[];
+  directMessageThreads?: WorkspaceDirectMessageThread[];
+  announcements?: WorkspaceAnnouncement[];
+  notifications?: WorkspaceNotifications;
   persistenceAvailable: boolean;
 };

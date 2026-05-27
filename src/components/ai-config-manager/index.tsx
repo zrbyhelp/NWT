@@ -29,7 +29,7 @@ import {
   saveHomeVectorModel
 } from "@/app/[locale]/actions";
 import { requestClientAuth } from "@/lib/auth-client";
-import { isAuthRequiredError } from "@/lib/auth-types";
+import { isAuthRequiredError, type AuthViewer } from "@/lib/auth-types";
 import type {
   AiConfigSnapshot,
   ProviderModelOption,
@@ -65,7 +65,7 @@ import type {
   VectorForm
 } from "./types";
 
-export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
+export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?: AuthViewer | null }) {
   const t = useTranslations("home.settings.ai");
   const [config, setConfig] = useState<AiConfigSnapshot | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -84,6 +84,11 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
   });
   const [isPending, startTransition] = useTransition();
   const activeProviders = useMemo(() => config?.providers.filter((provider) => provider.enabled) ?? [], [config]);
+  const isAdmin = viewer?.role === "ADMIN";
+
+  function canManageModel(model: { isGlobal: boolean; providerUserId: string }) {
+    return !model.isGlobal || model.providerUserId === viewer?.id;
+  }
 
   function applyConfigSnapshot(snapshot: AiConfigSnapshot) {
     const firstProviderId = snapshot.providers[0]?.id ?? "";
@@ -415,7 +420,8 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                       modelId: model.modelId,
                       temperature: model.temperature,
                       enabled: model.enabled,
-                      isDefault: model.isDefault
+                      isDefault: model.isDefault,
+                      isGlobal: model.isGlobal
                     });
                     setFormDialog("llm");
                     void loadProviderModels("llm", model.providerId);
@@ -437,11 +443,13 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                           modelId: model.modelId,
                           temperature: model.temperature,
                           enabled: model.enabled,
-                          isDefault: true
+                          isDefault: true,
+                          isGlobal: model.isGlobal
                         }),
                       t("common.saved")
                     );
                   }}
+                  canManage={canManageModel(model)}
                 />
               ))}
             </div>
@@ -488,6 +496,9 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
             <NumberField label={t("fields.temperature")} value={llmForm.temperature} min={0} max={2} step={0.1} onChange={(value) => setLlmForm((current) => ({ ...current, temperature: value }))} />
             <CheckboxField label={t("fields.enabled")} checked={llmForm.enabled} onChange={(checked) => setLlmForm((current) => ({ ...current, enabled: checked }))} />
             <CheckboxField label={t("fields.isDefault")} checked={llmForm.isDefault} onChange={(checked) => setLlmForm((current) => ({ ...current, isDefault: checked }))} />
+            {isAdmin ? (
+              <CheckboxField label={t("fields.isGlobal")} checked={llmForm.isGlobal} onChange={(checked) => setLlmForm((current) => ({ ...current, isGlobal: checked }))} />
+            ) : null}
             {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
             <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />
           </form>
@@ -527,7 +538,8 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                         displayName: model.displayName,
                         modelId: model.modelId,
                         enabled: model.enabled,
-                        isDefault: model.isDefault
+                        isDefault: model.isDefault,
+                        isGlobal: model.isGlobal
                       });
                       setFormDialog("images");
                       void loadProviderModels("images", model.providerId);
@@ -548,11 +560,13 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                             displayName: model.displayName,
                             modelId: model.modelId,
                             enabled: model.enabled,
-                            isDefault: true
+                            isDefault: true,
+                            isGlobal: model.isGlobal
                           }),
                         t("common.saved")
                       );
                     }}
+                    canManage={canManageModel(model)}
                   />
                 ))}
               </div>
@@ -598,6 +612,9 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
               />
               <CheckboxField label={t("fields.enabled")} checked={imageForm.enabled} onChange={(checked) => setImageForm((current) => ({ ...current, enabled: checked }))} />
               <CheckboxField label={t("fields.isDefault")} checked={imageForm.isDefault} onChange={(checked) => setImageForm((current) => ({ ...current, isDefault: checked }))} />
+              {isAdmin ? (
+                <CheckboxField label={t("fields.isGlobal")} checked={imageForm.isGlobal} onChange={(checked) => setImageForm((current) => ({ ...current, isGlobal: checked }))} />
+              ) : null}
               {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
               <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />
             </form>
@@ -739,16 +756,17 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                 key={model.id}
                 model={model}
                 onEdit={() => {
-                  setVectorForm({
-                    id: model.id,
-                    providerId: model.providerId,
-                    displayName: model.displayName,
-                    modelId: model.modelId,
-                    dimensions: model.dimensions,
-                    maxInputTokens: model.maxInputTokens,
-                    enabled: model.enabled,
-                    isDefault: model.isDefault
-                  });
+                    setVectorForm({
+                      id: model.id,
+                      providerId: model.providerId,
+                      displayName: model.displayName,
+                      modelId: model.modelId,
+                      dimensions: model.dimensions,
+                      maxInputTokens: model.maxInputTokens,
+                      enabled: model.enabled,
+                      isDefault: model.isDefault,
+                      isGlobal: model.isGlobal
+                    });
                   setFormDialog("vectors");
                   void loadProviderModels("vectors", model.providerId);
                 }}
@@ -770,11 +788,13 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
                         dimensions: model.dimensions,
                         maxInputTokens: model.maxInputTokens,
                         enabled: model.enabled,
-                        isDefault: true
+                        isDefault: true,
+                        isGlobal: model.isGlobal
                       }),
                     t("common.saved")
                   );
                 }}
+                canManage={canManageModel(model)}
               />
             ))}
           </div>
@@ -824,6 +844,9 @@ export function AiConfigManager({ mode }: { mode: AiConfigMode }) {
           </div>
           <CheckboxField label={t("fields.enabled")} checked={vectorForm.enabled} onChange={(checked) => setVectorForm((current) => ({ ...current, enabled: checked }))} />
           <CheckboxField label={t("fields.isDefault")} checked={vectorForm.isDefault} onChange={(checked) => setVectorForm((current) => ({ ...current, isDefault: checked }))} />
+          {isAdmin ? (
+            <CheckboxField label={t("fields.isGlobal")} checked={vectorForm.isGlobal} onChange={(checked) => setVectorForm((current) => ({ ...current, isGlobal: checked }))} />
+          ) : null}
           {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
           <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />
         </form>

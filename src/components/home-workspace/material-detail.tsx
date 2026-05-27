@@ -5,11 +5,13 @@ import {
   Download,
   Loader2,
   Maximize2,
+  MessageCircle,
   Pencil,
   Plus,
   Trash2,
   X
 } from "lucide-react";
+import { UserAvatar } from "@/components/user-avatar";
 import { cn } from "@/lib/utils";
 import type {
   ItemDraftPatch,
@@ -233,6 +235,7 @@ function MaterialDetailModal({
   isPending,
   joinedLabel,
   joinLabel,
+  messageOwnerLabel,
   material,
   onClose,
   onDelete,
@@ -240,6 +243,8 @@ function MaterialDetailModal({
   onEdit,
   onExport,
   onJoin,
+  onMessageOwner,
+  ownerLabel,
   previewAlt,
   previewCloseLabel,
   previewOpenLabel,
@@ -250,7 +255,8 @@ function MaterialDetailModal({
   sourceLabel,
   styleLabel,
   t,
-  typeLabel
+  typeLabel,
+  viewerId
 }: {
   closeLabel: string;
   canDelete: boolean;
@@ -265,6 +271,7 @@ function MaterialDetailModal({
   isPending: boolean;
   joinedLabel: string;
   joinLabel: string;
+  messageOwnerLabel: string;
   material: WorkspaceMaterial;
   onClose: () => void;
   onDelete: (material: WorkspaceMaterial) => void;
@@ -272,6 +279,8 @@ function MaterialDetailModal({
   onEdit: (material: WorkspaceMaterial) => void;
   onExport: (material: WorkspaceMaterial) => void;
   onJoin: (materialId: string) => void;
+  onMessageOwner?: (ownerId: string) => void;
+  ownerLabel: string;
   previewAlt: string;
   previewCloseLabel: string;
   previewOpenLabel: string;
@@ -283,10 +292,12 @@ function MaterialDetailModal({
   styleLabel: string;
   t: (key: string, values?: Record<string, string | number>) => string;
   typeLabel: string;
+  viewerId?: string | null;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const detailPreviewUrl = getMaterialDetailPreviewUrl(material);
   const shareVisible = canShare ? true : material.communityVisible;
+  const canMessageOwner = Boolean(isCommunityView && material.owner && material.owner.id !== viewerId && material.owner.id !== "default-local");
 
   useEffect(() => {
     if (!previewOpen) {
@@ -366,21 +377,51 @@ function MaterialDetailModal({
 
         <div className="shrink-0 border-t border-border bg-background px-4 py-3">
           {isCommunityView ? (
-            <button
-              type="button"
-              onClick={() => onJoin(material.id)}
-              disabled={isPending || material.inLibrary}
-              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-sm font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44"
-            >
-              {isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : material.inLibrary ? (
-                <Check className="h-4 w-4" aria-hidden="true" />
-              ) : (
-                <Plus className="h-4 w-4" aria-hidden="true" />
-              )}
-              {material.inLibrary ? joinedLabel : joinLabel}
-            </button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {material.owner ? (
+                <div className="flex min-w-0 items-center gap-3">
+                  <UserAvatar
+                    avatarUrl={material.owner.avatarUrl}
+                    name={material.owner.displayName || material.owner.account}
+                    className="h-10 w-10"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs text-foreground/42">{ownerLabel}</p>
+                    <p className="truncate text-sm font-medium text-foreground/82">
+                      {material.owner.displayName || material.owner.account}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                {canMessageOwner && onMessageOwner ? (
+                  <button
+                    type="button"
+                    onClick={() => onMessageOwner(material.owner?.id ?? "")}
+                    disabled={isPending}
+                    className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full border border-border bg-background px-4 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-55 sm:flex-none"
+                  >
+                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                    {messageOwnerLabel}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => onJoin(material.id)}
+                  disabled={isPending || material.inLibrary}
+                  className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-full bg-foreground px-4 text-sm font-medium text-background transition hover:bg-foreground/88 disabled:cursor-not-allowed disabled:bg-muted disabled:text-foreground/44 sm:flex-none"
+                >
+                  {isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : material.inLibrary ? (
+                    <Check className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {material.inLibrary ? joinedLabel : joinLabel}
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-2">
               {canShare ? (

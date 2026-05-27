@@ -21,14 +21,12 @@ export function chooseDefaultModel<T extends DefaultCandidate>(models: T[]) {
 
 export function shouldMakeSavedModelDefault({
   enabled,
-  hasUsableDefault,
   providerEnabled,
   requestedDefault
 }: {
   enabled: boolean;
-  hasUsableDefault: boolean;
   providerEnabled: boolean;
   requestedDefault: boolean;
 }) {
-  return enabled && providerEnabled && (requestedDefault || !hasUsableDefault);
+  return enabled && providerEnabled && requestedDefault;
 }

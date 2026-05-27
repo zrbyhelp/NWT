@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import zhMessages from "../messages/zh-CN.json";
 import { AuthPanel } from "@/components/auth-panel";
@@ -80,14 +80,12 @@ vi.mock("sonner", () => ({
 }));
 
 describe("auth components", () => {
-  it("switches between login and register in the auth panel", () => {
+  it("renders the unified login entry in the auth panel", () => {
     render(<AuthPanel variant="page" />);
 
-    expect(screen.getByRole("heading", { name: "登录栖境AI" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "还没有账号？立即注册" }));
-
-    expect(screen.getByRole("heading", { name: "注册账号" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "统一登录栖境AI" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前往统一登录" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("账号")).not.toBeInTheDocument();
   });
 
   it("keeps logout inside settings instead of the header account chip", () => {
@@ -99,7 +97,7 @@ describe("auth components", () => {
 
     expect(screen.queryByText("reader")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "退出登录" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "体验设置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置" })).toBeInTheDocument();
   });
 });
 

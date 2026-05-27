@@ -76,10 +76,12 @@ type AnySettingsTab = SettingsTab | AiSettingsTab | MeshSettingsTab;
 export function SettingsDialog({
   onLoginClick,
   onViewerChange,
+  openSignal = 0,
   viewer
 }: {
   onLoginClick?: () => void;
   onViewerChange?: (viewer: AuthViewer | null) => void;
+  openSignal?: number;
   viewer?: AuthViewer | null;
 }) {
   const locale = useLocale() as Locale;
@@ -104,6 +106,7 @@ export function SettingsDialog({
   const [preferencePending, startPreferenceTransition] = useTransition();
   const [isAccountPending, startAccountTransition] = useTransition();
   const lastSavedDisplayNameRef = useRef("");
+  const lastOpenSignalRef = useRef(openSignal);
   const tabs: Array<{ id: AnySettingsTab; icon: React.ElementType }> = [
     { id: "general", icon: Languages },
     { id: "account", icon: UserRound },
@@ -225,6 +228,23 @@ export function SettingsDialog({
     setOpen(true);
   }
 
+  useEffect(() => {
+    if (openSignal === lastOpenSignalRef.current) {
+      return;
+    }
+
+    lastOpenSignalRef.current = openSignal;
+    setProfileForm({
+      avatarUrl: viewer?.avatarUrl ?? "",
+      displayName: viewer?.displayName ?? viewer?.account ?? ""
+    });
+    lastSavedDisplayNameRef.current = viewer?.displayName ?? viewer?.account ?? "";
+    setPasswordForm({ currentPassword: "", newPassword: "" });
+    setAdminSettingsLoaded(false);
+    setAdminSettingsLoading(activeSettingsTab === "admin" && isAdmin);
+    setOpen(true);
+  }, [activeSettingsTab, isAdmin, openSignal, viewer]);
+
   function selectSettingsTab(nextTab: AnySettingsTab) {
     setActiveTab(nextTab);
     setAdminSettingsLoading(nextTab === "admin" && isAdmin && !adminSettingsLoaded);
@@ -276,11 +296,11 @@ export function SettingsDialog({
 
   function handleLogout() {
     startAccountTransition(async () => {
-      await logoutHomeAccount();
+      const result = await logoutHomeAccount();
       onViewerChange?.(null);
       setOpen(false);
       toast.success(authT("logoutSuccess"));
-      router.refresh();
+      window.location.assign(result.logoutUrl ?? localePath(locale));
     });
   }
 
@@ -537,14 +557,6 @@ export function SettingsDialog({
                               </h3>
                               <p className="mt-1 text-xs text-foreground/50">{t("account.passwordDescription")}</p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => setPasswordDialogOpen(true)}
-                              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground/72 transition hover:bg-muted hover:text-foreground"
-                            >
-                              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
-                              {t("account.openPasswordDialog")}
-                            </button>
                           </div>
                         </section>
                       </>
@@ -632,7 +644,7 @@ export function SettingsDialog({
                 ) : null}
 
                 {activeSettingsTab === "providers" || activeSettingsTab === "llm" || activeSettingsTab === "vectors" || activeSettingsTab === "images" || activeSettingsTab === "instantMesh" ? (
-                  <AiConfigManager mode={activeSettingsTab} />
+                  <AiConfigManager mode={activeSettingsTab} viewer={viewer} />
                 ) : null}
 
                 {activeSettingsTab === "about" ? (

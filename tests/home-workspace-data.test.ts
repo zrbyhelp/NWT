@@ -89,6 +89,7 @@ type MaterialRecord = {
 const mocks = vi.hoisted(() => ({
   prisma: {
     appUser: {
+      findUnique: vi.fn(),
       upsert: vi.fn()
     },
     storyScript: {
@@ -120,6 +121,16 @@ const mocks = vi.hoisted(() => ({
     },
     chatMessage: {
       create: vi.fn()
+    },
+    directMessageThread: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      upsert: vi.fn()
+    },
+    directMessage: {
+      create: vi.fn(),
+      updateMany: vi.fn()
     },
     $transaction: vi.fn()
   }
@@ -323,6 +334,7 @@ describe("home workspace data", () => {
       }
     ]);
     mocks.prisma.conversation.findMany.mockResolvedValue([]);
+    mocks.prisma.directMessageThread.findMany.mockResolvedValue([]);
     mocks.prisma.$transaction.mockImplementation(async (callback: (tx: typeof mocks.prisma) => unknown) => callback(mocks.prisma));
   });
 
@@ -330,7 +342,7 @@ describe("home workspace data", () => {
     vi.unstubAllGlobals();
   });
 
-  it("creates the default local user and initializes the base script library entry", async () => {
+  it("creates the default local user and initializes the base script library entry without default materials", async () => {
     const { getHomeWorkspaceData } = await import("@/lib/home-workspace");
 
     const data = await getHomeWorkspaceData("zh-CN");
@@ -363,21 +375,8 @@ describe("home workspace data", () => {
         source: "COMMUNITY_ADDED"
       }
     });
-    expect(mocks.prisma.storyMaterial.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { slug: "echo-mask" }
-      })
-    );
-    expect(mocks.prisma.storyMaterialLibraryEntry.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          userId_materialId: {
-            userId: "default-local",
-            materialId: "echo-mask-id"
-          }
-        }
-      })
-    );
+    expect(mocks.prisma.storyMaterial.upsert).not.toHaveBeenCalled();
+    expect(mocks.prisma.storyMaterialLibraryEntry.upsert).not.toHaveBeenCalled();
     expect(mocks.prisma.conversation.findMany).not.toHaveBeenCalled();
     expect(data.persistenceAvailable).toBe(true);
     expect(data.viewer).toBeNull();
@@ -1463,7 +1462,8 @@ describe("home workspace data", () => {
 
     expect(mocks.prisma.storyMaterial.update).toHaveBeenCalledWith({
       where: { id: "created-mask-id" },
-      data: { communityVisible: true }
+      data: { communityVisible: true },
+      include: { ownerUser: true }
     });
     expect(material).toMatchObject({
       communityVisible: true,

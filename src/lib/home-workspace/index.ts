@@ -53,6 +53,8 @@ import {
   uploadScenePanoramaMotherImage
 } from "@/lib/storage/material";
 import { syncMapMaterialProjection } from "@/lib/graph/map-material";
+import { getUnifiedLoginConfig } from "@/lib/unified-login-config";
+import { fetchServiceAnnouncements } from "@/lib/unified-login";
 import {
   buildMapGraphSignature,
   buildMapImageNodeBatches,
@@ -139,6 +141,11 @@ export type {
   WorkspaceMessage,
   WorkspaceTokenUsage,
   WorkspaceConversation,
+  WorkspaceDirectMessage,
+  WorkspaceDirectMessageThread,
+  WorkspaceNotifications,
+  WorkspaceAnnouncement,
+  WorkspaceUserSummary,
   WorkspaceData
 } from "./types";
 import type {
@@ -217,6 +224,11 @@ import type {
   WorkspaceMessage,
   WorkspaceTokenUsage,
   WorkspaceConversation,
+  WorkspaceDirectMessage,
+  WorkspaceDirectMessageThread,
+  WorkspaceNotifications,
+  WorkspaceAnnouncement,
+  WorkspaceUserSummary,
   WorkspaceData
 } from "./types";
 import {
@@ -228,9 +240,7 @@ import {
   communityAddedSource,
   defaultSceneScalePreset,
   sceneScalePresetMeters,
-  defaultMaterialSlugs,
-  builtInScripts,
-  builtInMaterials
+  builtInScripts
 } from "./defaults";
 
 export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceData> {
@@ -240,7 +250,7 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
 
     await ensureHomeWorkspaceDefaults(workspaceUserId);
 
-    const [communityScripts, libraryEntries, communityMaterials, materialLibraryEntries, conversations] = await Promise.all([
+    const [communityScripts, libraryEntries, communityMaterials, materialLibraryEntries, conversations, directMessageThreads] = await Promise.all([
       prisma.storyScript.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.storyScriptLibraryEntry.findMany({
         where: { userId: workspaceUserId },
@@ -249,11 +259,12 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
       }),
       prisma.storyMaterial.findMany({
         where: { communityVisible: true },
+        include: { ownerUser: true },
         orderBy: { createdAt: "asc" }
       }),
       prisma.storyMaterialLibraryEntry.findMany({
         where: { userId: workspaceUserId },
-        include: { material: true },
+        include: { material: { include: { ownerUser: true } } },
         orderBy: { createdAt: "asc" }
       }),
       viewer
@@ -261,6 +272,19 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
             where: { userId: viewer.id },
             include: {
               script: true,
+              messages: { orderBy: { createdAt: "asc" } }
+            },
+            orderBy: { updatedAt: "desc" }
+          })
+        : Promise.resolve([]),
+      viewer
+        ? prisma.directMessageThread.findMany({
+            where: {
+              OR: [{ participantAId: viewer.id }, { participantBId: viewer.id }]
+            },
+            include: {
+              participantA: true,
+              participantB: true,
               messages: { orderBy: { createdAt: "asc" } }
             },
             orderBy: { updatedAt: "desc" }
@@ -273,6 +297,12 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
     const librarySourceByMaterialId = new Map(
       materialLibraryEntries.map((entry) => [entry.materialId, entry.source as WorkspaceMaterialLibrarySource])
     );
+
+    const workspaceDirectMessageThreads = viewer
+      ? directMessageThreads.map((thread) => mapDirectMessageThread(thread, viewer.id))
+      : [];
+    const unreadDirectMessages = workspaceDirectMessageThreads.reduce((count, thread) => count + thread.unreadCount, 0);
+    const announcements = viewer ? await getUnifiedAnnouncements() : [];
 
     return {
       viewer,
@@ -315,6 +345,13 @@ export async function getHomeWorkspaceData(locale: Locale): Promise<WorkspaceDat
           messages
         };
       }),
+      directMessageThreads: workspaceDirectMessageThreads,
+      announcements,
+      notifications: {
+        total: unreadDirectMessages + announcements.length,
+        unreadDirectMessages,
+        unifiedAnnouncements: announcements.length
+      },
       persistenceAvailable: true
     };
   } catch {
@@ -508,7 +545,7 @@ export async function addMaterialToLibrary(materialId: string, locale: Locale) {
       source: communityAddedSource
     },
     include: {
-      material: true
+      material: { include: { ownerUser: true } }
     }
   });
 
@@ -539,6 +576,7 @@ export async function createMaskMaterial(input: MaskMaterialCreateInput, boardIm
   const material = await prisma.storyMaterial.create({
     data: {
       slug: createUserMaterialSlug("mask", name),
+      ownerUserId: viewer.id,
       category: "MASK",
       style: toStoryMaterialStyle(input.style),
       titleZh: name,
@@ -554,7 +592,8 @@ export async function createMaskMaterial(input: MaskMaterialCreateInput, boardIm
           source: "SELF_CREATED"
         }
       }
-    }
+    },
+    include: { ownerUser: true }
   });
 
   revalidatePath(`/${locale}`);
@@ -587,7 +626,7 @@ export async function updateMaskMaterial(
       source: "SELF_CREATED"
     },
     include: {
-      material: true
+      material: { include: { ownerUser: true } }
     }
   });
 
@@ -618,22 +657,23 @@ export async function updateMaskMaterial(
     where: {
       id: entry.material.id
     },
-      data: {
-        category: "MASK",
-        style: toStoryMaterialStyle(input.style),
-        titleZh: name,
-        titleEn: name,
-        descriptionZh: intro || name,
-        descriptionEn: intro || name,
+    data: {
+      category: "MASK",
+      style: toStoryMaterialStyle(input.style),
+      titleZh: name,
+      titleEn: name,
+      descriptionZh: intro || name,
+      descriptionEn: intro || name,
+      previewUrl,
+      metadata: buildMaskMaterialMetadata(
+        input,
         previewUrl,
-        metadata: buildMaskMaterialMetadata(
-          input,
-          previewUrl,
-          boardImageSource ?? input.boardImageSource ?? null
-        ),
-        communityVisible: true
-      }
-    });
+        boardImageSource ?? input.boardImageSource ?? null
+      ),
+      communityVisible: true
+    },
+    include: { ownerUser: true }
+  });
 
   revalidatePath(`/${locale}`);
 
@@ -662,6 +702,7 @@ export async function createCreatureMaterial(input: CreatureMaterialCreateInput,
   const material = await prisma.storyMaterial.create({
     data: {
       slug: createUserMaterialSlug("creature", name),
+      ownerUserId: viewer.id,
       category: "CREATURE",
       style: toStoryMaterialStyle(input.style),
       titleZh: name,
@@ -677,7 +718,8 @@ export async function createCreatureMaterial(input: CreatureMaterialCreateInput,
           source: "SELF_CREATED"
         }
       }
-    }
+    },
+    include: { ownerUser: true }
   });
 
   revalidatePath(`/${locale}`);
@@ -710,7 +752,7 @@ export async function updateCreatureMaterial(
       source: "SELF_CREATED"
     },
     include: {
-      material: true
+      material: { include: { ownerUser: true } }
     }
   });
 
@@ -741,22 +783,23 @@ export async function updateCreatureMaterial(
     where: {
       id: entry.material.id
     },
-      data: {
-        category: "CREATURE",
-        style: toStoryMaterialStyle(input.style),
-        titleZh: name,
-        titleEn: name,
-        descriptionZh: description || name,
-        descriptionEn: description || name,
+    data: {
+      category: "CREATURE",
+      style: toStoryMaterialStyle(input.style),
+      titleZh: name,
+      titleEn: name,
+      descriptionZh: description || name,
+      descriptionEn: description || name,
+      previewUrl,
+      metadata: buildCreatureMaterialMetadata(
+        input,
         previewUrl,
-        metadata: buildCreatureMaterialMetadata(
-          input,
-          previewUrl,
-          boardImageSource ?? input.boardImageSource ?? null
-        ),
-        communityVisible: true
-      }
-    });
+        boardImageSource ?? input.boardImageSource ?? null
+      ),
+      communityVisible: true
+    },
+    include: { ownerUser: true }
+  });
 
   revalidatePath(`/${locale}`);
 
@@ -812,6 +855,7 @@ export async function createItemMaterial(
     const material = await prisma.storyMaterial.create({
       data: {
         slug: createUserMaterialSlug("item", name),
+        ownerUserId: viewer.id,
         category: "ITEM",
         style: toStoryMaterialStyle(input.style),
         titleZh: name,
@@ -871,7 +915,7 @@ export async function updateItemMaterial(
         source: "SELF_CREATED"
       },
       include: {
-        material: true
+        material: { include: { ownerUser: true } }
       }
     });
 
@@ -931,7 +975,8 @@ export async function updateItemMaterial(
         previewUrl,
         metadata: buildItemMaterialMetadata(input, boardUrl, boardImageSource, modelInputImageUrl, viewImageUrls),
         communityVisible: true
-      }
+      },
+      include: { ownerUser: true }
     });
 
     revalidatePath(`/${locale}`);
@@ -1022,6 +1067,7 @@ export async function createSceneMaterial(input: SceneMaterialCreateInput, uploa
     const material = await prisma.storyMaterial.create({
       data: {
         slug: createUserMaterialSlug("scene", name),
+        ownerUserId: viewer.id,
         category: "SCENE",
         style: toStoryMaterialStyle(input.style),
         titleZh: name,
@@ -1037,7 +1083,8 @@ export async function createSceneMaterial(input: SceneMaterialCreateInput, uploa
             source: "SELF_CREATED"
           }
         }
-      }
+      },
+      include: { ownerUser: true }
     });
 
     revalidatePath(`/${locale}`);
@@ -1153,7 +1200,7 @@ export async function updateSceneMaterial(
         source: "SELF_CREATED"
       },
       include: {
-        material: true
+        material: { include: { ownerUser: true } }
       }
     });
 
@@ -1175,7 +1222,8 @@ export async function updateSceneMaterial(
         previewUrl: getScenePreviewUrl(input.blocks),
         metadata: buildSceneMaterialMetadata(input),
         communityVisible: true
-      }
+      },
+      include: { ownerUser: true }
     });
 
     revalidatePath(`/${locale}`);
@@ -1223,6 +1271,7 @@ export async function createMapMaterial(
       const createdMaterial = await tx.storyMaterial.create({
         data: {
           slug: createUserMaterialSlug("map", name),
+          ownerUserId: viewer.id,
           category: "MAP",
           style: toStoryMaterialStyle(metadata.style),
           titleZh: name,
@@ -1238,7 +1287,8 @@ export async function createMapMaterial(
               source: "SELF_CREATED"
             }
           }
-        }
+        },
+        include: { ownerUser: true }
       });
 
       persistenceStage = "graph";
@@ -1284,7 +1334,7 @@ export async function updateMapMaterial(
           source: "SELF_CREATED"
         },
         include: {
-          material: true
+          material: { include: { ownerUser: true } }
         }
       });
 
@@ -1320,7 +1370,8 @@ export async function updateMapMaterial(
           previewUrl: mapImage?.url ?? null,
           metadata,
           communityVisible: true
-        }
+        },
+        include: { ownerUser: true }
       });
 
       persistenceStage = "graph";
@@ -2224,7 +2275,7 @@ export async function deleteSelfCreatedMaterial(materialId: string, locale: Loca
       source: "SELF_CREATED"
     },
     include: {
-      material: true
+      material: { include: { ownerUser: true } }
     }
   });
 
@@ -2252,7 +2303,7 @@ export async function setMaterialCommunitySharing(materialId: string, _shared: b
       source: "SELF_CREATED"
     },
     include: {
-      material: true
+      material: { include: { ownerUser: true } }
     }
   });
 
@@ -2266,7 +2317,8 @@ export async function setMaterialCommunitySharing(materialId: string, _shared: b
     },
     data: {
       communityVisible: true
-    }
+    },
+    include: { ownerUser: true }
   });
 
   revalidatePath(`/${locale}`);
@@ -2275,6 +2327,145 @@ export async function setMaterialCommunitySharing(materialId: string, _shared: b
     inLibrary: true,
     librarySource: "SELF_CREATED"
   });
+}
+
+export async function openDirectMessageThread(recipientId: string, locale: Locale) {
+  const viewer = await requireAuth();
+  const recipient = await prisma.appUser.findUnique({ where: { id: recipientId } });
+
+  if (!recipient || recipient.id === defaultUserId) {
+    throw new Error("DIRECT_MESSAGE_RECIPIENT_NOT_FOUND");
+  }
+
+  if (recipient.id === viewer.id) {
+    throw new Error("DIRECT_MESSAGE_SELF_NOT_ALLOWED");
+  }
+
+  const [participantAId, participantBId] = sortDirectMessageParticipantIds(viewer.id, recipient.id);
+  const thread = await prisma.directMessageThread.upsert({
+    where: {
+      participantAId_participantBId: {
+        participantAId,
+        participantBId
+      }
+    },
+    update: {},
+    create: {
+      participantAId,
+      participantBId
+    },
+    include: {
+      participantA: true,
+      participantB: true,
+      messages: { orderBy: { createdAt: "asc" } }
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapDirectMessageThread(thread, viewer.id);
+}
+
+export async function sendDirectMessage(recipientId: string, content: string, locale: Locale) {
+  const viewer = await requireAuth();
+  const normalizedContent = content.trim();
+
+  if (!normalizedContent) {
+    throw new Error("DIRECT_MESSAGE_CONTENT_REQUIRED");
+  }
+
+  if (normalizedContent.length > 2000) {
+    throw new Error("DIRECT_MESSAGE_CONTENT_TOO_LONG");
+  }
+
+  const recipient = await prisma.appUser.findUnique({ where: { id: recipientId } });
+
+  if (!recipient || recipient.id === defaultUserId) {
+    throw new Error("DIRECT_MESSAGE_RECIPIENT_NOT_FOUND");
+  }
+
+  if (recipient.id === viewer.id) {
+    throw new Error("DIRECT_MESSAGE_SELF_NOT_ALLOWED");
+  }
+
+  const [participantAId, participantBId] = sortDirectMessageParticipantIds(viewer.id, recipient.id);
+  const thread = await prisma.$transaction(async (tx) => {
+    const directThread = await tx.directMessageThread.upsert({
+      where: {
+        participantAId_participantBId: {
+          participantAId,
+          participantBId
+        }
+      },
+      update: {
+        updatedAt: new Date()
+      },
+      create: {
+        participantAId,
+        participantBId
+      }
+    });
+
+    await tx.directMessage.create({
+      data: {
+        threadId: directThread.id,
+        senderId: viewer.id,
+        recipientId: recipient.id,
+        content: normalizedContent
+      }
+    });
+
+    return tx.directMessageThread.findUniqueOrThrow({
+      where: { id: directThread.id },
+      include: {
+        participantA: true,
+        participantB: true,
+        messages: { orderBy: { createdAt: "asc" } }
+      }
+    });
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapDirectMessageThread(thread, viewer.id);
+}
+
+export async function markDirectMessageThreadRead(threadId: string, locale: Locale) {
+  const viewer = await requireAuth();
+  const thread = await prisma.directMessageThread.findFirst({
+    where: {
+      id: threadId,
+      OR: [{ participantAId: viewer.id }, { participantBId: viewer.id }]
+    }
+  });
+
+  if (!thread) {
+    throw new Error("DIRECT_MESSAGE_THREAD_NOT_FOUND");
+  }
+
+  await prisma.directMessage.updateMany({
+    where: {
+      threadId,
+      recipientId: viewer.id,
+      readAt: null
+    },
+    data: {
+      readAt: new Date()
+    }
+  });
+
+  const updatedThread = await prisma.directMessageThread.findUniqueOrThrow({
+    where: { id: thread.id },
+    include: {
+      participantA: true,
+      participantB: true,
+      messages: { orderBy: { createdAt: "asc" } }
+    }
+  });
+
+  revalidatePath(`/${locale}`);
+
+  return mapDirectMessageThread(updatedThread, viewer.id);
 }
 
 export async function assistMaskDraft(input: MaskMaterialCreateInput, instruction: string, locale: Locale): Promise<MaskAiAssistResult> {
@@ -2483,22 +2674,13 @@ export async function generateItemModelInputImage(
 async function ensureHomeWorkspaceDefaults(userId = defaultUserId) {
   await ensureConfiguredAdminUser();
 
-  const [scripts, materials] = await Promise.all([
+  const [scripts] = await Promise.all([
     Promise.all(
       builtInScripts.map((script) =>
         prisma.storyScript.upsert({
           where: { slug: script.slug },
           update: {},
           create: script
-        })
-      )
-    ),
-    Promise.all(
-      builtInMaterials.map((material) =>
-        prisma.storyMaterial.upsert({
-          where: { slug: material.slug },
-          update: { communityVisible: true, style: material.style },
-          create: material
         })
       )
     ),
@@ -2549,48 +2731,6 @@ async function ensureHomeWorkspaceDefaults(userId = defaultUserId) {
       }
     });
   }
-
-  const sharedMaterials = materials.filter((material) => defaultMaterialSlugs.includes(material.slug));
-
-  await Promise.all(
-    sharedMaterials.map((material) =>
-      prisma.storyMaterialLibraryEntry.upsert({
-        where: {
-          userId_materialId: {
-            userId: defaultUserId,
-            materialId: material.id
-          }
-        },
-        update: {},
-        create: {
-          userId: defaultUserId,
-          materialId: material.id,
-          source: communityAddedSource
-        }
-      })
-    )
-  );
-
-  if (userId !== defaultUserId) {
-    await Promise.all(
-      sharedMaterials.map((material) =>
-        prisma.storyMaterialLibraryEntry.upsert({
-          where: {
-            userId_materialId: {
-              userId,
-              materialId: material.id
-            }
-          },
-          update: {},
-          create: {
-            userId,
-            materialId: material.id,
-            source: communityAddedSource
-          }
-        })
-      )
-    );
-  }
 }
 
 function mapScript(
@@ -2629,6 +2769,12 @@ function mapMaterial(
   material: {
     id: string;
     slug: string;
+    ownerUser?: {
+      id: string;
+      account: string | null;
+      avatarUrl: string | null;
+      displayName: string;
+    } | null;
     category: string;
     style?: string | null;
     titleZh: string;
@@ -2651,6 +2797,7 @@ function mapMaterial(
   return {
     id: material.id,
     slug: material.slug,
+    owner: material.ownerUser ? mapUserSummary(material.ownerUser) : null,
     category: normalizeMaterialCategory(material.category),
     style: normalizeMaterialStyle(material.style),
     title: isEnglish ? material.titleEn : material.titleZh,
@@ -2664,6 +2811,89 @@ function mapMaterial(
     inLibrary: library?.inLibrary ?? false,
     ...(librarySource ? { librarySource } : {})
   };
+}
+
+function mapUserSummary(user: {
+  id: string;
+  account: string | null;
+  avatarUrl: string | null;
+  displayName: string;
+}): WorkspaceUserSummary {
+  return {
+    id: user.id,
+    account: user.account,
+    avatarUrl: user.avatarUrl,
+    displayName: user.displayName
+  };
+}
+
+function mapDirectMessageThread(
+  thread: {
+    id: string;
+    participantAId: string;
+    participantA: {
+      id: string;
+      account: string | null;
+      avatarUrl: string | null;
+      displayName: string;
+    };
+    participantB: {
+      id: string;
+      account: string | null;
+      avatarUrl: string | null;
+      displayName: string;
+    };
+    messages: Array<{
+      id: string;
+      senderId: string;
+      recipientId: string;
+      content: string;
+      readAt: Date | null;
+      createdAt: Date;
+    }>;
+    updatedAt: Date;
+  },
+  viewerId: string
+): WorkspaceDirectMessageThread {
+  const otherUser = thread.participantAId === viewerId ? thread.participantB : thread.participantA;
+  const messages = thread.messages.map((message) => mapDirectMessage(message, viewerId));
+
+  return {
+    id: thread.id,
+    otherUser: mapUserSummary(otherUser),
+    unreadCount: messages.filter((message) => !message.isMine && !message.readAt).length,
+    updatedAt: thread.updatedAt.toISOString(),
+    lastMessage: messages.at(-1) ?? null,
+    messages
+  };
+}
+
+function mapDirectMessage(
+  message: {
+    id: string;
+    senderId: string;
+    recipientId: string;
+    content: string;
+    readAt: Date | null;
+    createdAt: Date;
+  },
+  viewerId: string
+): WorkspaceDirectMessage {
+  return {
+    id: message.id,
+    content: message.content,
+    createdAt: message.createdAt.toISOString(),
+    isMine: message.senderId === viewerId,
+    readAt: message.readAt?.toISOString() ?? null,
+    recipientId: message.recipientId,
+    senderId: message.senderId
+  };
+}
+
+function sortDirectMessageParticipantIds(firstUserId: string, secondUserId: string) {
+  return firstUserId < secondUserId
+    ? [firstUserId, secondUserId] as const
+    : [secondUserId, firstUserId] as const;
 }
 
 function buildMaskMaterialMetadata(
@@ -4315,28 +4545,29 @@ function getFallbackWorkspaceData(locale: Locale): WorkspaceData {
       }
     );
   });
-  const fallbackMaterials = builtInMaterials.map((material) => {
-    const isShared = defaultMaterialSlugs.includes(material.slug);
-
-    return mapMaterial(
-      { id: material.slug, ...material },
-      locale,
-      {
-        inLibrary: isShared,
-        librarySource: isShared ? communityAddedSource : undefined
-      }
-    );
-  });
 
   return {
     viewer: null,
     myScripts: fallbackScripts.filter((script) => script.inLibrary),
     communityScripts: fallbackScripts,
-    myMaterials: fallbackMaterials.filter((material) => material.inLibrary),
-    communityMaterials: fallbackMaterials,
+    myMaterials: [],
+    communityMaterials: [],
     conversations: [],
+    directMessageThreads: [],
+    announcements: [],
+    notifications: { total: 0, unreadDirectMessages: 0, unifiedAnnouncements: 0 },
     persistenceAvailable: false
   };
+}
+
+async function getUnifiedAnnouncements(): Promise<WorkspaceAnnouncement[]> {
+  const { clientId, clientSecret, portalBaseUrl } = getUnifiedLoginConfig();
+
+  try {
+    return await fetchServiceAnnouncements({ clientId, clientSecret, portalBaseUrl });
+  } catch {
+    return [];
+  }
 }
 
 function normalizeMaterialCategory(category: string): WorkspaceMaterialCategory {

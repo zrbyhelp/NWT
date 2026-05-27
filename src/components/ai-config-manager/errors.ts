@@ -3,6 +3,10 @@ export function resolveErrorMessage(error: unknown, t: (key: string) => string) 
     return t("errors.missingEncryptionKey");
   }
 
+  if (error instanceof Error && (error.message.includes("forbidden") || error.message.includes("FORBIDDEN"))) {
+    return t("errors.forbidden");
+  }
+
   return t("errors.save");
 }
 

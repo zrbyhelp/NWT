@@ -111,22 +111,27 @@ describe("default model selection", () => {
     expect(selected?.id).toBe("earliest");
   });
 
-  it("makes a saved model default only when both model and provider are enabled", () => {
+  it("makes a saved model default only when explicitly requested and usable", () => {
     expect(
       shouldMakeSavedModelDefault({
         enabled: true,
         providerEnabled: true,
-        requestedDefault: false,
-        hasUsableDefault: false
+        requestedDefault: false
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldMakeSavedModelDefault({
         enabled: true,
         providerEnabled: false,
-        requestedDefault: true,
-        hasUsableDefault: false
+        requestedDefault: true
       })
     ).toBe(false);
+    expect(
+      shouldMakeSavedModelDefault({
+        enabled: true,
+        providerEnabled: true,
+        requestedDefault: true
+      })
+    ).toBe(true);
   });
 });

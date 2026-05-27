@@ -5,8 +5,10 @@ export type AuthViewer = {
   account: string | null;
   avatarUrl: string | null;
   displayName: string;
+  email?: string | null;
   role: "USER" | "ADMIN";
   showAiThinking: boolean;
+  slug?: string;
 };
 
 export type AuthCredentialsInput = {

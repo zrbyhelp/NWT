@@ -14,15 +14,6 @@ export const sceneScalePresetMeters: Record<WorkspaceSceneScalePreset, number> =
   near: 8,
   wide: 100
 };
-export const defaultMaterialSlugs = [
-  "echo-mask",
-  "mirror-mourning-mask",
-  "floating-city-map",
-  "tidal-route-chart",
-  "echo-compass",
-  "neon-access-chip",
-  "mistguard-beast"
-];
 
 export const builtInScripts = [
   {
@@ -146,88 +137,3 @@ export const builtInScripts = [
     welcomeEn: "Give me a setting and relationship web, and I will design a sitcom-style episode."
   }
 ];
-
-export const builtInMaterials = [
-  {
-    slug: "echo-mask",
-    category: "MASK",
-    style: "REALISTIC",
-    titleZh: "回声假面",
-    titleEn: "Echo Mask",
-    descriptionZh: "记录人物外观轮廓、性格倾向、说话方式和动作习惯的假面素材，不包含身世与背景故事。",
-    descriptionEn:
-      "A mask material for recording appearance, temperament, speech style, and habitual gestures, without backstory."
-  },
-  {
-    slug: "mirror-mourning-mask",
-    category: "MASK",
-    style: "MYSTERY",
-    titleZh: "镜语假面",
-    titleEn: "Mirror Voice Mask",
-    descriptionZh: "只收纳表层呈现的神态、语气和姿态，便于独立整理角色的外在呈现。",
-    descriptionEn: "Stores only the surface presentation of expression, tone, and posture for a clean external character profile."
-  },
-  {
-    slug: "floating-city-map",
-    category: "MAP",
-    style: "SCI_FI",
-    titleZh: "悬空城地图",
-    titleEn: "Floating City Map",
-    descriptionZh: "标注环层街区、升降塔和禁飞风道的城市地图，适合空中都市和阶层冲突。",
-    descriptionEn: "A city map of ring districts, lift towers, and forbidden windways for aerial cities and class conflict."
-  },
-  {
-    slug: "tidal-route-chart",
-    category: "MAP",
-    style: "FANTASY",
-    titleZh: "潮汐航线图",
-    titleEn: "Tidal Route Chart",
-    descriptionZh: "随月相改写航线的海图素材，适合远航、走私、失落岛屿和时间差谜题。",
-    descriptionEn: "A sea chart whose routes shift with the moon, useful for voyages, smuggling, lost islands, and timing puzzles."
-  },
-  {
-    slug: "echo-compass",
-    category: "ITEM",
-    style: "CLASSICAL",
-    titleZh: "回声罗盘",
-    titleEn: "Echo Compass",
-    descriptionZh: "指向最近一次承诺回声的物品素材，适合寻人、追踪契约和情感债务。",
-    descriptionEn: "An item that points toward the echo of the latest promise, ideal for searches, vows, and emotional debts."
-  },
-  {
-    slug: "neon-access-chip",
-    category: "ITEM",
-    style: "CYBERPUNK",
-    titleZh: "霓虹门禁芯片",
-    titleEn: "Neon Access Chip",
-    descriptionZh: "嵌有城市监控权限码的门禁芯片，适合潜入、黑市交易和企业身份伪装。",
-    descriptionEn: "A gate chip carrying city surveillance permissions, suited to infiltration, black market deals, and corporate disguise."
-  },
-  {
-    slug: "night-ink-vial",
-    category: "ITEM",
-    style: "MYSTERY",
-    titleZh: "夜墨瓶",
-    titleEn: "Night Ink Vial",
-    descriptionZh: "只在无光处显影的墨水素材，适合密信、禁书批注和被隐藏的地图层。",
-    descriptionEn: "Ink that appears only in darkness, suited to secret letters, forbidden annotations, and hidden map layers."
-  },
-  {
-    slug: "mistguard-beast",
-    category: "CREATURE",
-    style: "APOCALYPTIC",
-    titleZh: "雾卫兽",
-    titleEn: "Mistguard Beast",
-    descriptionZh: "守在废墟边界的雾生生物，能嗅出谎言和旧血，适合作为遗迹守卫或同行者。",
-    descriptionEn: "A mist-born creature guarding ruin borders, able to scent lies and old blood as a sentinel or companion."
-  },
-  {
-    slug: "lantern-wisp",
-    category: "CREATURE",
-    style: "FANTASY",
-    titleZh: "灯焰灵",
-    titleEn: "Lantern Wisp",
-    descriptionZh: "寄居在旧灯中的微光生物，会被未完成的愿望吸引，适合引路、交易和温柔怪谈。",
-    descriptionEn: "A small light creature living in old lanterns, drawn to unfinished wishes for guidance, bargains, and soft uncanny tales."
-  }
-] as const;

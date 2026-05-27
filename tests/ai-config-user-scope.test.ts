@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   prisma: {
+    appUser: {
+      findUnique: vi.fn()
+    },
     aiProvider: {
       create: vi.fn(),
       findFirstOrThrow: vi.fn(),
@@ -49,6 +52,7 @@ describe("user-scoped AI configuration", () => {
     mocks.prisma.imageModel.findMany.mockResolvedValue([]);
     mocks.prisma.instantMeshConfig.findMany.mockResolvedValue([]);
     mocks.prisma.vectorModel.findMany.mockResolvedValue([]);
+    mocks.prisma.appUser.findUnique.mockResolvedValue({ role: "USER" });
     mocks.prisma.llmModel.updateMany.mockResolvedValue({});
     mocks.prisma.imageModel.updateMany.mockResolvedValue({});
     mocks.prisma.instantMeshConfig.updateMany.mockResolvedValue({});
@@ -70,23 +74,73 @@ describe("user-scoped AI configuration", () => {
     );
     expect(mocks.prisma.llmModel.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { provider: { userId: "user-a" } }
+        where: { isGlobal: false, provider: { userId: "user-a" } }
+      })
+    );
+    expect(mocks.prisma.llmModel.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isGlobal: true, provider: { user: { role: "ADMIN" } } }
       })
     );
     expect(mocks.prisma.vectorModel.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { provider: { userId: "user-a" } }
+        where: { isGlobal: false, provider: { userId: "user-a" } }
       })
     );
     expect(mocks.prisma.imageModel.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { provider: { userId: "user-a" } }
+        where: { isGlobal: false, provider: { userId: "user-a" } }
       })
     );
     expect(mocks.prisma.instantMeshConfig.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "user-a" }
       })
+    );
+  });
+
+  it("shows the global default as effective when personal models are not default", async () => {
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    mocks.prisma.llmModel.findMany
+      .mockResolvedValueOnce([
+        {
+          createdAt: now,
+          displayName: "Personal",
+          enabled: true,
+          id: "personal-llm",
+          isDefault: false,
+          isGlobal: false,
+          modelId: "personal-model",
+          provider: { enabled: true, name: "Personal Provider", userId: "user-a" },
+          providerId: "provider-personal",
+          temperature: 0.7,
+          updatedAt: now
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          createdAt: now,
+          displayName: "Global",
+          enabled: true,
+          id: "global-llm",
+          isDefault: true,
+          isGlobal: true,
+          modelId: "global-model",
+          provider: { enabled: true, name: "Global Provider", userId: "admin-user" },
+          providerId: "provider-global",
+          temperature: 0.7,
+          updatedAt: now
+        }
+      ]);
+
+    const { getAiConfigSnapshot } = await import("@/lib/ai/model-config");
+    const snapshot = await getAiConfigSnapshot("user-a");
+
+    expect(snapshot.llmModels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "personal-llm", isDefault: false }),
+        expect.objectContaining({ id: "global-llm", isDefault: true, isGlobal: true })
+      ])
     );
   });
 
@@ -128,6 +182,7 @@ describe("user-scoped AI configuration", () => {
     expect(mocks.prisma.llmModel.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
+          isGlobal: false,
           provider: { enabled: true, userId: "user-a" }
         })
       })
@@ -139,7 +194,39 @@ describe("user-scoped AI configuration", () => {
     });
   });
 
-  it("requires a user-scoped default LLM even when environment fallback exists", async () => {
+  it("falls back to the global default LLM when the user has no personal default", async () => {
+    mocks.prisma.llmModel.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        modelId: "global-story-model",
+        provider: {
+          baseUrl: "https://global.example.com/v1",
+          encryptedApiKey: "encrypted-secret",
+          name: "Global Example"
+        },
+        temperature: 0.6
+      });
+
+    const { getDefaultLlmRuntimeConfig } = await import("@/lib/ai/model-config");
+    const config = await getDefaultLlmRuntimeConfig("user-a");
+
+    expect(mocks.prisma.llmModel.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          isGlobal: true,
+          provider: { enabled: true, user: { role: "ADMIN" } }
+        })
+      })
+    );
+    expect(config).toMatchObject({
+      apiKey: "decrypted-secret",
+      modelId: "global-story-model",
+      source: "database"
+    });
+  });
+
+  it("requires a personal or global default LLM even when environment fallback exists", async () => {
     process.env.OPENAI_BASE_URL = "https://api.example.com/v1";
     process.env.OPENAI_API_KEY = "sk-env";
     process.env.OPENAI_MODEL = "env-model";
@@ -150,5 +237,27 @@ describe("user-scoped AI configuration", () => {
     await expect(getDefaultLlmRuntimeConfig("user-a")).rejects.toMatchObject({
       code: "missing-default-llm"
     });
+  });
+
+  it("rejects global model saves for non-admin users", async () => {
+    mocks.prisma.aiProvider.findFirstOrThrow.mockResolvedValue({
+      enabled: true,
+      id: "provider-1",
+      userId: "user-a"
+    });
+
+    const { saveLlmModel } = await import("@/lib/ai/model-config");
+
+    await expect(
+      saveLlmModel("user-a", {
+        providerId: "provider-1",
+        displayName: "Global Model",
+        modelId: "global-model",
+        temperature: 0.7,
+        enabled: true,
+        isDefault: true,
+        isGlobal: true
+      })
+    ).rejects.toMatchObject({ code: "forbidden" });
   });
 });

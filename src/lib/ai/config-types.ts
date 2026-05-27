@@ -24,7 +24,8 @@ export const llmModelInputSchema = z.object({
   modelId: z.string().trim().min(1).max(120),
   temperature: z.coerce.number().min(0).max(2),
   enabled: z.boolean().default(true),
-  isDefault: z.boolean().default(false)
+  isDefault: z.boolean().default(false),
+  isGlobal: z.boolean().default(false)
 });
 
 export const vectorModelInputSchema = z.object({
@@ -35,7 +36,8 @@ export const vectorModelInputSchema = z.object({
   dimensions: z.coerce.number().int().min(1).max(100000),
   maxInputTokens: z.coerce.number().int().min(1).max(4000000),
   enabled: z.boolean().default(true),
-  isDefault: z.boolean().default(false)
+  isDefault: z.boolean().default(false),
+  isGlobal: z.boolean().default(false)
 });
 
 export const imageModelInputSchema = z.object({
@@ -44,7 +46,8 @@ export const imageModelInputSchema = z.object({
   displayName: z.string().trim().min(1).max(100),
   modelId: z.string().trim().min(1).max(120),
   enabled: z.boolean().default(true),
-  isDefault: z.boolean().default(false)
+  isDefault: z.boolean().default(false),
+  isGlobal: z.boolean().default(false)
 });
 
 export const instantMeshConfigInputSchema = z.object({
@@ -91,6 +94,7 @@ export type AiProviderView = {
 export type LlmModelView = {
   id: string;
   providerId: string;
+  providerUserId: string;
   providerName: string;
   providerEnabled: boolean;
   displayName: string;
@@ -98,6 +102,7 @@ export type LlmModelView = {
   temperature: number;
   enabled: boolean;
   isDefault: boolean;
+  isGlobal: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -105,6 +110,7 @@ export type LlmModelView = {
 export type VectorModelView = {
   id: string;
   providerId: string;
+  providerUserId: string;
   providerName: string;
   providerEnabled: boolean;
   displayName: string;
@@ -113,6 +119,7 @@ export type VectorModelView = {
   maxInputTokens: number;
   enabled: boolean;
   isDefault: boolean;
+  isGlobal: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -120,12 +127,14 @@ export type VectorModelView = {
 export type ImageModelView = {
   id: string;
   providerId: string;
+  providerUserId: string;
   providerName: string;
   providerEnabled: boolean;
   displayName: string;
   modelId: string;
   enabled: boolean;
   isDefault: boolean;
+  isGlobal: boolean;
   createdAt: string;
   updatedAt: string;
 };

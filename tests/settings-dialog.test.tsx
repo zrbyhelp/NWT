@@ -92,7 +92,7 @@ describe("SettingsDialog", () => {
   it("shows AI provider, LLM, vector, and image model management tabs", async () => {
     render(<SettingsDialog />);
 
-    fireEvent.click(screen.getByRole("button", { name: "体验设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
 
     expect(screen.getByRole("button", { name: /账号/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /管理员/ })).not.toBeInTheDocument();
@@ -131,7 +131,7 @@ describe("SettingsDialog", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "体验设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
     fireEvent.click(screen.getByRole("button", { name: /管理员/ }));
 
     expect(await screen.findByText("全局出站代理")).toBeInTheDocument();
@@ -162,7 +162,7 @@ describe("SettingsDialog", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "体验设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
     fireEvent.click(screen.getByRole("button", { name: /账号/ }));
     expect(screen.getByText("支持 gif/png/jpg/webp，最大 5MB。")).toBeInTheDocument();
 

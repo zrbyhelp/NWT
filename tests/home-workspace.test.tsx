@@ -58,6 +58,7 @@ vi.mock("next-intl", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/zh-CN",
   useRouter: () => ({
     push: vi.fn(),
     refresh: vi.fn()
@@ -88,10 +89,13 @@ vi.mock("@/app/[locale]/actions", () => ({
   generateHomeItemModelInputImage: vi.fn(),
   generateHomeMaskBoard: vi.fn(),
   generateHomeSceneBlockPanorama: vi.fn(),
+  markHomeDirectMessageThreadRead: vi.fn(),
+  openHomeDirectMessageThread: vi.fn(),
   joinHomeMaterial: vi.fn(),
   loginHomeAccount: vi.fn(),
   logoutHomeAccount: vi.fn(),
   registerHomeAccount: vi.fn(),
+  sendHomeDirectMessage: vi.fn(),
   updateHomeCreatureMaterial: vi.fn(),
   updateHomeItemMaterial: vi.fn(),
   updateHomeMapMaterial: vi.fn(),
@@ -1663,7 +1667,8 @@ describe("HomeWorkspace script manager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "使用 基础 AI 剧本 剧本" }));
 
-    expect(screen.getByRole("heading", { name: "登录栖境AI" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "统一登录栖境AI" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前往统一登录" })).toBeInTheDocument();
   });
 
   it("guides users to settings when no default LLM is configured", async () => {
@@ -1677,7 +1682,7 @@ describe("HomeWorkspace script manager", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith("还没有可用的默认 LLM 模型，请前往右上角体验设置的 LLM 模型页添加并设为默认。");
+      expect(toast.error).toHaveBeenCalledWith("还没有可用的默认 LLM 模型，请前往右上角设置的 LLM 模型页添加并设为默认。");
     });
   });
 

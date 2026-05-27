@@ -11,10 +11,12 @@ import type { AuthViewer } from "@/lib/auth-types";
 export function HeaderActions({
   onLoginClick,
   onViewerChange,
+  settingsOpenSignal,
   viewer
 }: {
   onLoginClick?: () => void;
   onViewerChange?: (viewer: AuthViewer | null) => void;
+  settingsOpenSignal?: number;
   viewer?: AuthViewer | null;
 }) {
   const t = useTranslations("home.auth");
@@ -33,7 +35,12 @@ export function HeaderActions({
           {t("login")}
         </button>
       ) : null}
-      <SettingsDialog onLoginClick={onLoginClick} onViewerChange={onViewerChange} viewer={viewer} />
+      <SettingsDialog
+        onLoginClick={onLoginClick}
+        onViewerChange={onViewerChange}
+        openSignal={settingsOpenSignal}
+        viewer={viewer}
+      />
     </div>
   );
 }

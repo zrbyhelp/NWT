@@ -43,11 +43,13 @@ export function ProviderRow({
 
 export function LlmRow({
   model,
+  canManage,
   onDelete,
   onEdit,
   onSetDefault
 }: {
   model: LlmModelView;
+  canManage: boolean;
   onDelete: () => void;
   onEdit: () => void;
   onSetDefault: () => void;
@@ -62,6 +64,8 @@ export function LlmRow({
       enabled={model.enabled && model.providerEnabled}
       providerEnabled={model.providerEnabled}
       isDefault={model.isDefault}
+      isGlobal={model.isGlobal}
+      canManage={canManage}
       onDelete={onDelete}
       onEdit={onEdit}
       onSetDefault={onSetDefault}
@@ -71,11 +75,13 @@ export function LlmRow({
 
 export function VectorRow({
   model,
+  canManage,
   onDelete,
   onEdit,
   onSetDefault
 }: {
   model: VectorModelView;
+  canManage: boolean;
   onDelete: () => void;
   onEdit: () => void;
   onSetDefault: () => void;
@@ -90,6 +96,8 @@ export function VectorRow({
       enabled={model.enabled && model.providerEnabled}
       providerEnabled={model.providerEnabled}
       isDefault={model.isDefault}
+      isGlobal={model.isGlobal}
+      canManage={canManage}
       onDelete={onDelete}
       onEdit={onEdit}
       onSetDefault={onSetDefault}
@@ -99,11 +107,13 @@ export function VectorRow({
 
 export function ImageRow({
   model,
+  canManage,
   onDelete,
   onEdit,
   onSetDefault
 }: {
   model: ImageModelView;
+  canManage: boolean;
   onDelete: () => void;
   onEdit: () => void;
   onSetDefault: () => void;
@@ -118,6 +128,8 @@ export function ImageRow({
       enabled={model.enabled && model.providerEnabled}
       providerEnabled={model.providerEnabled}
       isDefault={model.isDefault}
+      isGlobal={model.isGlobal}
+      canManage={canManage}
       onDelete={onDelete}
       onEdit={onEdit}
       onSetDefault={onSetDefault}
@@ -146,6 +158,8 @@ export function InstantMeshRow({
       enabled={config.enabled}
       providerEnabled={config.enabled}
       isDefault={config.isDefault}
+      isGlobal={false}
+      canManage={true}
       onDelete={onDelete}
       onEdit={onEdit}
       onSetDefault={onSetDefault}
@@ -155,6 +169,8 @@ export function InstantMeshRow({
 
 function ModelRow({
   enabled,
+  canManage,
+  isGlobal,
   isDefault,
   meta,
   onDelete,
@@ -165,7 +181,9 @@ function ModelRow({
   title
 }: {
   enabled: boolean;
+  canManage: boolean;
   isDefault: boolean;
+  isGlobal: boolean;
   meta: string;
   onDelete: () => void;
   onEdit: () => void;
@@ -188,14 +206,21 @@ function ModelRow({
                 {t("common.default")}
               </span>
             ) : null}
+            {isGlobal ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
+                {t("common.global")}
+              </span>
+            ) : null}
             <StatusBadge active={enabled} activeText={t("common.enabled")} inactiveText={t("common.disabled")} />
           </div>
           <p className="mt-1 truncate text-xs text-foreground/46">{subtitle}</p>
           <p className="mt-2 text-sm text-foreground/62">{meta}</p>
           {!providerEnabled ? <p className="mt-2 text-xs text-accent">{t("common.providerDisabled")}</p> : null}
+          {!canManage ? <p className="mt-2 text-xs text-foreground/46">{t("common.globalReadOnly")}</p> : null}
         </div>
         <RowActions
-          canSetDefault={enabled && !isDefault}
+          canSetDefault={canManage && enabled && !isDefault}
+          canManage={canManage}
           isDefault={isDefault}
           onDelete={onDelete}
           onEdit={onEdit}
@@ -208,12 +233,14 @@ function ModelRow({
 
 function RowActions({
   canSetDefault,
+  canManage,
   isDefault,
   onDelete,
   onEdit,
   onSetDefault
 }: {
   canSetDefault?: boolean;
+  canManage?: boolean;
   isDefault?: boolean;
   onDelete: () => void;
   onEdit: () => void;
@@ -221,6 +248,10 @@ function RowActions({
 }) {
   const t = useTranslations("home.settings.ai");
   const defaultActionTitle = isDefault ? t("common.default") : canSetDefault ? t("common.setDefault") : t("common.defaultUnavailable");
+
+  if (!canManage) {
+    return null;
+  }
 
   return (
     <div className="flex shrink-0 gap-1">

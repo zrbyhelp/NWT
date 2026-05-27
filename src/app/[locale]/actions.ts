@@ -7,13 +7,12 @@ import type { OutboundProxySettings } from "@/lib/system-settings-types";
 import {
   changeCurrentViewerPassword,
   getCurrentViewer,
-  loginWithPassword,
   logoutCurrentViewer,
-  registerWithPassword,
   requireAuth,
   updateCurrentViewerPreferences,
   updateCurrentViewerProfile
 } from "@/lib/auth";
+import { getUnifiedLoginConfig } from "@/lib/unified-login-config";
 import {
   deleteAiProvider,
   deleteImageModel,
@@ -53,7 +52,10 @@ import {
   prepareItemAssistReferenceImages,
   prepareItemBoardReferenceImages,
   prepareSceneAssistReferenceImages,
+  markDirectMessageThreadRead,
+  openDirectMessageThread,
   sendConversationMessage,
+  sendDirectMessage,
   setMaterialCommunitySharing,
   updateCreatureMaterial,
   updateItemMaterial,
@@ -89,6 +91,18 @@ export async function deleteHomeConversation(conversationId: string, locale: Loc
 
 export async function joinHomeMaterial(materialId: string, locale: Locale) {
   return addMaterialToLibrary(materialId, locale);
+}
+
+export async function openHomeDirectMessageThread(recipientId: string, locale: Locale) {
+  return openDirectMessageThread(recipientId, locale);
+}
+
+export async function sendHomeDirectMessage(recipientId: string, content: string, locale: Locale) {
+  return sendDirectMessage(recipientId, content, locale);
+}
+
+export async function markHomeDirectMessageThreadRead(threadId: string, locale: Locale) {
+  return markDirectMessageThreadRead(threadId, locale);
 }
 
 export async function assistHomeMaskDraft(input: MaskMaterialCreateInput, instruction: string, locale: Locale) {
@@ -436,16 +450,23 @@ export async function setHomeMaterialCommunitySharing(materialId: string, shared
 }
 
 export async function loginHomeAccount(input: AuthCredentialsInput) {
-  return loginWithPassword(input);
+  void input;
+  throw new Error("UNIFIED_LOGIN_REQUIRED");
 }
 
 export async function registerHomeAccount(input: AuthCredentialsInput) {
-  return registerWithPassword(input);
+  void input;
+  throw new Error("UNIFIED_LOGIN_REQUIRED");
 }
 
 export async function logoutHomeAccount() {
   await logoutCurrentViewer();
-  return { ok: true };
+  const { portalBaseUrl } = getUnifiedLoginConfig();
+
+  return {
+    ok: true,
+    logoutUrl: portalBaseUrl ? new URL("/relogin", portalBaseUrl).toString() : null
+  };
 }
 
 export async function getHomeViewer() {

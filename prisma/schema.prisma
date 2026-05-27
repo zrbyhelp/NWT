@@ -38,19 +38,32 @@ model AppUser {
   id            String                    @id @default(cuid())
   slug          String                    @unique
   account       String?                   @unique
+  externalUserId String?                  @unique
+  email         String?                   @db.VarChar(191)
+  username      String?                   @db.VarChar(191)
   passwordHash  String?                   @db.Text
   role          AppUserRole               @default(USER)
   displayName   String
   avatarUrl     String?                   @db.Text
+  status        String                    @default("ACTIVE") @db.VarChar(32)
   showAiThinking Boolean                  @default(false)
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
   scriptLibrary StoryScriptLibraryEntry[]
   materialLibrary StoryMaterialLibraryEntry[]
+  ownedMaterials StoryMaterial[]          @relation("StoryMaterialOwner")
   conversations Conversation[]
   authSessions  AuthSession[]
   aiProviders   AiProvider[]
   instantMeshConfigs InstantMeshConfig[]
+  directMessageThreadsAsA DirectMessageThread[] @relation("DirectMessageThreadParticipantA")
+  directMessageThreadsAsB DirectMessageThread[] @relation("DirectMessageThreadParticipantB")
+  sentDirectMessages DirectMessage[]      @relation("DirectMessageSender")
+  receivedDirectMessages DirectMessage[]  @relation("DirectMessageRecipient")
+
+  @@index([email])
+  @@index([username])
+  @@index([status])
 }
 
 model AuthSession {
@@ -98,6 +111,8 @@ model StoryScriptLibraryEntry {
 model StoryMaterial {
   id             String                      @id @default(cuid())
   slug           String                      @unique
+  ownerUserId    String
+  ownerUser      AppUser                     @relation("StoryMaterialOwner", fields: [ownerUserId], references: [id])
   category       StoryMaterialCategory
   style          StoryMaterialStyle          @default(REALISTIC)
   titleZh        String
@@ -111,6 +126,7 @@ model StoryMaterial {
   updatedAt      DateTime                    @updatedAt
   libraryEntries StoryMaterialLibraryEntry[]
 
+  @@index([ownerUserId, createdAt])
   @@index([category, createdAt])
   @@index([style, createdAt])
 }
@@ -160,6 +176,37 @@ model ChatMessage {
   @@index([conversationId, createdAt])
 }
 
+model DirectMessageThread {
+  id             String          @id @default(cuid())
+  participantAId String
+  participantA   AppUser         @relation("DirectMessageThreadParticipantA", fields: [participantAId], references: [id], onDelete: Cascade)
+  participantBId String
+  participantB   AppUser         @relation("DirectMessageThreadParticipantB", fields: [participantBId], references: [id], onDelete: Cascade)
+  messages       DirectMessage[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([participantAId, participantBId])
+  @@index([participantAId, updatedAt])
+  @@index([participantBId, updatedAt])
+}
+
+model DirectMessage {
+  id          String              @id @default(cuid())
+  threadId    String
+  thread      DirectMessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      AppUser             @relation("DirectMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipientId String
+  recipient   AppUser             @relation("DirectMessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  content     String              @db.Text
+  readAt      DateTime?
+  createdAt   DateTime            @default(now())
+
+  @@index([threadId, createdAt])
+  @@index([recipientId, readAt, createdAt])
+}
+
 model AiProvider {
   id              String        @id @default(cuid())
   userId          String
@@ -188,12 +235,14 @@ model LlmModel {
   temperature   Float      @default(0.7)
   enabled       Boolean    @default(true)
   isDefault     Boolean    @default(false)
+  isGlobal      Boolean    @default(false)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
   @@unique([providerId, modelId])
   @@index([providerId])
   @@index([enabled, isDefault])
+  @@index([isGlobal, enabled, isDefault])
 }
 
 model VectorModel {
@@ -206,12 +255,14 @@ model VectorModel {
   maxInputTokens Int
   enabled        Boolean    @default(true)
   isDefault      Boolean    @default(false)
+  isGlobal       Boolean    @default(false)
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
   @@unique([providerId, modelId])
   @@index([providerId])
   @@index([enabled, isDefault])
+  @@index([isGlobal, enabled, isDefault])
 }
 
 model ImageModel {
@@ -222,12 +273,14 @@ model ImageModel {
   modelId      String
   enabled      Boolean    @default(true)
   isDefault    Boolean    @default(false)
+  isGlobal     Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
   @@unique([providerId, modelId])
   @@index([providerId])
   @@index([enabled, isDefault])
+  @@index([isGlobal, enabled, isDefault])
 }
 
 model InstantMeshConfig {

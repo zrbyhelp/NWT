@@ -59,6 +59,12 @@ import type {
 type MaterialRecord = {
   id: string;
   slug: string;
+  ownerUser?: {
+    id: string;
+    account: string | null;
+    avatarUrl: string | null;
+    displayName: string;
+  } | null;
   category: string;
   style?: string | null;
   titleZh: string;
@@ -262,6 +268,7 @@ export async function importMaterialsZip(bytes: ArrayBuffer | Uint8Array, locale
       const material = await tx.storyMaterial.create({
         data: {
           slug: createImportedMaterialSlug(prepared.archiveItem.category, titleZh, prepared.archiveItem.slug),
+          ownerUserId: viewer.id,
           category: toPrismaMaterialCategory(prepared.archiveItem.category),
           style: toPrismaMaterialStyle(prepared.archiveItem.style),
           titleZh,
@@ -277,7 +284,8 @@ export async function importMaterialsZip(bytes: ArrayBuffer | Uint8Array, locale
               source: selfCreatedSource
             }
           }
-        }
+        },
+        include: { ownerUser: true }
       });
 
       results.push(material);
@@ -306,7 +314,7 @@ function getSingleSelfCreatedMaterial(userId: string, materialId: string) {
         source: selfCreatedSource
       },
       include: {
-        material: true
+        material: { include: { ownerUser: true } }
       }
     })
     .then((entry) => {
@@ -325,7 +333,7 @@ async function getAllSelfCreatedMaterials(userId: string) {
       source: selfCreatedSource
     },
     include: {
-      material: true
+      material: { include: { ownerUser: true } }
     },
     orderBy: {
       createdAt: "asc"
@@ -354,6 +362,14 @@ function mapMaterial(
     title: isEnglish ? material.titleEn : material.titleZh,
     description: isEnglish ? material.descriptionEn : material.descriptionZh,
     previewUrl: material.previewUrl ?? null,
+    owner: material.ownerUser
+      ? {
+          id: material.ownerUser.id,
+          account: material.ownerUser.account,
+          avatarUrl: material.ownerUser.avatarUrl,
+          displayName: material.ownerUser.displayName
+        }
+      : null,
     metadata: (material.metadata as WorkspaceMaterialMetadata | null | undefined) ?? null,
     communityVisible:
       typeof material.communityVisible === "boolean"

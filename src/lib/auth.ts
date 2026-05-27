@@ -19,6 +19,16 @@ const sessionCookieName = "nwt_session";
 const sessionMaxAgeSeconds = 60 * 60 * 24 * 30;
 const passwordHashPrefix = "scrypt";
 
+export type UnifiedLoginUser = {
+  account?: string | null;
+  avatarUrl?: string | null;
+  email?: string | null;
+  id: string;
+  name?: string | null;
+  status?: string | null;
+  username?: string | null;
+};
+
 export class AuthRequiredError extends Error {
   constructor() {
     super(authRequiredCode);
@@ -91,6 +101,59 @@ export async function logoutCurrentViewer() {
   }
 
   cookieStore.delete(sessionCookieName);
+}
+
+export async function createSessionForUnifiedLogin(input: UnifiedLoginUser): Promise<AuthActionResult> {
+  await ensureConfiguredAdminUser();
+
+  const externalUserId = input.id.trim();
+
+  if (!externalUserId) {
+    throw new Error("UNIFIED_LOGIN_USER_REQUIRED");
+  }
+
+  const account = normalizeOptionalAccount(input.account) || normalizeOptionalAccount(input.username) || null;
+  const email = normalizeOptionalEmail(input.email);
+  const username = normalizeOptionalUsername(input.username);
+  const displayName = normalizeDisplayName(input.name) || username || account || email || "用户";
+  const avatarUrl = normalizeOptionalAvatarUrl(input.avatarUrl);
+  const status = normalizeUnifiedStatus(input.status);
+  const role = isConfiguredAdminIdentity(account, email) ? "ADMIN" : "USER";
+  const existingUser = await findUnifiedLoginUser(externalUserId, account);
+  const slug = createUnifiedUserSlug(externalUserId);
+
+  const user = existingUser
+    ? await prisma.appUser.update({
+        where: { id: existingUser.id },
+        data: {
+          account: existingUser.account ?? account,
+          avatarUrl,
+          displayName,
+          email,
+          externalUserId,
+          role,
+          slug: existingUser.slug || slug,
+          status,
+          username
+        }
+      })
+    : await prisma.appUser.create({
+        data: {
+          account,
+          avatarUrl,
+          displayName,
+          email,
+          externalUserId,
+          role,
+          slug,
+          status,
+          username
+        }
+      });
+
+  return {
+    viewer: await createSession(mapViewer(user))
+  };
 }
 
 export async function updateCurrentViewerProfile(input: AuthProfileInput): Promise<AuthActionResult> {
@@ -169,6 +232,11 @@ export async function getCurrentViewer(): Promise<AuthViewer | null> {
     return null;
   }
 
+  if (isBlockedUserStatus(session.user.status)) {
+    await prisma.authSession.delete({ where: { id: session.id } });
+    return null;
+  }
+
   return mapViewer(session.user);
 }
 
@@ -193,9 +261,22 @@ export async function requireAdmin(): Promise<AuthViewer> {
 }
 
 export function isConfiguredAdminAccount(account: string | null | undefined) {
-  const adminAccount = normalizeOptionalAccount(process.env.ADMIN_ACCOUNT);
+  return isConfiguredAdminIdentity(account, null);
+}
 
-  return Boolean(adminAccount && normalizeOptionalAccount(account) === adminAccount);
+function isConfiguredAdminIdentity(account: string | null | undefined, email: string | null | undefined) {
+  const normalizedAccount = normalizeOptionalAccount(account);
+  const normalizedEmail = normalizeOptionalEmail(email);
+  const adminAccounts = new Set([
+    normalizeOptionalAccount(process.env.ADMIN_ACCOUNT),
+    ...splitEnvList(process.env.ADMIN_ACCOUNTS).map(normalizeOptionalAccount)
+  ].filter(Boolean));
+  const adminEmails = new Set(splitEnvList(process.env.ADMIN_EMAILS).map(normalizeOptionalEmail).filter(Boolean));
+
+  return Boolean(
+    (normalizedAccount && adminAccounts.has(normalizedAccount)) ||
+    (normalizedEmail && adminEmails.has(normalizedEmail))
+  );
 }
 
 export async function ensureConfiguredAdminUser() {
@@ -282,6 +363,61 @@ function normalizeOptionalAccount(account: string | null | undefined) {
   return account ? normalizeAccount(account) : "";
 }
 
+function normalizeOptionalEmail(email: string | null | undefined) {
+  const normalized = email?.trim().toLowerCase() ?? "";
+
+  return normalized && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : null;
+}
+
+function normalizeOptionalUsername(username: string | null | undefined) {
+  const normalized = username?.trim().slice(0, 191) ?? "";
+
+  return normalized || null;
+}
+
+function normalizeDisplayName(name: string | null | undefined) {
+  return name?.trim().slice(0, 40) ?? "";
+}
+
+function normalizeUnifiedStatus(status: string | null | undefined) {
+  const normalized = status?.trim().toUpperCase().slice(0, 32) ?? "";
+
+  return normalized || "ACTIVE";
+}
+
+function isBlockedUserStatus(status: string | null | undefined) {
+  return ["BANNED", "DISABLED", "SUSPENDED"].includes(normalizeUnifiedStatus(status));
+}
+
+function normalizeOptionalAvatarUrl(avatarUrl: string | null | undefined) {
+  if (!avatarUrl?.trim()) {
+    return null;
+  }
+
+  try {
+    return normalizeAvatarUrl(avatarUrl);
+  } catch {
+    return null;
+  }
+}
+
+function splitEnvList(value: string | null | undefined) {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function findUnifiedLoginUser(externalUserId: string, account: string | null) {
+  const byExternalId = await prisma.appUser.findUnique({ where: { externalUserId } });
+
+  if (byExternalId || !account) {
+    return byExternalId;
+  }
+
+  return prisma.appUser.findUnique({ where: { account } });
+}
+
 function validateCredentials(account: string, password: string) {
   if (!/^[a-z0-9_.@-]{3,64}$/.test(account)) {
     throw new Error("INVALID_ACCOUNT");
@@ -332,20 +468,36 @@ function createUserSlug() {
   return `user-${randomBytes(8).toString("hex")}`;
 }
 
+function createUnifiedUserSlug(externalUserId: string) {
+  const normalized = externalUserId
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+
+  return normalized ? `portal-${normalized}` : createUserSlug();
+}
+
 function mapViewer(user: {
   account: string | null;
   avatarUrl?: string | null;
   displayName: string;
+  email?: string | null;
   id: string;
   role: "USER" | "ADMIN";
   showAiThinking?: boolean;
+  slug?: string;
+  status?: string | null;
 }): AuthViewer {
   return {
     account: user.account,
     avatarUrl: user.avatarUrl ?? null,
     displayName: user.displayName,
+    email: user.email ?? null,
     id: user.id,
-    role: isConfiguredAdminAccount(user.account) ? "ADMIN" : "USER",
-    showAiThinking: user.showAiThinking ?? false
+    role: isConfiguredAdminIdentity(user.account, user.email) ? "ADMIN" : "USER",
+    showAiThinking: user.showAiThinking ?? false,
+    slug: user.slug
   };
 }

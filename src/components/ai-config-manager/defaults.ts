@@ -21,7 +21,8 @@ export const emptyLlmForm: LlmForm = {
   modelId: "",
   temperature: 0.7,
   enabled: true,
-  isDefault: false
+  isDefault: false,
+  isGlobal: false
 };
 
 export const emptyVectorForm: VectorForm = {
@@ -31,7 +32,8 @@ export const emptyVectorForm: VectorForm = {
   dimensions: 1536,
   maxInputTokens: 8192,
   enabled: true,
-  isDefault: false
+  isDefault: false,
+  isGlobal: false
 };
 
 export const emptyImageForm: ImageForm = {
@@ -39,7 +41,8 @@ export const emptyImageForm: ImageForm = {
   displayName: "",
   modelId: "",
   enabled: true,
-  isDefault: false
+  isDefault: false,
+  isGlobal: false
 };
 
 export const emptyInstantMeshForm: InstantMeshForm = {
