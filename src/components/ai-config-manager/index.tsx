@@ -8,6 +8,7 @@ import {
   Image as ImageIcon,
   KeyRound,
   Loader2,
+  Mic,
   Plus,
   XCircle
 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   deleteHomeImageModel,
   deleteHomeInstantMeshConfig,
   deleteHomeLlmModel,
+  deleteHomeVoiceModel,
   deleteHomeVectorModel,
   fetchHomeProviderModels,
   getHomeAiConfig,
@@ -26,6 +28,7 @@ import {
   saveHomeImageModel,
   saveHomeInstantMeshConfig,
   saveHomeLlmModel,
+  saveHomeVoiceModel,
   saveHomeVectorModel
 } from "@/app/[locale]/actions";
 import { requestClientAuth } from "@/lib/auth-client";
@@ -39,6 +42,7 @@ import {
   emptyInstantMeshForm,
   emptyLlmForm,
   emptyProviderForm,
+  emptyVoiceForm,
   emptyVectorForm
 } from "./defaults";
 import { resolveErrorMessage } from "./errors";
@@ -53,7 +57,8 @@ import {
   TextField
 } from "./fields";
 import { AiConfigLayout, EmptyState } from "./layout";
-import { ImageRow, InstantMeshRow, LlmRow, ProviderRow, VectorRow } from "./rows";
+import { filterProviderModelOptionsForMode } from "./model-options";
+import { ImageRow, InstantMeshRow, LlmRow, ProviderRow, VectorRow, VoiceRow } from "./rows";
 import type {
   AiConfigMode,
   ImageForm,
@@ -62,6 +67,7 @@ import type {
   ModelCatalogStatus,
   ModelConfigMode,
   ProviderForm,
+  VoiceForm,
   VectorForm
 } from "./types";
 
@@ -74,13 +80,15 @@ export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?:
   const [llmForm, setLlmForm] = useState<LlmForm>(emptyLlmForm);
   const [vectorForm, setVectorForm] = useState<VectorForm>(emptyVectorForm);
   const [imageForm, setImageForm] = useState<ImageForm>(emptyImageForm);
+  const [voiceForm, setVoiceForm] = useState<VoiceForm>(emptyVoiceForm);
   const [instantMeshForm, setInstantMeshForm] = useState<InstantMeshForm>(emptyInstantMeshForm);
   const [formDialog, setFormDialog] = useState<AiConfigMode | null>(null);
   const [modelCatalog, setModelCatalog] = useState<Record<string, ProviderModelOption[]>>({});
   const [modelCatalogStatus, setModelCatalogStatus] = useState<Record<ModelConfigMode, ModelCatalogStatus>>({
     llm: { error: false, loading: false, providerId: "" },
     vectors: { error: false, loading: false, providerId: "" },
-    images: { error: false, loading: false, providerId: "" }
+    images: { error: false, loading: false, providerId: "" },
+    voices: { error: false, loading: false, providerId: "" }
   });
   const [isPending, startTransition] = useTransition();
   const activeProviders = useMemo(() => config?.providers.filter((provider) => provider.enabled) ?? [], [config]);
@@ -99,6 +107,7 @@ export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?:
       setLlmForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
       setVectorForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
       setImageForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
+      setVoiceForm((current) => (current.providerId ? current : { ...current, providerId: firstProviderId }));
     }
   }
 
@@ -185,17 +194,7 @@ export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?:
   function getModelOptions(mode: ModelConfigMode, providerId: string) {
     const models = modelCatalog[providerId] ?? [];
 
-    return models.filter((model) => {
-      if (mode === "llm") {
-        return model.kind !== "embedding" && model.kind !== "image";
-      }
-
-      if (mode === "images") {
-        return model.kind !== "llm" && model.kind !== "embedding";
-      }
-
-      return model.kind !== "llm" && model.kind !== "image";
-    });
+    return filterProviderModelOptionsForMode(mode, models);
   }
 
   function getModelCatalogStatus(mode: ModelConfigMode, providerId: string): ModelCatalogStatus {
@@ -227,6 +226,15 @@ export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?:
       return;
     }
 
+    if (mode === "voices") {
+      setVoiceForm((current) => ({
+        ...current,
+        displayName: current.displayName && current.displayName !== current.modelId ? current.displayName : option.displayName,
+        modelId: option.id
+      }));
+      return;
+    }
+
     setVectorForm((current) => ({
       ...current,
       displayName: current.displayName && current.displayName !== current.modelId ? current.displayName : option.displayName,
@@ -248,6 +256,10 @@ export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?:
 
   function resetImageForm() {
     setImageForm({ ...emptyImageForm, providerId: config?.providers[0]?.id ?? "" });
+  }
+
+  function resetVoiceForm() {
+    setVoiceForm({ ...emptyVoiceForm, providerId: config?.providers[0]?.id ?? "" });
   }
 
   function resetInstantMeshForm() {
@@ -614,6 +626,122 @@ export function AiConfigManager({ mode, viewer }: { mode: AiConfigMode; viewer?:
               <CheckboxField label={t("fields.isDefault")} checked={imageForm.isDefault} onChange={(checked) => setImageForm((current) => ({ ...current, isDefault: checked }))} />
               {isAdmin ? (
                 <CheckboxField label={t("fields.isGlobal")} checked={imageForm.isGlobal} onChange={(checked) => setImageForm((current) => ({ ...current, isGlobal: checked }))} />
+              ) : null}
+              {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
+              <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />
+            </form>
+          </FormDialog>
+        ) : null}
+      </>
+    );
+  }
+
+  if (mode === "voices") {
+    return (
+      <>
+        <AiConfigLayout
+          eyebrow={t("voices.eyebrow")}
+          title={t("voices.title")}
+          description={t("voices.description")}
+          actionLabel={t("voices.createTitle")}
+          onCreate={() => {
+            const providerId = config.providers[0]?.id ?? "";
+            setVoiceForm({ ...emptyVoiceForm, providerId });
+            setFormDialog("voices");
+            void loadProviderModels("voices", providerId);
+          }}
+          list={
+            config.voiceModels.length === 0 ? (
+              <EmptyState icon={Mic} title={t("voices.emptyTitle")} description={t("voices.emptyDescription")} />
+            ) : (
+              <div className="divide-y divide-border/70 border-y border-border/70">
+                {config.voiceModels.map((model) => (
+                  <VoiceRow
+                    key={model.id}
+                    model={model}
+                    onEdit={() => {
+                      setVoiceForm({
+                        id: model.id,
+                        providerId: model.providerId,
+                        displayName: model.displayName,
+                        modelId: model.modelId,
+                        enabled: model.enabled,
+                        isDefault: model.isDefault,
+                        isGlobal: model.isGlobal
+                      });
+                      setFormDialog("voices");
+                      void loadProviderModels("voices", model.providerId);
+                    }}
+                    onDelete={() => {
+                      if (!window.confirm(t("voices.deleteConfirm", { name: model.displayName }))) {
+                        return;
+                      }
+
+                      runAction(() => deleteHomeVoiceModel(model.id), t("common.deleted"));
+                    }}
+                    onSetDefault={() => {
+                      runAction(
+                        () =>
+                          saveHomeVoiceModel({
+                            id: model.id,
+                            providerId: model.providerId,
+                            displayName: model.displayName,
+                            modelId: model.modelId,
+                            enabled: model.enabled,
+                            isDefault: true,
+                            isGlobal: model.isGlobal
+                          }),
+                        t("common.saved")
+                      );
+                    }}
+                    canManage={canManageModel(model)}
+                  />
+                ))}
+              </div>
+            )
+          }
+        />
+        {formDialog === "voices" ? (
+          <FormDialog
+            title={voiceForm.id ? t("voices.editTitle") : t("voices.createTitle")}
+            onClose={() => {
+              resetVoiceForm();
+              setFormDialog(null);
+            }}
+          >
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                runAction(() => saveHomeVoiceModel(voiceForm), t("common.saved"), () => {
+                  resetVoiceForm();
+                  setFormDialog(null);
+                });
+              }}
+            >
+              <FormHeader icon={voiceForm.id ? Edit3 : Plus} title={voiceForm.id ? t("voices.editTitle") : t("voices.createTitle")} />
+              <ProviderSelect
+                providers={config.providers}
+                value={voiceForm.providerId}
+                onChange={(value) => {
+                  setVoiceForm((current) => ({ ...current, providerId: value }));
+                  void loadProviderModels("voices", value);
+                }}
+              />
+              <TextField label={t("fields.displayName")} value={voiceForm.displayName} onChange={(value) => setVoiceForm((current) => ({ ...current, displayName: value }))} required />
+              <ModelIdField
+                value={voiceForm.modelId}
+                onChange={(value) => setVoiceForm((current) => ({ ...current, modelId: value }))}
+                onRefresh={() => loadProviderModels("voices", voiceForm.providerId, true)}
+                onSelect={(option) => applyModelOption("voices", option)}
+                options={getModelOptions("voices", voiceForm.providerId)}
+                providerSelected={Boolean(voiceForm.providerId)}
+                status={getModelCatalogStatus("voices", voiceForm.providerId)}
+              />
+              <CheckboxField label={t("fields.enabled")} checked={voiceForm.enabled} onChange={(checked) => setVoiceForm((current) => ({ ...current, enabled: checked }))} />
+              <CheckboxField label={t("fields.isDefault")} checked={voiceForm.isDefault} onChange={(checked) => setVoiceForm((current) => ({ ...current, isDefault: checked }))} />
+              {isAdmin ? (
+                <CheckboxField label={t("fields.isGlobal")} checked={voiceForm.isGlobal} onChange={(checked) => setVoiceForm((current) => ({ ...current, isGlobal: checked }))} />
               ) : null}
               {activeProviders.length === 0 ? <p className="text-xs text-accent">{t("errors.noEnabledProvider")}</p> : null}
               <SubmitButton loading={isPending} label={t("common.save")} disabled={config.providers.length === 0} />

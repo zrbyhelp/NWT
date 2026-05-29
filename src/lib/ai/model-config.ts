@@ -7,12 +7,14 @@ import {
   imageModelInputSchema,
   instantMeshConfigInputSchema,
   llmModelInputSchema,
+  voiceModelInputSchema,
   type AiConfigSnapshot,
   type AiProviderInput,
   type ImageModelInput,
   type InstantMeshConfigInput,
   type LlmModelInput,
   type ProviderModelOption,
+  type VoiceModelInput,
   type VectorModelInput,
   vectorModelInputSchema
 } from "@/lib/ai/config-types";
@@ -113,10 +115,10 @@ function chooseMarkedDefaultModel<T extends { enabled: boolean; isDefault: boole
 }
 
 export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnapshot> {
-  const [providers, llmModels, globalLlmModels, vectorModels, globalVectorModels, imageModels, globalImageModels, instantMeshConfigs] = await Promise.all([
+  const [providers, llmModels, globalLlmModels, vectorModels, globalVectorModels, imageModels, globalImageModels, voiceModels, globalVoiceModels, instantMeshConfigs] = await Promise.all([
     prisma.aiProvider.findMany({
       where: { userId },
-      include: { _count: { select: { imageModels: true, llmModels: true, vectorModels: true } } },
+      include: { _count: { select: { imageModels: true, llmModels: true, vectorModels: true, voiceModels: true } } },
       orderBy: { createdAt: "asc" }
     }),
     prisma.llmModel.findMany({
@@ -145,6 +147,16 @@ export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnaps
       orderBy: { createdAt: "asc" }
     }),
     prisma.imageModel.findMany({
+      where: { isGlobal: true, provider: { user: { role: "ADMIN" } } },
+      include: { provider: true },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.voiceModel.findMany({
+      where: { isGlobal: false, provider: { userId } },
+      include: { provider: true },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.voiceModel.findMany({
       where: { isGlobal: true, provider: { user: { role: "ADMIN" } } },
       include: { provider: true },
       orderBy: { createdAt: "asc" }
@@ -158,6 +170,7 @@ export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnaps
   const effectiveLlmDefaultId = pickEffectiveDefaultId(llmModels, globalLlmModels);
   const effectiveVectorDefaultId = pickEffectiveDefaultId(vectorModels, globalVectorModels);
   const effectiveImageDefaultId = pickEffectiveDefaultId(imageModels, globalImageModels);
+  const effectiveVoiceDefaultId = pickEffectiveDefaultId(voiceModels, globalVoiceModels);
 
   return {
     providers: providers.map((provider) => ({
@@ -169,7 +182,7 @@ export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnaps
       enabled: provider.enabled,
       createdAt: provider.createdAt.toISOString(),
       updatedAt: provider.updatedAt.toISOString(),
-      modelCount: provider._count.llmModels + provider._count.vectorModels + provider._count.imageModels
+      modelCount: provider._count.llmModels + provider._count.vectorModels + provider._count.imageModels + provider._count.voiceModels
     })),
     llmModels: [...llmModels, ...globalLlmModels].map((model) => ({
       id: model.id,
@@ -212,6 +225,20 @@ export async function getAiConfigSnapshot(userId: string): Promise<AiConfigSnaps
       modelId: model.modelId,
       enabled: model.enabled,
       isDefault: model.id === effectiveImageDefaultId,
+      isGlobal: model.isGlobal,
+      createdAt: model.createdAt.toISOString(),
+      updatedAt: model.updatedAt.toISOString()
+    })),
+    voiceModels: [...voiceModels, ...globalVoiceModels].map((model) => ({
+      id: model.id,
+      providerId: model.providerId,
+      providerUserId: model.provider.userId,
+      providerName: model.provider.name,
+      providerEnabled: model.provider.enabled,
+      displayName: model.displayName,
+      modelId: model.modelId,
+      enabled: model.enabled,
+      isDefault: model.id === effectiveVoiceDefaultId,
       isGlobal: model.isGlobal,
       createdAt: model.createdAt.toISOString(),
       updatedAt: model.updatedAt.toISOString()
@@ -277,6 +304,10 @@ export async function saveAiProvider(userId: string, input: AiProviderInput) {
       prisma.imageModel.updateMany({
         where: { provider: { userId }, providerId: parsed.id, isDefault: true },
         data: { isDefault: false }
+      }),
+      prisma.voiceModel.updateMany({
+        where: { provider: { userId }, providerId: parsed.id, isDefault: true },
+        data: { isDefault: false }
       })
     ]);
   }
@@ -291,10 +322,10 @@ export async function saveAiProvider(userId: string, input: AiProviderInput) {
 export async function deleteAiProvider(userId: string, providerId: string) {
   const provider = await prisma.aiProvider.findFirstOrThrow({
     where: { id: providerId, userId },
-    include: { _count: { select: { imageModels: true, llmModels: true, vectorModels: true } } }
+    include: { _count: { select: { imageModels: true, llmModels: true, vectorModels: true, voiceModels: true } } }
   });
 
-  if (provider._count.llmModels + provider._count.vectorModels + provider._count.imageModels > 0) {
+  if (provider._count.llmModels + provider._count.vectorModels + provider._count.imageModels + provider._count.voiceModels > 0) {
     throw new AiConfigError("Delete related models before deleting this provider.", "provider-has-models");
   }
 
@@ -415,11 +446,11 @@ export async function saveLlmModel(userId: string, input: LlmModelInput) {
       });
 
   if (canBeDefault) {
-    await prisma.llmModel.updateMany(
-      parsed.isGlobal
-        ? { where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } }
-        : { where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } }
-    );
+    if (parsed.isGlobal) {
+      await prisma.llmModel.updateMany({ where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } });
+    } else {
+      await prisma.llmModel.updateMany({ where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } });
+    }
     await prisma.llmModel.update({ where: { id: model.id }, data: { isDefault: true } });
   }
 
@@ -483,11 +514,11 @@ export async function saveVectorModel(userId: string, input: VectorModelInput) {
       });
 
   if (canBeDefault) {
-    await prisma.vectorModel.updateMany(
-      parsed.isGlobal
-        ? { where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } }
-        : { where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } }
-    );
+    if (parsed.isGlobal) {
+      await prisma.vectorModel.updateMany({ where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } });
+    } else {
+      await prisma.vectorModel.updateMany({ where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } });
+    }
     await prisma.vectorModel.update({ where: { id: model.id }, data: { isDefault: true } });
   }
 
@@ -547,11 +578,11 @@ export async function saveImageModel(userId: string, input: ImageModelInput) {
       });
 
   if (canBeDefault) {
-    await prisma.imageModel.updateMany(
-      parsed.isGlobal
-        ? { where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } }
-        : { where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } }
-    );
+    if (parsed.isGlobal) {
+      await prisma.imageModel.updateMany({ where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } });
+    } else {
+      await prisma.imageModel.updateMany({ where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } });
+    }
     await prisma.imageModel.update({ where: { id: model.id }, data: { isDefault: true } });
   }
 
@@ -566,6 +597,70 @@ export async function deleteImageModel(userId: string, modelId: string) {
   const model = await findUserImageModelOrThrow(userId, modelId);
   await prisma.imageModel.delete({ where: { id: modelId } });
   await ensureImageDefault(userId);
+  if (model.isGlobal && await isAdminUserId(userId)) {
+    await ensureGlobalDefaults();
+  }
+  return getAiConfigSnapshot(userId);
+}
+
+export async function saveVoiceModel(userId: string, input: VoiceModelInput) {
+  const parsed = voiceModelInputSchema.parse(input);
+  const provider = await findUserProviderOrThrow(userId, parsed.providerId);
+  const isAdmin = await isAdminUserId(userId);
+
+  if (parsed.isGlobal && !isAdmin) {
+    throw new AiConfigError("Only admins can mark models as global.", "forbidden");
+  }
+
+  const canBeDefault = parsed.enabled && provider.enabled && parsed.isDefault;
+
+  if (parsed.id) {
+    await findUserVoiceModelOrThrow(userId, parsed.id);
+  }
+
+  const model = parsed.id
+    ? await prisma.voiceModel.update({
+        where: { id: parsed.id },
+        data: {
+          providerId: parsed.providerId,
+          displayName: parsed.displayName,
+          modelId: parsed.modelId,
+          enabled: parsed.enabled,
+          isDefault: false,
+          isGlobal: parsed.isGlobal && isAdmin
+        }
+      })
+    : await prisma.voiceModel.create({
+        data: {
+          providerId: parsed.providerId,
+          displayName: parsed.displayName,
+          modelId: parsed.modelId,
+          enabled: parsed.enabled,
+          isDefault: false,
+          isGlobal: parsed.isGlobal && isAdmin
+        }
+      });
+
+  if (canBeDefault) {
+    if (parsed.isGlobal) {
+      await prisma.voiceModel.updateMany({ where: { id: { not: model.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } });
+    } else {
+      await prisma.voiceModel.updateMany({ where: { id: { not: model.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } });
+    }
+    await prisma.voiceModel.update({ where: { id: model.id }, data: { isDefault: true } });
+  }
+
+  await ensureVoiceDefault(userId);
+  if (isAdmin) {
+    await ensureGlobalDefaults();
+  }
+  return getAiConfigSnapshot(userId);
+}
+
+export async function deleteVoiceModel(userId: string, modelId: string) {
+  const model = await findUserVoiceModelOrThrow(userId, modelId);
+  await prisma.voiceModel.delete({ where: { id: modelId } });
+  await ensureVoiceDefault(userId);
   if (model.isGlobal && await isAdminUserId(userId)) {
     await ensureGlobalDefaults();
   }
@@ -762,6 +857,23 @@ export async function getDefaultImageModel(userId?: string | null) {
   })) ?? getGlobalDefaultImageModel();
 }
 
+export async function getDefaultVoiceModel(userId?: string | null) {
+  if (!userId) {
+    return null;
+  }
+
+  return (await prisma.voiceModel.findFirst({
+    where: {
+      enabled: true,
+      isDefault: true,
+      isGlobal: false,
+      provider: { enabled: true, userId }
+    },
+    include: { provider: true },
+    orderBy: { createdAt: "asc" }
+  })) ?? getGlobalDefaultVoiceModel();
+}
+
 export async function getDefaultInstantMeshConfig(userId?: string | null) {
   if (!userId) {
     return null;
@@ -778,7 +890,7 @@ export async function getDefaultInstantMeshConfig(userId?: string | null) {
 }
 
 async function ensureAllDefaults(userId: string) {
-  await Promise.all([ensureLlmDefault(userId), ensureVectorDefault(userId), ensureImageDefault(userId), ensureInstantMeshDefault(userId)]);
+  await Promise.all([ensureLlmDefault(userId), ensureVectorDefault(userId), ensureImageDefault(userId), ensureVoiceDefault(userId), ensureInstantMeshDefault(userId)]);
 }
 
 async function ensureLlmDefault(userId: string) {
@@ -856,6 +968,31 @@ async function ensureImageDefault(userId: string) {
   await prisma.imageModel.update({ where: { id: selected.id }, data: { isDefault: true } });
 }
 
+async function ensureVoiceDefault(userId: string) {
+  const models = await prisma.voiceModel.findMany({
+    where: { isGlobal: false, provider: { userId } },
+    include: { provider: true },
+    orderBy: { createdAt: "asc" }
+  });
+  const selected = chooseMarkedDefaultModel(
+    models.map((model) => ({
+      id: model.id,
+      enabled: model.enabled,
+      isDefault: model.isDefault,
+      providerEnabled: model.provider.enabled,
+      createdAt: model.createdAt
+    }))
+  );
+
+  if (!selected) {
+    await prisma.voiceModel.updateMany({ where: { isGlobal: false, provider: { userId } }, data: { isDefault: false } });
+    return;
+  }
+
+  await prisma.voiceModel.updateMany({ where: { id: { not: selected.id }, provider: { userId }, isGlobal: false }, data: { isDefault: false } });
+  await prisma.voiceModel.update({ where: { id: selected.id }, data: { isDefault: true } });
+}
+
 async function ensureInstantMeshDefault(userId: string) {
   const delegate = instantMeshDelegate();
   const configs = await delegate.findMany({
@@ -882,7 +1019,7 @@ async function ensureInstantMeshDefault(userId: string) {
 }
 
 async function ensureGlobalDefaults() {
-  await Promise.all([ensureGlobalLlmDefault(), ensureGlobalVectorDefault(), ensureGlobalImageDefault()]);
+  await Promise.all([ensureGlobalLlmDefault(), ensureGlobalVectorDefault(), ensureGlobalImageDefault(), ensureGlobalVoiceDefault()]);
 }
 
 async function ensureGlobalLlmDefault() {
@@ -960,6 +1097,31 @@ async function ensureGlobalImageDefault() {
   await prisma.imageModel.update({ where: { id: selected.id }, data: { isDefault: true } });
 }
 
+async function ensureGlobalVoiceDefault() {
+  const models = await prisma.voiceModel.findMany({
+    where: { isGlobal: true, provider: { user: { role: "ADMIN" } } },
+    include: { provider: true },
+    orderBy: { createdAt: "asc" }
+  });
+  const selected = chooseMarkedDefaultModel(
+    models.map((model) => ({
+      id: model.id,
+      enabled: model.enabled,
+      isDefault: model.isDefault,
+      providerEnabled: model.provider.enabled,
+      createdAt: model.createdAt
+    }))
+  );
+
+  if (!selected) {
+    await prisma.voiceModel.updateMany({ where: { isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } });
+    return;
+  }
+
+  await prisma.voiceModel.updateMany({ where: { id: { not: selected.id }, isGlobal: true, provider: { user: { role: "ADMIN" } } }, data: { isDefault: false } });
+  await prisma.voiceModel.update({ where: { id: selected.id }, data: { isDefault: true } });
+}
+
 function getGlobalDefaultLlmModel() {
   return prisma.llmModel.findFirst({
     where: {
@@ -988,6 +1150,19 @@ function getGlobalDefaultVectorModel() {
 
 function getGlobalDefaultImageModel() {
   return prisma.imageModel.findFirst({
+    where: {
+      enabled: true,
+      isDefault: true,
+      isGlobal: true,
+      provider: { enabled: true, user: { role: "ADMIN" } }
+    },
+    include: { provider: true },
+    orderBy: { createdAt: "asc" }
+  });
+}
+
+function getGlobalDefaultVoiceModel() {
+  return prisma.voiceModel.findFirst({
     where: {
       enabled: true,
       isDefault: true,
@@ -1032,6 +1207,15 @@ async function findUserVectorModelOrThrow(userId: string, modelId: string) {
 
 async function findUserImageModelOrThrow(userId: string, modelId: string) {
   return prisma.imageModel.findFirstOrThrow({
+    where: {
+      id: modelId,
+      provider: { userId }
+    }
+  });
+}
+
+async function findUserVoiceModelOrThrow(userId: string, modelId: string) {
+  return prisma.voiceModel.findFirstOrThrow({
     where: {
       id: modelId,
       provider: { userId }

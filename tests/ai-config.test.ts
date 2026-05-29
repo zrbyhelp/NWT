@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decryptSecret, encryptSecret } from "@/lib/ai/config-crypto";
-import { aiProviderInputSchema, imageModelInputSchema, llmModelInputSchema } from "@/lib/ai/config-types";
+import { aiProviderInputSchema, imageModelInputSchema, llmModelInputSchema, voiceModelInputSchema } from "@/lib/ai/config-types";
 import { chooseDefaultModel, shouldMakeSavedModelDefault } from "@/lib/ai/model-config-utils";
 import { classifyProviderModelId, normalizeProviderModels } from "@/lib/ai/provider-model-utils";
 
@@ -48,6 +48,18 @@ describe("AI configuration schemas", () => {
       })
     ).toMatchObject({ modelId: "gpt-image-1" });
   });
+
+  it("validates voice model fields", () => {
+    expect(
+      voiceModelInputSchema.parse({
+        providerId: "provider-1",
+        displayName: "Narration Voice Model",
+        modelId: "tts-1",
+        enabled: true,
+        isDefault: true
+      })
+    ).toMatchObject({ modelId: "tts-1" });
+  });
 });
 
 describe("AI provider secret encryption", () => {
@@ -70,6 +82,7 @@ describe("provider model catalog helpers", () => {
         data: [
           { id: "gpt-4.1-mini", owned_by: "openai" },
           { id: "gpt-image-1", owned_by: "openai" },
+          { id: "tts-1", owned_by: "openai" },
           { id: "text-embedding-3-small", owned_by: "openai" },
           { id: "gpt-4.1-mini", owned_by: "duplicate" },
           { id: "" }
@@ -78,14 +91,23 @@ describe("provider model catalog helpers", () => {
     ).toEqual([
       { displayName: "gpt-4.1-mini", id: "gpt-4.1-mini", kind: "llm", ownedBy: "openai" },
       { displayName: "gpt-image-1", id: "gpt-image-1", kind: "image", ownedBy: "openai" },
-      { displayName: "text-embedding-3-small", id: "text-embedding-3-small", kind: "embedding", ownedBy: "openai" }
+      { displayName: "text-embedding-3-small", id: "text-embedding-3-small", kind: "embedding", ownedBy: "openai" },
+      { displayName: "tts-1", id: "tts-1", kind: "voice", ownedBy: "openai" }
     ]);
   });
 
-  it("classifies common chat and embedding model ids", () => {
+  it("classifies common model ids", () => {
     expect(classifyProviderModelId("qwen-plus")).toBe("llm");
     expect(classifyProviderModelId("bge-large-zh-v1.5")).toBe("embedding");
     expect(classifyProviderModelId("flux-pro")).toBe("image");
+    expect(classifyProviderModelId("whisper-1")).toBe("voice");
+    expect(classifyProviderModelId("mimo-v2.5-tts")).toBe("voice");
+    expect(classifyProviderModelId("mimo-v2.5-tts-voiceclone")).toBe("voice");
+    expect(classifyProviderModelId("gpt-4o-mini-transcribe")).toBe("voice");
+    expect(classifyProviderModelId("qwen-audio")).toBe("voice");
+    expect(classifyProviderModelId("cosyvoice-v2")).toBe("voice");
+    expect(classifyProviderModelId("fish_speech-1.5")).toBe("voice");
+    expect(classifyProviderModelId("sense-voice-small")).toBe("voice");
     expect(classifyProviderModelId("custom-model")).toBe("unknown");
   });
 });

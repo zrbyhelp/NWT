@@ -22,6 +22,12 @@ const mocks = vi.hoisted(() => ({
       update: vi.fn(),
       updateMany: vi.fn()
     },
+    voiceModel: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn()
+    },
     instantMeshConfig: {
       findMany: vi.fn(),
       update: vi.fn(),
@@ -50,11 +56,13 @@ describe("user-scoped AI configuration", () => {
     mocks.prisma.aiProvider.findMany.mockResolvedValue([]);
     mocks.prisma.llmModel.findMany.mockResolvedValue([]);
     mocks.prisma.imageModel.findMany.mockResolvedValue([]);
+    mocks.prisma.voiceModel.findMany.mockResolvedValue([]);
     mocks.prisma.instantMeshConfig.findMany.mockResolvedValue([]);
     mocks.prisma.vectorModel.findMany.mockResolvedValue([]);
     mocks.prisma.appUser.findUnique.mockResolvedValue({ role: "USER" });
     mocks.prisma.llmModel.updateMany.mockResolvedValue({});
     mocks.prisma.imageModel.updateMany.mockResolvedValue({});
+    mocks.prisma.voiceModel.updateMany.mockResolvedValue({});
     mocks.prisma.instantMeshConfig.updateMany.mockResolvedValue({});
     mocks.prisma.vectorModel.updateMany.mockResolvedValue({});
     delete process.env.OPENAI_BASE_URL;
@@ -88,6 +96,11 @@ describe("user-scoped AI configuration", () => {
       })
     );
     expect(mocks.prisma.imageModel.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isGlobal: false, provider: { userId: "user-a" } }
+      })
+    );
+    expect(mocks.prisma.voiceModel.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { isGlobal: false, provider: { userId: "user-a" } }
       })

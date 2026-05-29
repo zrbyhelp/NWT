@@ -47,6 +47,10 @@ export function classifyProviderModelId(modelId: string): ProviderModelKind {
     return "image";
   }
 
+  if (/(^|[-_:/])(tts|stt|asr|speech|voice|audio|whisper|transcribe|transcription|mimo|cosyvoice|cosy-voice|fish-speech|fish_speech|sensevoice|sense-voice)([-_:/]|$)/.test(normalized)) {
+    return "voice";
+  }
+
   if (/(gpt|chat|claude|gemini|qwen|deepseek|llama|mistral|mixtral|glm|moonshot|kimi|doubao|ernie|hunyuan|spark|command|grok|baichuan|internlm|minimax|abab|phi)/.test(normalized)) {
     return "llm";
   }

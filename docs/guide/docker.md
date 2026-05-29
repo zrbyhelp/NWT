@@ -27,7 +27,7 @@ docker compose --env-file .env.langfuse.local -f docker-compose.yml -f docker-co
 
 ## 首页工作台数据库
 
-首页消息工作台依赖 MySQL 持久化剧本、会话、消息、AI 供应商、LLM 模型、向量模型和图片模型。首次使用前需要先启动 MySQL，并执行 Prisma 迁移：
+首页消息工作台依赖 MySQL 持久化剧本、会话、消息、AI 供应商、LLM 模型、向量模型、图片模型和语音模型。首次使用前需要先启动 MySQL，并执行 Prisma 迁移：
 
 ```bash
 docker compose up -d mysql

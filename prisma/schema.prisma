@@ -221,6 +221,7 @@ model AiProvider {
   llmModels       LlmModel[]
   vectorModels    VectorModel[]
   imageModels     ImageModel[]
+  voiceModels     VoiceModel[]
 
   @@unique([userId, slug])
   @@index([userId, enabled])
@@ -266,6 +267,24 @@ model VectorModel {
 }
 
 model ImageModel {
+  id           String     @id @default(cuid())
+  providerId   String
+  provider     AiProvider @relation(fields: [providerId], references: [id])
+  displayName  String
+  modelId      String
+  enabled      Boolean    @default(true)
+  isDefault    Boolean    @default(false)
+  isGlobal     Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId])
+  @@index([enabled, isDefault])
+  @@index([isGlobal, enabled, isDefault])
+}
+
+model VoiceModel {
   id           String     @id @default(cuid())
   providerId   String
   provider     AiProvider @relation(fields: [providerId], references: [id])

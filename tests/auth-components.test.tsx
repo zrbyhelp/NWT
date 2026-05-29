@@ -52,7 +52,7 @@ vi.mock("@/app/[locale]/actions", () => ({
     outboundProxy: { enabled: false, httpProxy: "", httpsProxy: "", noProxy: "127.0.0.1,localhost" }
   })),
   saveHomeAdminOutboundProxySettings: vi.fn(async (outboundProxy) => ({ outboundProxy })),
-  getHomeAiConfig: vi.fn(async () => ({ imageModels: [], providers: [], llmModels: [], vectorModels: [] })),
+  getHomeAiConfig: vi.fn(async () => ({ imageModels: [], instantMeshConfigs: [], providers: [], llmModels: [], voiceModels: [], vectorModels: [] })),
   fetchHomeProviderModels: vi.fn(async () => []),
   saveHomeAiProvider: vi.fn(),
   deleteHomeAiProvider: vi.fn(),
@@ -60,8 +60,12 @@ vi.mock("@/app/[locale]/actions", () => ({
   deleteHomeImageModel: vi.fn(),
   saveHomeLlmModel: vi.fn(),
   deleteHomeLlmModel: vi.fn(),
+  saveHomeVoiceModel: vi.fn(),
+  deleteHomeVoiceModel: vi.fn(),
   saveHomeVectorModel: vi.fn(),
-  deleteHomeVectorModel: vi.fn()
+  deleteHomeVectorModel: vi.fn(),
+  saveHomeInstantMeshConfig: vi.fn(),
+  deleteHomeInstantMeshConfig: vi.fn()
 }));
 
 vi.mock("@/components/theme-provider", () => ({

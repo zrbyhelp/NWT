@@ -2,7 +2,7 @@
 
 import type { Locale } from "@/i18n/routing";
 import type { AuthCredentialsInput, AuthPasswordInput, AuthPreferencesInput, AuthProfileInput } from "@/lib/auth-types";
-import type { AiProviderInput, ImageModelInput, InstantMeshConfigInput, LlmModelInput, VectorModelInput } from "@/lib/ai/config-types";
+import type { AiProviderInput, ImageModelInput, InstantMeshConfigInput, LlmModelInput, VoiceModelInput, VectorModelInput } from "@/lib/ai/config-types";
 import type { OutboundProxySettings } from "@/lib/system-settings-types";
 import {
   changeCurrentViewerPassword,
@@ -18,6 +18,7 @@ import {
   deleteImageModel,
   deleteInstantMeshConfig,
   deleteLlmModel,
+  deleteVoiceModel,
   deleteVectorModel,
   fetchProviderModels,
   getAiConfigSnapshot,
@@ -25,6 +26,7 @@ import {
   saveImageModel,
   saveInstantMeshConfig,
   saveLlmModel,
+  saveVoiceModel,
   saveVectorModel
 } from "@/lib/ai/model-config";
 import {
@@ -557,6 +559,16 @@ export async function saveHomeImageModel(input: ImageModelInput) {
 export async function deleteHomeImageModel(modelId: string) {
   const viewer = await requireAuth();
   return deleteImageModel(viewer.id, modelId);
+}
+
+export async function saveHomeVoiceModel(input: VoiceModelInput) {
+  const viewer = await requireAuth();
+  return saveVoiceModel(viewer.id, input);
+}
+
+export async function deleteHomeVoiceModel(modelId: string) {
+  const viewer = await requireAuth();
+  return deleteVoiceModel(viewer.id, modelId);
 }
 
 export async function saveHomeInstantMeshConfig(input: InstantMeshConfigInput) {

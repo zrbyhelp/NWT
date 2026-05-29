@@ -1,6 +1,6 @@
 # AI 配置
 
-AI 配置按当前登录账号隔离。每个账号可以维护自己的 OpenAI-compatible 供应商、LLM 模型、向量模型和图片模型。管理员还可以把 LLM、向量和图片模型设为“通用”，通用模型使用管理员供应商与 API Key，所有用户可见且可用。
+AI 配置按当前登录账号隔离。每个账号可以维护自己的 OpenAI-compatible 供应商、LLM 模型、向量模型、图片模型和语音模型。管理员还可以把 LLM、向量、图片和语音模型设为“通用”，通用模型使用管理员供应商与 API Key，所有用户可见且可用。
 
 ## 供应商
 
@@ -66,6 +66,21 @@ LLM 模型用于首页聊天回复。字段包括：
 
 当前版本先完成配置、启停和默认项管理；默认选择同样遵循个人默认优先、管理员通用默认兜底，具体图片生成工作流已接入封面、假面设定板和场景全景的生成链路。
 
+## 语音模型
+
+语音模型用于后续文本转语音、语音识别和角色声音生成。字段包括：
+
+- 供应商
+- 显示名称
+- 模型 ID
+- 启用状态
+- 是否默认
+- 是否通用（仅管理员）
+
+当前版本先完成配置、启停、默认项管理和系统级预设识别；默认选择同样遵循个人默认优先、管理员通用默认兜底。后续语音生成或识别链路接入时，会优先读取当前账号的默认语音模型。
+
+语音模型预设与图片模型预设采用相同思路：系统会根据供应商名称、Base URL 和模型 ID 自动识别常见模型族，供后续调用链路选择传输方式和能力类型。当前已内置小米 MiMo、OpenAI TTS/Whisper、通义/Qwen、CosyVoice、Fish Speech 和 SenseVoice 识别规则。小米语音 AI 会识别 `xiaomi`、`mimo`、`小米`、`platform.xiaomimimo.com`，并兼容 `MiMo-V2-TTS`、`MiMo-V2.5-TTS`、`MiMo-V2.5-TTS-VoiceDesign`、`MiMo-V2.5-TTS-VoiceClone`、`MiMo-V2.5-ASR` 等命名。该预设层目前只用于配置识别和后续调用准备，不代表已经完成语音生成运行时。
+
 ## InstantMesh Adapter
 
 官方 InstantMesh 运行的是 Gradio Demo，不直接提供 NWT 需要的异步 REST 接口。项目单独提供本地适配服务 `tools/instantmesh-adapter`，由 FastAPI 包装 Gradio 调用，并向 NWT 暴露标准任务接口。适配器会读取 Gradio `/config` 自动识别当前“一步生成 GLB”的 workflow；遇到旧版三步 Demo 时会回退到预处理、多视图和 GLB 导出的旧调用链路。
@@ -95,6 +110,7 @@ Adapter 内部默认调用官方 Gradio 地址 `http://localhost:43839`。NWT �
 - LLM：常见聊天模型，如 `gpt`、`qwen`、`deepseek`、`claude`。
 - 向量模型：常见 embedding 模型，如 `embedding`、`bge`、`e5`。
 - 图片模型：常见图片模型，如 `gpt-image`、`dall-e`、`flux`、`stable-diffusion`。
+- 语音模型：常见语音模型，如 `tts`、`stt`、`asr`、`speech`、`voice`、`whisper`、`mimo`、`cosyvoice`、`fish-speech`、`sensevoice`。
 
 如果供应商不支持 `/models` 或列表不完整，仍可手动输入模型 ID。
 

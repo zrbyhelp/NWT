@@ -63,6 +63,7 @@
         "llm": "LLM Models",
         "vectors": "Vector Models",
         "images": "Image Models",
+        "voices": "Voice Models",
         "instantMesh": "InstantMesh API",
         "about": "About"
       },
@@ -227,7 +228,7 @@
           "title": "AI Provider Management",
           "description": "Manage OpenAI-compatible model providers for the current account. API keys can only be replaced or cleared, never revealed in the UI.",
           "emptyTitle": "No AI providers yet",
-          "emptyDescription": "Add a provider before configuring LLM or vector models.",
+          "emptyDescription": "Add a provider before configuring LLM, vector, image, or voice models.",
           "createTitle": "Add provider",
           "editTitle": "Edit provider",
           "apiKeyPlaceholder": "Leave blank to keep the saved secret",
@@ -266,6 +267,17 @@
           "editTitle": "Edit image model",
         "meta": "image generation",
         "deleteConfirm": "Delete image model \"{name}\"?"
+      },
+      "voices": {
+        "eyebrow": "Voice model",
+        "title": "Voice Model Management",
+        "description": "Voice models support future text-to-speech, speech recognition, and character voice generation. Personal defaults win; admin global defaults are used when no personal default exists.",
+        "emptyTitle": "No voice models yet",
+        "emptyDescription": "Add a voice model ID before choosing the default voice model.",
+        "createTitle": "Add voice model",
+        "editTitle": "Edit voice model",
+        "meta": "voice generation / recognition",
+        "deleteConfirm": "Delete voice model \"{name}\"?"
       },
       "instantMesh": {
         "eyebrow": "3D mesh API",

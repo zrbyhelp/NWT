@@ -8,14 +8,14 @@
 - 应用框架：Next.js App Router、React、TypeScript。
 - 文档站点：VitePress，随 `pnpm dev` 一起启动。
 - 数据持久化：Prisma + MySQL。
-- AI 配置：OpenAI-compatible 供应商，支持 LLM、向量模型和图片模型管理。
+- AI 配置：OpenAI-compatible 供应商，支持 LLM、向量、图片和语音模型管理。
 - 存储与后台能力：Cloudflare R2、Redis、Qdrant、Neo4j、Langfuse。
 
 ## 推荐阅读顺序
 
 1. [快速开始](/guide/getting-started)：安装依赖、配置环境、启动应用和文档。
 2. [首页工作台](/guide/workspace)：了解聊天、剧本库、登录和设置入口。
-3. [AI 配置](/guide/ai-settings)：配置供应商、LLM、向量模型和图片模型。
+3. [AI 配置](/guide/ai-settings)：配置供应商、LLM、向量、图片和语音模型。
 4. [环境变量](/guide/environment)：查看 `.env.local` 和 Langfuse 相关配置。
 5. [架构说明](/guide/architecture)：理解数据模型、权限边界和 AI 调用链路。
 6. [开发命令](/guide/development)：测试、lint、Prisma 和文档命令。
@@ -25,7 +25,7 @@
 - 未登录可以浏览首页、社区剧本和说明文档。
 - 创建会话、发送消息、删除会话、管理个人剧本库、保存设置、上传头像和管理 AI 配置需要登录。
 - 管理员账号会在“设置”中看到单独的管理员分类，可配置全局出站代理。
-- 图片模型本次先完成配置、启停和默认项管理，后续封面、场景图和角色图生成会优先读取个人默认模型，没有个人默认时使用管理员通用默认模型。
+- 图片模型与语音模型本次先完成配置、启停和默认项管理，后续封面、场景图、角色图和语音能力会优先读取个人默认模型，没有个人默认时使用管理员通用默认模型。
 
 ## 常用地址
 

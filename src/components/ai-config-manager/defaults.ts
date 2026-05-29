@@ -3,6 +3,7 @@ import type {
   InstantMeshForm,
   LlmForm,
   ProviderForm,
+  VoiceForm,
   VectorForm
 } from "./types";
 
@@ -37,6 +38,15 @@ export const emptyVectorForm: VectorForm = {
 };
 
 export const emptyImageForm: ImageForm = {
+  providerId: "",
+  displayName: "",
+  modelId: "",
+  enabled: true,
+  isDefault: false,
+  isGlobal: false
+};
+
+export const emptyVoiceForm: VoiceForm = {
   providerId: "",
   displayName: "",
   modelId: "",

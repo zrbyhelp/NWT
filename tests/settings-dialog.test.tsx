@@ -8,8 +8,10 @@ import { maxAvatarBytes } from "@/lib/storage/avatar-constraints";
 
 const emptyConfig = {
   imageModels: [],
+  instantMeshConfigs: [],
   providers: [],
   llmModels: [],
+  voiceModels: [],
   vectorModels: []
 };
 
@@ -78,10 +80,14 @@ vi.mock("@/app/[locale]/actions", () => ({
   deleteHomeAiProvider: vi.fn(async () => emptyConfig),
   saveHomeImageModel: vi.fn(async () => emptyConfig),
   deleteHomeImageModel: vi.fn(async () => emptyConfig),
+  saveHomeVoiceModel: vi.fn(async () => emptyConfig),
+  deleteHomeVoiceModel: vi.fn(async () => emptyConfig),
   saveHomeLlmModel: vi.fn(async () => emptyConfig),
   deleteHomeLlmModel: vi.fn(async () => emptyConfig),
   saveHomeVectorModel: vi.fn(async () => emptyConfig),
-  deleteHomeVectorModel: vi.fn(async () => emptyConfig)
+  deleteHomeVectorModel: vi.fn(async () => emptyConfig),
+  saveHomeInstantMeshConfig: vi.fn(async () => emptyConfig),
+  deleteHomeInstantMeshConfig: vi.fn(async () => emptyConfig)
 }));
 
 describe("SettingsDialog", () => {
@@ -89,7 +95,7 @@ describe("SettingsDialog", () => {
     vi.clearAllMocks();
   });
 
-  it("shows AI provider, LLM, vector, and image model management tabs", async () => {
+  it("shows AI provider, LLM, vector, image, and voice model management tabs", async () => {
     render(<SettingsDialog />);
 
     fireEvent.click(screen.getByRole("button", { name: "设置" }));
@@ -106,6 +112,7 @@ describe("SettingsDialog", () => {
     expect(screen.getByRole("button", { name: /LLM 模型/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /向量模型/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /图片模型/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /语音模型/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /AI 供应商/ }));
     expect(await screen.findByText("AI 供应商管理")).toBeInTheDocument();
@@ -119,6 +126,9 @@ describe("SettingsDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /图片模型/ }));
     expect(await screen.findByText("图片模型管理")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /语音模型/ }));
+    expect(await screen.findByText("语音模型管理")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /关于/ }));
     expect(screen.getByText("点亮 Star")).toBeInTheDocument();

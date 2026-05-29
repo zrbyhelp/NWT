@@ -13,6 +13,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  Mic,
   Moon,
   Monitor,
   Network,
@@ -69,7 +70,7 @@ const defaultOutboundProxyForm = {
 type PaletteId = (typeof colorThemes)[number]["id"];
 type TypographyId = (typeof typographyPresets)[number]["id"];
 type SettingsTab = "general" | "account" | "admin" | "appearance" | "about";
-type AiSettingsTab = "providers" | "llm" | "vectors" | "images";
+type AiSettingsTab = "providers" | "llm" | "vectors" | "images" | "voices";
 type MeshSettingsTab = "instantMesh";
 type AnySettingsTab = SettingsTab | AiSettingsTab | MeshSettingsTab;
 
@@ -116,6 +117,7 @@ export function SettingsDialog({
     { id: "llm", icon: Bot },
     { id: "vectors", icon: DatabaseZap },
     { id: "images", icon: ImageIcon },
+    { id: "voices", icon: Mic },
     { id: "instantMesh", icon: Box },
     { id: "about", icon: Info }
   ];
@@ -643,7 +645,7 @@ export function SettingsDialog({
                   </div>
                 ) : null}
 
-                {activeSettingsTab === "providers" || activeSettingsTab === "llm" || activeSettingsTab === "vectors" || activeSettingsTab === "images" || activeSettingsTab === "instantMesh" ? (
+                {activeSettingsTab === "providers" || activeSettingsTab === "llm" || activeSettingsTab === "vectors" || activeSettingsTab === "images" || activeSettingsTab === "voices" || activeSettingsTab === "instantMesh" ? (
                   <AiConfigManager mode={activeSettingsTab} viewer={viewer} />
                 ) : null}
 

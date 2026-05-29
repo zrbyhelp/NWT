@@ -3,11 +3,12 @@ import type {
   ImageModelInput,
   InstantMeshConfigInput,
   LlmModelInput,
+  VoiceModelInput,
   VectorModelInput
 } from "@/lib/ai/config-types";
 
-export type AiConfigMode = "providers" | "llm" | "vectors" | "images" | "instantMesh";
-export type ModelConfigMode = "llm" | "vectors" | "images";
+export type AiConfigMode = "providers" | "llm" | "vectors" | "images" | "voices" | "instantMesh";
+export type ModelConfigMode = "llm" | "vectors" | "images" | "voices";
 
 export type ModelCatalogStatus = {
   error: boolean;
@@ -28,6 +29,10 @@ export type VectorForm = VectorModelInput & {
 };
 
 export type ImageForm = ImageModelInput & {
+  id?: string;
+};
+
+export type VoiceForm = VoiceModelInput & {
   id?: string;
 };
 

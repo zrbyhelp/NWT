@@ -7,6 +7,7 @@ import type {
   ImageModelView,
   InstantMeshConfigView,
   LlmModelView,
+  VoiceModelView,
   VectorModelView
 } from "@/lib/ai/config-types";
 import { cn } from "@/lib/utils";
@@ -125,6 +126,38 @@ export function ImageRow({
       title={model.displayName}
       subtitle={`${model.providerName} / ${model.modelId}`}
       meta={t("images.meta")}
+      enabled={model.enabled && model.providerEnabled}
+      providerEnabled={model.providerEnabled}
+      isDefault={model.isDefault}
+      isGlobal={model.isGlobal}
+      canManage={canManage}
+      onDelete={onDelete}
+      onEdit={onEdit}
+      onSetDefault={onSetDefault}
+    />
+  );
+}
+
+export function VoiceRow({
+  model,
+  canManage,
+  onDelete,
+  onEdit,
+  onSetDefault
+}: {
+  model: VoiceModelView;
+  canManage: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+  onSetDefault: () => void;
+}) {
+  const t = useTranslations("home.settings.ai");
+
+  return (
+    <ModelRow
+      title={model.displayName}
+      subtitle={`${model.providerName} / ${model.modelId}`}
+      meta={t("voices.meta")}
       enabled={model.enabled && model.providerEnabled}
       providerEnabled={model.providerEnabled}
       isDefault={model.isDefault}

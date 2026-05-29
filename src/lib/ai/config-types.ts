@@ -50,6 +50,16 @@ export const imageModelInputSchema = z.object({
   isGlobal: z.boolean().default(false)
 });
 
+export const voiceModelInputSchema = z.object({
+  id: z.string().optional(),
+  providerId: z.string().min(1),
+  displayName: z.string().trim().min(1).max(100),
+  modelId: z.string().trim().min(1).max(120),
+  enabled: z.boolean().default(true),
+  isDefault: z.boolean().default(false),
+  isGlobal: z.boolean().default(false)
+});
+
 export const instantMeshConfigInputSchema = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1).max(100),
@@ -66,11 +76,12 @@ export const instantMeshConfigInputSchema = z.object({
 
 export type AiProviderInput = z.infer<typeof aiProviderInputSchema>;
 export type ImageModelInput = z.infer<typeof imageModelInputSchema>;
+export type VoiceModelInput = z.infer<typeof voiceModelInputSchema>;
 export type InstantMeshConfigInput = z.infer<typeof instantMeshConfigInputSchema>;
 export type LlmModelInput = z.infer<typeof llmModelInputSchema>;
 export type VectorModelInput = z.infer<typeof vectorModelInputSchema>;
 
-export type ProviderModelKind = "llm" | "embedding" | "image" | "unknown";
+export type ProviderModelKind = "llm" | "embedding" | "image" | "voice" | "unknown";
 
 export type ProviderModelOption = {
   id: string;
@@ -139,6 +150,21 @@ export type ImageModelView = {
   updatedAt: string;
 };
 
+export type VoiceModelView = {
+  id: string;
+  providerId: string;
+  providerUserId: string;
+  providerName: string;
+  providerEnabled: boolean;
+  displayName: string;
+  modelId: string;
+  enabled: boolean;
+  isDefault: boolean;
+  isGlobal: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type InstantMeshConfigView = {
   id: string;
   name: string;
@@ -159,6 +185,7 @@ export type AiConfigSnapshot = {
   imageModels: ImageModelView[];
   instantMeshConfigs: InstantMeshConfigView[];
   llmModels: LlmModelView[];
+  voiceModels: VoiceModelView[];
   vectorModels: VectorModelView[];
 };
 
